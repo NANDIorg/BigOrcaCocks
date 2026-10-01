@@ -18,12 +18,13 @@ import {
   probeAttachments,
   resetAttachmentsProbe,
   staleAttachmentsMessage,
+  readFileBytes,
   usageOf,
   type ClipboardItemLike,
   type DraftAttachment,
   type DropItemLike
 } from './attachmentDrafts'
-import { setLocale } from './i18n'
+import { setLocale, t } from './i18n'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
 const TEXT = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f])
@@ -231,4 +232,13 @@ test('probeAttachments: main спрашивается один раз до пе�
   resetAttachmentsProbe()
   assert.equal(await probeAttachments(api({})), 'stale')
   resetAttachmentsProbe()
+})
+
+test('readFileBytes: байты файла; ошибка чтения (папка, пропавший файл) — понятная, с именем', async () => {
+  const ok = await readFileBytes({ name: 'a.txt', arrayBuffer: async () => new TextEncoder().encode('hi').buffer })
+  assert.deepEqual([...ok], [104, 105])
+  await assert.rejects(
+    readFileBytes({ name: 'dir', arrayBuffer: async () => { throw new Error('A requested file or directory could not be found') } }),
+    { message: `dir: ${t('common.attach.errRead')}` }
+  )
 })

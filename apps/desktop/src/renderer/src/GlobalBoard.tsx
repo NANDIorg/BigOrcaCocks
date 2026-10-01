@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Task } from '@orca-board/core'
+import { pendingRequestsOf, type BoardColumn, type GlobalTask, type HumanRequest, type AttachmentInput, type RequestResolution, type Task } from '@orca-board/core'
 import { Icon } from './icons'
 import { RequestCard } from './RequestCard'
 import { globalTaskTicking, globalTimeLabel, globalTimeParts, globalTimeTitle, type GlobalTimePart } from './duration'
@@ -35,7 +35,7 @@ interface Props {
   requests: HumanRequest[]
   /** Подзадачи — подпись, чей запрос. */
   tasks: Task[]
-  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: AttachmentInput[]): Promise<void>
   onOpenInbox(requestId: string): void
   /** Карточка, из которой вернулись, — ей возвращается фокус. */
   focusId?: string
@@ -256,7 +256,8 @@ export function GlobalBoard(props: Props): React.JSX.Element {
                         {stage && <span className={`g-chip stage ${stage.kind}`} title={stage.title}>{stage.text}</span>}
                         {g.images && g.images.length > 0 && (
                           <span className="g-chip images" title={t('global.board.images', { count: g.images.length })} aria-label={t('global.board.images', { count: g.images.length })}>
-                            <Icon.image /> {g.images.length}
+                            {/* Только картинки — значок картинки, есть файлы — документа. */}
+                            {g.images.every((i) => (i.kind ?? 'image') === 'image') ? <Icon.image /> : <Icon.doc />} {g.images.length}
                           </span>
                         )}
                         {live && <span className="chip live">{t('global.board.live')}</span>}

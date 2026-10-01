@@ -1,5 +1,5 @@
 import { attachmentDisplayName, sanitizeAttachmentName, type AttachmentKind } from '@orca-board/core'
-import { SHOWCASE_FILE_TYPES } from '../../shared/showcase'
+import { attachmentOpenable } from '../../shared/showcase'
 import { t } from './i18n'
 import { formatBytes } from './i18n/format'
 
@@ -28,12 +28,9 @@ export interface AttachmentChip {
 /** Длина подписи имени в чипе по умолчанию: карточка файла узкая, полное имя — в `title`. */
 export const CHIP_NAME_MAX = 28
 
-const NOT_OPENABLE = new Set(['.html', '.htm'])
-
-/** Расширения, которые можно открыть кнопкой «Открыть» (с точкой, нижний регистр). */
+/** Расширения, которые можно открыть кнопкой «Открыть» — тот же список, что проверяет main (`attachmentOpenable`). */
 export function isOpenableExt(ext: string): boolean {
-  const key = `.${ext.toLowerCase()}`
-  return Object.hasOwn(SHOWCASE_FILE_TYPES, key) && !NOT_OPENABLE.has(key)
+  return attachmentOpenable(ext)
 }
 
 /**

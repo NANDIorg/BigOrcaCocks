@@ -1,4 +1,4 @@
-// Страж: компоненты миниатюр и просмотра рендерят эти классы, и у каждого должно быть правило в styles.css.
+// Страж: компоненты вложений (миниатюры, карточки файлов) и просмотра рендерят эти классы, и у каждого должно быть правило в styles.css.
 // Однажды правила `.coord-image*` пропали при слиянии двух PR, и скриншоты рисовались в натуральную величину.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -22,6 +22,16 @@ const CLASSES = [
   'attach-image-open',
   'attach-image-loading',
   'attach-image-remove',
+  'attach-file',
+  'attach-file-icon',
+  'attach-file-ext',
+  'attach-file-body',
+  'attach-file-name',
+  'attach-file-size',
+  'attach-file-actions',
+  'attach-file-btn',
+  'attach-file-remove',
+  'attach-error',
   'lightbox',
   'lightbox-btn',
   'lightbox-close',
@@ -29,7 +39,7 @@ const CLASSES = [
   'lightbox-next'
 ]
 
-test('у каждого класса миниатюр и просмотра есть правило', () => {
+test('у каждого класса миниатюр, карточек файлов и просмотра есть правило', () => {
   assert.deepEqual(CLASSES.filter((c) => exact(c).length === 0), [])
 })
 
@@ -40,6 +50,20 @@ test('миниатюра ограничена по ширине и высоте,
   assert.match(body, /overflow:\s*hidden/)
   const img = rules().filter((r) => r.selectors.includes('.attach-image img')).map((r) => r.body).join(';')
   assert.match(img, /object-fit:\s*cover/)
+})
+
+test('карточка файла ограничена по ширине и высоте, длинное имя обрезается, в тесном виде — 48 px', () => {
+  const body = exact('attach-file').map((r) => r.body).join(';')
+  assert.match(body, /(^|[\s;])width:/)
+  assert.match(body, /(^|[\s;])height:\s*72px/)
+  assert.match(body, /overflow:\s*hidden/)
+  const name = exact('attach-file-name').map((r) => r.body).join(';')
+  assert.match(name, /text-overflow:\s*ellipsis/)
+  assert.match(name, /white-space:\s*nowrap/)
+  // min-width: 0 у flex-колонки — иначе имя не сожмётся и выдавит кнопки за край карточки.
+  assert.match(exact('attach-file-body').map((r) => r.body).join(';'), /min-width:\s*0/)
+  const compact = rules().filter((r) => r.selectors.includes('.attach.compact .attach-file')).map((r) => r.body).join(';')
+  assert.match(compact, /height:\s*48px/)
 })
 
 test('просмотр — fixed-оверлей поверх остальных слоёв', () => {

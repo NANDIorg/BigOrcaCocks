@@ -13,7 +13,7 @@ export interface RunImageUrls {
 }
 
 /**
- * Превью сохранённых картинок глобальной задачи: байты по `globalTasks.image` → `blob:` URL (CSP `img-src 'self' blob:`).
+ * Превью сохранённых картинок глобальной задачи (файлы пропускаются): байты по `globalTasks.image` → `blob:` URL (CSP `img-src 'self' blob:`).
  * URL освобождаются, когда картинка исчезла из списка или компонент размонтирован. Компонент с этим хуком
  * должен иметь `key` по id задачи — при смене задачи картинки берутся заново.
  */
@@ -25,7 +25,8 @@ export function useRunImageUrls(globalId: string, images: readonly RunImage[] | 
   const alive = useRef(false)
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [error, setError] = useState<string | null>(null)
-  const list = images ?? []
+  // Превью только у картинок: байты файла main не отдаёт (`global.notAnImage`), у него карточка без превью.
+  const list = (images ?? []).filter((i) => (i.kind ?? 'image') === 'image')
   wanted.current = new Set(list.map((i) => i.id))
   const key = list.map((i) => i.id).join(',')
 

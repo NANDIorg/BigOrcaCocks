@@ -113,6 +113,7 @@ const api: OrcaApi = {
     removeImage: (id, imageId) => ipcRenderer.invoke('globalTasks:removeImage', id, imageId),
     image: (id, imageId) => ipcRenderer.invoke('globalTasks:image', id, imageId),
     revealAttachment: (id, imageId) => ipcRenderer.invoke('globalTasks:revealAttachment', id, imageId),
+    openAttachment: (id, imageId) => ipcRenderer.invoke('globalTasks:openAttachment', id, imageId),
     move: (id, status) => ipcRenderer.invoke('globalTasks:move', id, status),
     remove: (id, opts) => ipcRenderer.invoke('globalTasks:remove', id, opts),
     tasks: (id) => ipcRenderer.invoke('globalTasks:tasks', id),

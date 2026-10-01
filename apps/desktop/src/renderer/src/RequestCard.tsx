@@ -1,12 +1,12 @@
 import type React from 'react'
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
-import type { HumanRequest, HumanRequestKind, ImageAttachmentInput, RequestOption, RequestResolution } from '@orca-board/core'
+import type { HumanRequest, HumanRequestKind, AttachmentInput, RequestOption, RequestResolution } from '@orca-board/core'
 import { Markdown } from './Markdown'
 import { RequestShowcaseBlock } from './ShowcaseBlock'
 import { bodyWithoutShowcases, type RequestShowcase } from './showcase'
 import { ipcErrorMessage } from './useAutoSave'
 import { t as tr, useT, type TKey } from './i18n'
-import { ImageAttachField } from './ImageAttachField'
+import { AttachmentField } from './AttachmentField'
 import { useAttachmentDrafts } from './attachmentDrafts'
 
 /** Подпись вида запроса на текущем языке. */
@@ -48,7 +48,7 @@ interface Props {
    * Решить запрос; ошибка (reject) показывается на карточке. `images` — картинки к «Уточнить»/«Вернуть» (байты);
    * пути в `resolution` ставит main после записи файлов, renderer их не присылает.
    */
-  onResolve(resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
+  onResolve(resolution: RequestResolution, images?: AttachmentInput[]): Promise<void>
   /** Короткий вид (карточка на доске): без контекста и тела ответа, мелкие кнопки. */
   compact?: boolean
   /** Где запрос: «глобальная › подзадача». */
@@ -122,7 +122,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
   const hints = active && !compact
   const t = useT()
 
-  async function resolve(resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
+  async function resolve(resolution: RequestResolution, images?: AttachmentInput[]): Promise<void> {
     if (busy) return
     setBusy(true)
     setError(null)
@@ -297,7 +297,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
           )}
           {clarifying ? (
             <div className="rq-free rq-stack">
-              <ImageAttachField attachments={attachments} disabled={busy} compact={compact}>
+              <AttachmentField attachments={attachments} disabled={busy} compact={compact}>
                 <textarea
                   ref={clarifyRef}
                   value={clarifyText}
@@ -307,7 +307,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
                   onChange={(e) => setClarifyText(e.target.value)}
                   onKeyDown={submitKeys(sendClarify, onEscape)}
                 />
-              </ImageAttachField>
+              </AttachmentField>
               <div className="rq-actions">
                 <button className="btn-sm primary" disabled={busy || !canSendNote} onClick={sendClarify}>
                   {busy ? '…' : t('shell.request.sendClarify')}
@@ -344,7 +344,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
         <div className="rq-free rq-stack">
           {clarifying ? (
             <>
-              <ImageAttachField attachments={attachments} disabled={busy} compact={compact}>
+              <AttachmentField attachments={attachments} disabled={busy} compact={compact}>
                 <textarea
                   ref={clarifyRef}
                   value={clarifyText}
@@ -354,7 +354,7 @@ export const RequestCard = forwardRef<RequestCardHandle, Props>(function Request
                   onChange={(e) => setClarifyText(e.target.value)}
                   onKeyDown={submitKeys(sendReject, onEscape)}
                 />
-              </ImageAttachField>
+              </AttachmentField>
               <div className="rq-actions">
                 <button className="btn-sm primary" disabled={busy || !canSendNote} onClick={sendReject}>
                   {busy ? '…' : t('shell.request.reject')}

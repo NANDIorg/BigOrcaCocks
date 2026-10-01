@@ -166,6 +166,18 @@ export function checkAttachmentData(
   return { kind: 'file', mime: file.type || 'application/octet-stream' }
 }
 
+/**
+ * Байты файла. Папка, перетащенная туда, где `webkitGetAsEntry` её не распознал, или файл, удалённый между выбором
+ * и чтением, роняют `arrayBuffer()` с DOMException на английском без имени — заменяем понятной ошибкой с именем.
+ */
+export async function readFileBytes(file: { name?: string; arrayBuffer(): Promise<ArrayBuffer> }): Promise<Uint8Array<ArrayBuffer>> {
+  try {
+    return new Uint8Array(await file.arrayBuffer())
+  } catch {
+    throw fail(file.name, t('common.attach.errRead'))
+  }
+}
+
 // ---------- Состояние формы ----------
 
 /** Приложенный файл: байты уходят в main при отправке, `url` (blob) — только у картинки, для миниатюры. */
@@ -248,7 +260,7 @@ export function useAttachmentDrafts({ saved, locked = false, legacyImages = fals
   const addOne = useCallback(async (file: File): Promise<void> => {
     try {
       checkFileMeta(file, modeRef.current)
-      const data = new Uint8Array(await file.arrayBuffer())
+      const data = await readFileBytes(file)
       const usage = addUsage(savedRef.current, usageOf(ref.current.map((i) => ({ bytes: i.data.byteLength }))))
       const { kind, mime } = checkAttachmentData(data, file, usage, modeRef.current)
       if (!mounted.current) return

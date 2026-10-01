@@ -8,7 +8,7 @@ import { basename, join } from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, ATTACHMENT_LIMITS, validateAttachments, type RunImage } from '@orca-board/core'
 import {
   runImagesRoot, runImagesDir, runImageFile, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage,
-  removeRunImagesDir, coordinatorImages, readRunImages, revealTaskAttachment
+  removeRunImagesDir, coordinatorImages, readRunImages, revealTaskAttachment, openTaskAttachment
 } from './run-images'
 import { OrcaError } from './i18n'
 import { writeAttachments } from './attachments'
@@ -242,6 +242,25 @@ describe('вложения-файлы задачи', () => {
     assert.throws(() => revealTaskAttachment(store, '/', '..', a.id, a.images![0].id), /недопустимый идентификатор/)
     rmSync(join(dir, `${a.images![0].id}.pdf`))
     assert.throws(() => revealTaskAttachment(store, root, PROJECT, a.id, a.images![0].id), isKey('global.imageFileMissing'))
+  })
+
+  it('openTaskAttachment: только белый список (pdf, md, картинки); html, sh, без расширения — global.attachmentNotOpenable', () => {
+    const files = validateAttachments([
+      { mime: 'application/pdf', name: 'spec.pdf', data: new TextEncoder().encode('%PDF') },
+      { mime: 'text/markdown', name: 'notes.md', data: new TextEncoder().encode('# x') },
+      { mime: 'text/html', name: 'page.html', data: new TextEncoder().encode('<script>') },
+      { mime: 'text/x-sh', name: 'run.sh', data: new TextEncoder().encode('rm -rf') },
+      { mime: 'application/octet-stream', name: 'Makefile', data: new TextEncoder().encode('all:') }
+    ])
+    const g = createTaskWithImages(store, root, PROJECT, { title: 'G' }, [...files, ...valid(16)])
+    const dir = runImagesDir(root, PROJECT, g.id)
+    const [pdf, md, html, sh, noExt, img] = g.images!
+    assert.equal(openTaskAttachment(store, root, PROJECT, g.id, pdf.id), join(dir, `${pdf.id}.pdf`))
+    assert.equal(openTaskAttachment(store, root, PROJECT, g.id, md.id), join(dir, `${md.id}.md`))
+    assert.equal(openTaskAttachment(store, root, PROJECT, g.id, img.id), join(dir, `${img.id}.png`))
+    const notOpenable = (e: unknown) => e instanceof OrcaError && e.key === 'global.attachmentNotOpenable'
+    for (const m of [html, sh, noExt]) assert.throws(() => openTaskAttachment(store, root, PROJECT, g.id, m.id), notOpenable, m.ext)
+    assert.throws(() => openTaskAttachment(store, root, PROJECT, g.id, '../' + pdf.id), (e: unknown) => e instanceof OrcaError && e.key === 'global.imageNotFound')
   })
 
   it('запуск координатора: сохранённый файл переносит kind и имя → в папке координатора file-N-<slug>.ext; пропавший — в missing', () => {

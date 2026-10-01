@@ -893,6 +893,12 @@ export interface OrcaApi {
      * «No handler registered»: renderer проверяет наличие метода и просит перезапустить приложение.
      */
     revealAttachment(id: string, imageId: string): Promise<void>
+    /**
+     * Открыть вложение задачи приложением системы (`shell.openPath`) — только расширения из белого списка
+     * (`attachmentOpenable` в `shared/showcase.ts`: картинки, Markdown, PDF; без HTML). Остальное —
+     * `global.attachmentNotOpenable`: исполняемый файл приложение не запускает. Старый main — «No handler registered».
+     */
+    openAttachment(id: string, imageId: string): Promise<void>
     /** status — id колонки проекта. Подзадачи не трогает. */
     move(id: string, status: string): Promise<GlobalTask>
     /**
