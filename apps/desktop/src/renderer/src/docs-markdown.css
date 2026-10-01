@@ -40,8 +40,11 @@
 .doc-md a { color: color-mix(in srgb, var(--accent) 70%, var(--text)); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); cursor: pointer; }
 .doc-md a:hover { border-bottom-color: var(--accent); }
 .doc-md a[data-doc-href]::before { content: "▤ "; font-size: 11px; color: var(--muted); }
+/* «Документы»: ссылка на файл проекта — значок документа или кода (data-file-kind ставит Markdown.tsx). */
+.doc-md a[data-file-kind="doc"]::before { content: "▤ "; font-size: 11px; color: var(--muted); }
+.doc-md a[data-file-kind="file"]::before { content: "‹› "; font-size: 11px; color: var(--muted); }
 .doc-md a[target="_blank"]::after { content: " ↗"; font-size: 11px; color: var(--muted); }
-.doc-md a:not([href]):not([data-doc-href]):not([data-doc-anchor]) { color: inherit; border-bottom: 1px dotted var(--muted); cursor: default; }
+.doc-md a:not([href]):not([data-doc-href]):not([data-doc-anchor]):not([data-showcase-href]) { color: inherit; border-bottom: 1px dotted var(--muted); cursor: default; }
 
 /* Блок кода: шапка с языком и «Копировать» */
 .doc-md .doc-code { border-radius: 10px; background: var(--code-bg); border: 1px solid var(--line); overflow: hidden; }
