@@ -2,10 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS, WF_DECISION_OPTION_ID, validateWorkflow, wfPorts, DEFAULT_ROLES, DEFAULT_COLUMNS } from '@orca-board/core'
 import {
-  WF_ADDABLE_TYPES, addNode, canConnect, connect, disconnect, issueTargets, moveNode, removeNode, removeSelected, uniqueId, wfPortClass, wfPortLabel
+  WF_ADDABLE_TYPES, WF_SUBTASK_FORBIDDEN_TYPES, addNode, canConnect, connect, disconnect, issueTargets, makeNode, moveNode, pairFork, removeNode,
+  removeSelected, uniqueId, wfAddableTypes, wfPortClass, wfPortLabel
 } from './workflowEdit'
 import { setLocale } from './i18n'
-import { graphWithMerge } from './workflowFixture'
+import { graphWithFork, graphWithMerge } from './workflowFixture'
 
 const wf = graphWithMerge([{ id: 'reviewer' }])
 
@@ -150,4 +151,64 @@ test('wfPortClass: фиксированный порт — сам исход, в
   assert.equal(wfPortClass('condition', 'yes'), 'yes')
   assert.equal(wfPortClass('decision', 'yes'), 'opt')
   assert.equal(wfPortClass('decision', 'needs_design'), 'opt')
+})
+
+test('fork из палитры: два пути «Путь 1 / Путь 2» с id по маске, порты подписаны названиями путей', () => {
+  const { workflow, nodeId } = addNode(wf, 'fork', 0, 0)
+  const fork = workflow.nodes.find((n) => n.id === nodeId)!
+  assert.equal(fork.type, 'fork')
+  if (fork.type !== 'fork') return
+  assert.deepEqual(fork.branches, [{ id: 'path_1', label: 'Путь 1' }, { id: 'path_2', label: 'Путь 2' }])
+  assert.deepEqual(wfPorts(fork), ['path_1', 'path_2'])
+  for (const b of fork.branches) assert.match(b.id, WF_DECISION_OPTION_ID)
+  assert.equal(wfPortLabel(fork, 'path_2'), 'Путь 2')
+  assert.equal(wfPortClass('fork', 'path_2'), 'lane')
+  const renamed = { ...fork, branches: [{ id: 'path_1', label: '  ' }, fork.branches[1]] }
+  assert.equal(wfPortLabel(renamed, 'path_1'), 'path_1', 'пустое название — id')
+  setLocale('en')
+  try {
+    const en = makeNode(wf, 'fork', 0, 0)
+    assert.deepEqual(en.type === 'fork' && en.branches.map((b) => b.label), ['Path 1', 'Path 2'])
+  } finally {
+    setLocale('ru')
+  }
+})
+
+test('join из палитры: пара — ближайшее разветвление без слияния, левее точки в приоритете', () => {
+  const g = graphWithFork()
+  // У `split` слияние уже есть — пары нет.
+  assert.equal(pairFork(g, 700, 0), undefined)
+  const withOpen = {
+    ...g,
+    nodes: [...g.nodes, { id: 'far', type: 'fork' as const, x: 100, y: 500, branches: [] }, { id: 'near', type: 'fork' as const, x: 900, y: 400, branches: [] }]
+  }
+  assert.equal(pairFork(withOpen, 800, 400), 'far', 'правее точки — только если левее нет')
+  assert.equal(pairFork(withOpen, 1200, 400), 'near')
+  const { workflow, nodeId } = addNode(withOpen, 'join', 1200, 400)
+  const join = workflow.nodes.find((n) => n.id === nodeId)!
+  assert.deepEqual(join.type === 'join' && join.forkId, 'near')
+  assert.equal(nodeId, 'join')
+  const lonely = addNode(wf, 'join', 0, 0).workflow.nodes.at(-1)!
+  assert.deepEqual(lonely.type === 'join' && lonely.forkId, '', 'разветвлений нет — пусто, подсветит валидация')
+})
+
+test('fork и join недоступны в пути подзадачи, в графе типа — доступны', () => {
+  for (const type of ['fork', 'join'] as const) {
+    assert.ok(WF_ADDABLE_TYPES.includes(type))
+    assert.ok(WF_SUBTASK_FORBIDDEN_TYPES.includes(type))
+    assert.ok(!wfAddableTypes('subtask').includes(type))
+  }
+})
+
+test('проблемы разветвления подсвечиваются на ноде и на переходе', () => {
+  const g = graphWithFork()
+  // Путь «Backend» уходит прямо в конец: утечка из пути (ребро) и слияние без пути «Бэкенд».
+  const broken = { ...g, edges: g.edges.map((e) => (e.id === 'e4' ? { ...e, to: 'end' } : e)) }
+  const issues = validateWorkflow(broken, { roles: DEFAULT_ROLES })
+  const leak = issues.errors.find((i) => i.code === 'forkEndInBranch')!
+  assert.ok(leak, 'валидатор нашёл выход пути в конец')
+  const targets = issueTargets(issues)
+  assert.equal(targets.edges.get('e4')?.level, 'error')
+  assert.equal(targets.nodes.get(leak.nodeId!)?.level, 'error')
+  assert.match(targets.edges.get('e4')!.messages.join('\n'), /Backend/)
 })

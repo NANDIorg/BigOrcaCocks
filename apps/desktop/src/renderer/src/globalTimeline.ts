@@ -4,6 +4,8 @@ import { STATUS_SOURCE_TITLES, statusDurationLabel } from './statusHistory'
 import { t, type TKey } from './i18n'
 import { formatDateTime } from './i18n/format'
 import { agentTitle, builtinText, nodeTitle } from './defaultTitles'
+import { laneTitle } from './runStage'
+import { isArrival, joinMerges } from './workflowProgress'
 
 /**
  * Вид события ленты «История». От порядка зависит разбор записей с одинаковой меткой времени — см. `KIND_RANK`.
@@ -134,14 +136,45 @@ function decisionLine(d: Partial<StageDecision>): string | undefined {
  * Входы в этапы воркфлоу глобальной задачи (`Run.stageHistory`): «Этап «Реализация»», заход со второго, чем пришли
  * (возврат на доработку, конфликт), коммит ветки на входе и выдержка сводки, с которой этап закрыт. У ноды `decision` —
  * выбранная ветка, обоснование и комментарий агента, если решал человек. Исход-вариант следующей записи не подписываем:
- * он уже виден в решении. Название — из графа прогона, если он есть (тогда оно и переведено), иначе из записи.
+ * он уже виден в решении. Название — из графа прогона, если он есть (тогда оно и переведено), иначе из записи. Вход в этап
+ * внутри разветвления подписан путём («путь «Бэкенд»»): записи параллельных путей в ленте перемешаны по времени.
+ * Приход пути в слияние — отметка «Путь «…» пришёл в «…»», а не заход; заход в слияние («N-й заход» со второго) — само
+ * слияние, строкой перед первым этапом после него: своей записи у слияния нет.
  */
 function stageEvents(g: TimelineSource): TimelineEvent[] {
-  return (g.stageHistory ?? []).flatMap((h, i): TimelineEvent[] => {
+  const history = g.stageHistory ?? []
+  const titleOf = (nodeId: string, fallback?: string): string => {
+    const node = g.workflow?.nodes.find((n) => n.id === nodeId)
+    return node ? nodeTitle(node) : fallback ? builtinText(fallback) : nodeId
+  }
+  const merges = new Map(joinMerges(history, g.workflow).map((m) => [m.index, m]))
+  return history.flatMap((h, i): TimelineEvent[] => {
     if (!isTime(h.at)) return []
     const node = g.workflow?.nodes.find((n) => n.id === h.nodeId)
     if (node && PASS_THROUGH.includes(node.type)) return []
-    const name = node ? nodeTitle(node) : h.title ? builtinText(h.title) : h.nodeId
+    const name = titleOf(h.nodeId, h.title)
+    if (isArrival(h, g.workflow)) {
+      return [{
+        key: `stage-${i}`,
+        kind: 'stage',
+        at: h.at,
+        ...(node ? { nodeId: node.id } : {}),
+        title: h.lane !== undefined
+          ? t('global.timeline.laneArrived', { lane: laneTitle(g.workflow, h.lane), name })
+          : t('global.timeline.laneArrivedAny', { name })
+      }]
+    }
+    const m = merges.get(i)
+    const joinNode = m ? g.workflow?.nodes.find((n) => n.id === m.joinId) : undefined
+    const merge: TimelineEvent | undefined = m && {
+      key: `merge-${i}`,
+      kind: 'stage',
+      at: h.at,
+      ...(joinNode ? { nodeId: joinNode.id } : {}),
+      title: t('global.timeline.stage', { name: titleOf(m.joinId) }),
+      ...(m.visit > 1 ? { detail: t('global.timeline.stageVisit', { n: m.visit }) } : {}),
+      sub: t('global.timeline.merged')
+    }
     const outcome = h.outcome && NOTABLE_OUTCOMES.includes(h.outcome) ? t(`global.timeline.stageOutcome.${h.outcome}` as TKey) : undefined
     const commit = h.commit ? t('global.timeline.stageCommit', { commit: h.commit.slice(0, COMMIT_SHORT) }) : undefined
     const decision = h.decision && typeof h.decision === 'object' ? h.decision : undefined
@@ -149,8 +182,9 @@ function stageEvents(g: TimelineSource): TimelineEvent[] {
     // У ноды `decision` сводки нет: цитата — обоснование того, кто выбрал ветку.
     const excerpt = decision ? decisionExcerpt(decision.reason) : summaryExcerpt(h.summary)
     const note = decision?.by === 'human' ? decisionExcerpt(decision.agentNote) : undefined
-    const sub = [chosen, outcome, commit].filter(Boolean)
-    return [{
+    const lane = h.lane !== undefined ? t('global.timeline.stageLane', { name: laneTitle(g.workflow, h.lane) }) : undefined
+    const sub = [lane, chosen, outcome, commit].filter(Boolean)
+    return [...(merge ? [merge] : []), {
       key: `stage-${i}`,
       kind: 'stage',
       at: h.at,

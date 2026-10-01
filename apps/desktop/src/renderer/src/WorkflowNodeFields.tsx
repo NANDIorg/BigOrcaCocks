@@ -1,6 +1,6 @@
 import type React from 'react'
 import {
-  WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS,
+  WF_DECISION_MAX_OPTIONS, WF_DECISION_MIN_OPTIONS, WF_FORK_MAX_BRANCHES, WF_FORK_MIN_BRANCHES,
   type AgentInfo, type BoardColumn, type Role, type WfCondition, type WfNode, type WfPort, type Workflow
 } from '@orca-board/core'
 import { Icon } from './icons'
@@ -10,9 +10,9 @@ import {
   GIT_OPERATIONS, gitFieldsFor, gitOperationTitle, isGitOperation, isUnavailableGitOperation, gitPlaceholdersHint, gitPreview, type WfGitNode, type WfGitPatch
 } from './workflowGit'
 import {
-  WF_TYPE_ORDER, WF_TYPE_TITLES, addDecisionOption, changeNodeType, conditionOfKind, hasColumn, moveDecisionOption,
-  nodeOptionLabel, patchDecisionOption, patchNode, portTarget, removeDecisionOption, resetDecisionOptions, setPortTarget,
-  targetOptions, type WfNodePatch
+  WF_TYPE_ORDER, WF_TYPE_TITLES, addDecisionOption, addForkBranch, addJoinFor, changeNodeType, conditionOfKind, forkJoins, forkOptions,
+  hasColumn, moveDecisionOption, moveForkBranch, nodeOptionLabel, patchDecisionOption, patchNode, portTarget, removeDecisionOption,
+  removeForkBranch, renameForkBranch, resetDecisionOptions, setJoinFork, setPortTarget, targetOptions, type WfNodePatch
 } from './workflowForm'
 import { useT, type TKey } from './i18n'
 import { RoleBrief, WorkRolesField } from './WorkflowRoleFields'
@@ -109,6 +109,8 @@ export function whatTitle(type: WfNode['type']): TKey {
     case 'decision': return 'config.wf.card.whatDecision'
     case 'condition': return 'config.wf.card.whatCondition'
     case 'git': return 'config.wf.card.whatGit'
+    case 'fork': return 'config.wf.card.whatFork'
+    case 'join': return 'config.wf.card.whatJoin'
     default: return 'config.wf.card.what'
   }
 }
@@ -176,6 +178,8 @@ export function WhatFields({ node, workflow, onChange, scope, roles }: NodeProps
     case 'decision': return <DecisionWhat node={node} workflow={workflow} onChange={onChange} />
     case 'condition': return <ConditionFields node={node} workflow={workflow} roles={roles} scope={scope} onChange={(test) => patch({ test })} />
     case 'git': return <GitFields node={node} onChange={(git) => patch({ git })} />
+    case 'fork': return <ForkWhat node={node} workflow={workflow} onChange={onChange} />
+    case 'join': return <JoinWhat node={node} workflow={workflow} onChange={onChange} />
     default: return null
   }
 }
@@ -499,6 +503,123 @@ function DecisionOptions({ node, workflow, onChange }: NodeProps<NodeOf<'decisio
         <button type="button" className="btn-sm" disabled={isYesNo} onClick={reset}>{t('config.wf.insp.decisionReset')}</button>
       </div>
     </fieldset>
+  )
+}
+
+/**
+ * Пути ноды «Разветвление»: название правится, id показан и не меняется (на нём держатся переход и позиция прогона),
+ * порядок — порядок портов. Под списком — парное слияние: нет его — кнопка «Добавить слияние».
+ */
+function ForkWhat({ node, workflow, onChange }: NodeProps<NodeOf<'fork'>>): React.JSX.Element {
+  const t = useT()
+  const branches = Array.isArray(node.branches) ? node.branches : []
+  const full = branches.length >= WF_FORK_MAX_BRANCHES
+  const joins = forkJoins(workflow, node.id)
+  return (
+    <>
+      <fieldset className="wf-opts">
+        <legend>{t('config.wf.insp.forkBranches', { count: branches.length, max: WF_FORK_MAX_BRANCHES })}</legend>
+        <p className="hint">{t('config.wf.insp.forkBranchesHint')}</p>
+        <ol className="wf-opt-list">
+          {branches.map((b, i) => {
+            const name = (b.label ?? '').trim() || b.id
+            return (
+              <li key={b.id} className="wf-opt">
+                <div className="wf-opt-row">
+                  <input
+                    value={b.label ?? ''}
+                    aria-label={t('config.wf.insp.forkBranchLabel', { n: i + 1 })}
+                    placeholder={t('config.wf.insp.forkBranchLabelPlaceholder')}
+                    onChange={(e) => onChange(renameForkBranch(workflow, node.id, b.id, e.target.value))}
+                  />
+                  <span className="chip mono" title={t('config.wf.insp.forkBranchId')}>{b.id}</span>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    disabled={i === 0}
+                    title={t('config.wf.insp.forkBranchUp', { label: name })}
+                    aria-label={t('config.wf.insp.forkBranchUp', { label: name })}
+                    onClick={() => onChange(moveForkBranch(workflow, node.id, b.id, -1))}
+                  >
+                    <Icon.up />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    disabled={i === branches.length - 1}
+                    title={t('config.wf.insp.forkBranchDown', { label: name })}
+                    aria-label={t('config.wf.insp.forkBranchDown', { label: name })}
+                    onClick={() => onChange(moveForkBranch(workflow, node.id, b.id, 1))}
+                  >
+                    <Icon.down />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    disabled={branches.length <= WF_FORK_MIN_BRANCHES}
+                    title={branches.length <= WF_FORK_MIN_BRANCHES
+                      ? t('config.wf.insp.forkBranchMin', { min: WF_FORK_MIN_BRANCHES })
+                      : t('config.wf.insp.forkBranchRemove', { label: name })}
+                    aria-label={t('config.wf.insp.forkBranchRemove', { label: name })}
+                    onClick={() => onChange(removeForkBranch(workflow, node.id, b.id))}
+                  >
+                    <Icon.trash />
+                  </button>
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+        <div className="wf-opt-actions">
+          <button
+            type="button"
+            className="btn-sm"
+            disabled={full}
+            title={full ? t('config.wf.insp.forkAddMax', { max: WF_FORK_MAX_BRANCHES }) : undefined}
+            onClick={() => onChange(addForkBranch(workflow, node.id).workflow)}
+          >
+            <Icon.plus /> {t('config.wf.insp.forkAdd')}
+          </button>
+        </div>
+      </fieldset>
+      <div className="wf-field">
+        <span>{t('config.wf.insp.forkJoin')}</span>
+        {joins.length === 1 && <span className="wf-fork-join">{nodeOptionLabel(joins[0])}</span>}
+        {joins.length > 1 && <p className="hint">{t('config.wf.insp.forkJoinMany', { joins: joins.map(nodeOptionLabel).join(', ') })}</p>}
+        {joins.length === 0 && (
+          <>
+            <p className="hint">{t('config.wf.insp.forkJoinNone')}</p>
+            <div className="wf-opt-actions">
+              <button type="button" className="btn-sm" onClick={() => onChange(addJoinFor(workflow, node.id).workflow)}>
+                <Icon.plus /> {t('config.wf.insp.forkAddJoin')}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+/** Парное разветвление ноды «Слияние»: select по разветвлениям графа; уже занятые другим слиянием — с пометкой. */
+function JoinWhat({ node, workflow, onChange }: NodeProps<NodeOf<'join'>>): React.JSX.Element {
+  const t = useT()
+  const forkId = typeof node.forkId === 'string' ? node.forkId : ''
+  const forks = forkOptions(workflow)
+  const missing = forkId !== '' && !forks.some((f) => f.id === forkId)
+  const paired = (id: string): boolean => forkJoins(workflow, id).some((j) => j.id !== node.id)
+  return (
+    <label className="wf-field">
+      <span>{t('config.wf.insp.joinFork')}</span>
+      <select value={forkId} onChange={(e) => onChange(setJoinFork(workflow, node.id, e.target.value))}>
+        <option value="">{t('config.wf.insp.joinForkPick')}</option>
+        {forks.map((f) => (
+          <option key={f.id} value={f.id}>{paired(f.id) ? t('config.wf.insp.joinForkPaired', { label: f.label }) : f.label}</option>
+        ))}
+        {missing && <option value={forkId}>{t('config.wf.insp.joinForkMissing', { fork: forkId })}</option>}
+      </select>
+      <small className="hint">{forks.length === 0 ? t('config.wf.insp.joinNoForks') : t('config.wf.insp.joinForkHint')}</small>
+    </label>
   )
 }
 

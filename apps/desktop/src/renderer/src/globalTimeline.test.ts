@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { defaultWorkflow, type BoardColumn, type StageChange, type StatusChange } from '@orca-board/core'
 import { dayLabel, DECISION_EXCERPT_LIMIT, globalTimeline, groupByDay, summaryExcerpt, SUMMARY_EXCERPT_LIMIT, TIMELINE_COLLAPSED, visibleTimeline, type TimelineEvent } from './globalTimeline'
 import { setLocale } from './i18n'
+import { runGraphWithFork } from './workflowFixture'
 
 /** Выполнить на английском и вернуть русский: остальные тесты файла ждут язык по умолчанию. */
 function inEnglish(fn: () => void): void {
@@ -310,5 +311,67 @@ test('globalTimeline: этапы на английском', () => {
     assert.equal(e.title, 'Stage “Implementation”')
     assert.equal(e.detail, 'pass 3')
     assert.equal(e.sub, 'sent back for rework · branch at entry: abc1234')
+  })
+})
+
+test('globalTimeline: вход в этап внутри разветвления подписан путём; без пути — подписи нет', () => {
+  const workflow = runGraphWithFork()
+  const stageHistory: StageChange[] = [
+    { nodeId: 'split', from: 'analysis', outcome: 'next', at: 200 },
+    { nodeId: 'be', from: 'split', outcome: 'backend', lane: 'split:backend', at: 201 },
+    { nodeId: 'fe', from: 'split', outcome: 'frontend', lane: 'split:frontend', at: 202 },
+    { nodeId: 'be', from: 'be_review', outcome: 'reject', lane: 'split:backend', at: 300, visit: 2 }
+  ]
+  const stages = globalTimeline({ stageHistory, workflow }, [], 1000).filter((e) => e.kind === 'stage')
+  const sub = (at: number): string | undefined => stages.find((e) => e.at === at)?.sub
+  assert.equal(sub(200), undefined)
+  assert.equal(sub(201), 'путь «Backend»')
+  assert.equal(sub(202), 'путь «Frontend»')
+  assert.equal(sub(300), 'путь «Backend» · возврат на доработку')
+  inEnglish(() => {
+    const en = globalTimeline({ stageHistory, workflow }, [], 1000).find((e) => e.at === 202)
+    assert.equal(en?.sub, 'path “Frontend”')
+  })
+  // Графа нет (типы не загрузились) — путь назван id из записи.
+  assert.equal(globalTimeline({ stageHistory }, [], 1000).find((e) => e.at === 202)?.sub, 'путь «frontend»')
+})
+
+test('globalTimeline: приход пути в слияние — отметка без захода; заход — само слияние, «N-й заход» по слияниям', () => {
+  const workflow = runGraphWithFork()
+  // Два прохода через разветвление: приходы путей каждого поколения несут номер слияния, которого ждут (`visit`).
+  const stageHistory: StageChange[] = [
+    { nodeId: 'split', from: 'analysis', outcome: 'next', at: 200, visit: 1 },
+    { nodeId: 'be', from: 'split', outcome: 'backend', lane: 'split:backend', at: 201, visit: 1 },
+    { nodeId: 'fe', from: 'split', outcome: 'frontend', lane: 'split:frontend', at: 202, visit: 1 },
+    { nodeId: 'join', from: 'be_review', outcome: 'accept', lane: 'split:backend', at: 300, visit: 1, arrived: true },
+    { nodeId: 'join', from: 'fe_mock', outcome: 'accept', lane: 'split:frontend', at: 310, visit: 1, arrived: true },
+    { nodeId: 'human', from: 'join', outcome: 'next', at: 320, visit: 1 },
+    { nodeId: 'split', from: 'human', outcome: 'reject', at: 400, visit: 2 },
+    { nodeId: 'be', from: 'split', outcome: 'backend', lane: 'split:backend', at: 401, visit: 2 },
+    { nodeId: 'fe', from: 'split', outcome: 'frontend', lane: 'split:frontend', at: 402, visit: 2 },
+    { nodeId: 'join', from: 'be_review', outcome: 'accept', lane: 'split:backend', at: 500, visit: 2, arrived: true },
+    { nodeId: 'join', from: 'fe_mock', outcome: 'accept', lane: 'split:frontend', at: 510, visit: 2, arrived: true },
+    { nodeId: 'human', from: 'join', outcome: 'next', at: 520, visit: 2 }
+  ]
+  const stages = globalTimeline({ stageHistory, workflow }, [], 1000).filter((e) => e.kind === 'stage')
+  const row = (e: TimelineEvent): string[] => [String(e.at), e.title, e.detail ?? '', e.sub ?? '']
+  assert.deepEqual(stages.filter((e) => e.at >= 300 && e.at <= 320 || e.at >= 500).map(row), [
+    ['520', 'Этап «Human check»', '2-й заход', ''],
+    ['520', 'Этап «Assemble»', '2-й заход', 'пути сошлись'],
+    ['510', 'Путь «Frontend» пришёл в «Assemble»', '', ''],
+    ['500', 'Путь «Backend» пришёл в «Assemble»', '', ''],
+    ['320', 'Этап «Human check»', '', ''],
+    ['320', 'Этап «Assemble»', '', 'пути сошлись'],
+    ['310', 'Путь «Frontend» пришёл в «Assemble»', '', ''],
+    ['300', 'Путь «Backend» пришёл в «Assemble»', '', '']
+  ])
+  assert.equal(stages.find((e) => e.key === 'merge-5')?.nodeId, 'join', 'слияние ведёт на ноду графа')
+  // Снимок до поля `arrived` (миграция main не прошла): запись пути на `join` — тоже приход, по графу.
+  const legacy = stageHistory.map(({ arrived: _arrived, ...h }) => h)
+  assert.equal(globalTimeline({ stageHistory: legacy, workflow }, [], 1000).find((e) => e.at === 310)?.title, 'Путь «Frontend» пришёл в «Assemble»')
+  inEnglish(() => {
+    const en = globalTimeline({ stageHistory, workflow }, [], 1000)
+    assert.equal(en.find((e) => e.at === 300)?.title, 'Path “Backend” reached “Assemble”')
+    assert.equal(en.find((e) => e.key === 'merge-11')?.sub, 'paths merged')
   })
 })

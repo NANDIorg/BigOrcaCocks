@@ -60,6 +60,9 @@ describe('validateNodeTemplate', () => {
       assert.deepEqual(codes(validateNodeTemplate(tpl(node as unknown as Record<string, unknown>)).errors), ['templateBadNode'], JSON.stringify(node))
     }
     assert.deepEqual(codes(validateNodeTemplate(tpl({ type: 'start' })).errors), ['templateNodeStart'])
+    // Пара fork/join держится на рёбрах и ссылке forkId — поштучная копия дала бы непарную ноду.
+    assert.deepEqual(codes(validateNodeTemplate(tpl({ type: 'fork', branches: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] })).errors), ['templateNodeFork'])
+    assert.deepEqual(codes(validateNodeTemplate(tpl({ type: 'join', forkId: 'f' })).errors), ['templateNodeFork'])
     assert.deepEqual(codes(validateNodeTemplate(null as unknown as WfNodeTemplate).errors).slice(0, 2), ['templateNoId', 'templateNoTitle'])
   })
 

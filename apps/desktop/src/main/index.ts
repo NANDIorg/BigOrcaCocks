@@ -20,7 +20,7 @@ import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, typ
 import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
 import {
   acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
-  settleIdleRunStages, startRunWorkflow,
+  hasIdleStage, settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
 import { docSourceRoot, docTasks, listDocGroups, readDoc } from './docs'
@@ -657,7 +657,7 @@ function watchFinishedCoordinators(): void {
       for (const { ptyId } of due) killPty(ptyId)
       store.settleIdleRuns(isAlive)
       // Воркфлоу прогона: координатор умер, не закрыв этап `stage finish` — этап закрывается без сводки.
-      if (snap.runs.some((r) => r.workflowScope === 'run' && r.stageTasksDoneAt !== undefined && r.closedAt === undefined)) {
+      if (snap.runs.some(hasIdleStage)) {
         try {
           settleIdleRunStages(runWorkflowDeps(projectId))
         } catch (e) {
@@ -1194,7 +1194,7 @@ app.whenReady().then(() => {
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId, decision) => void reviewDecision(p.id, taskId, 'accept', decision),
         reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),
-        finishStage: (runId, summary) => finishRunStage(runWorkflowDeps(p.id), runId, summary),
+        finishStage: (runId, summary, nodeId) => finishRunStage(runWorkflowDeps(p.id), runId, summary, nodeId),
         decide: (taskId, option, reason) => runDecision(runWorkflowDeps(p.id), taskId, option, reason),
         escalateDecision: (taskId, reason) => escalateDecision(runWorkflowDeps(p.id), taskId, reason),
         resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),

@@ -192,6 +192,10 @@ export default {
   'global.imageFileMissing': 'the file of image {imageId} was not found on disk — remove the image and attach it again',
   'global.imagesEmpty': 'no images to add',
   'global.imagesSaveFailed': 'could not save the task images: {reason}',
+  'global.approvalAmbiguous': {
+    one: '{count} review request of the global task is waiting ({titles}) — resolve it in the Inbox',
+    other: '{count} review requests of the global task are waiting ({titles}) — the card cannot tell which path to decide: resolve each one in the Inbox'
+  },
 
   'column.noneLeft': 'at least one column is required',
   'column.emptyId': 'column #{n}: empty id',
@@ -221,6 +225,10 @@ export default {
   'projectTypes.badIds': 'project types: typeIds must be an array of type ids',
   'projectTypes.empty': 'project types: at least one available type is required',
   'projectTypes.defaultNotAvailable': 'the default type “{title}” must be among the types available to the project',
+
+  'runApproval.acceptHint': '“Accept” — continue along the workflow (usually the end or a merge), “Return” — with notes: the coordinator gets them and creates follow-up subtasks.',
+  'runApproval.acceptHintLane': 'This node is on the “{lane}” path. “Accept” — the path moves on and reaches the join: the workflow continues once all paths arrive. “Return” — with notes: the coordinator gets them and reworks only this path, the other paths are not affected.',
+  'runApproval.laneTitle': 'Path “{lane}”: {title}',
 
   'workflow.future': 'the workflow is saved in format version {version}, the app only knows {known} — update the app',
   'workflow.notSaved': 'workflow not saved: {errors}',

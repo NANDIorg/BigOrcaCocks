@@ -5,18 +5,18 @@ import { defaultWorkflow, stableJson, validateWorkflow, type AgentInfo, type Boa
 import { WorkflowCanvas } from '../WorkflowCanvas'
 import { WorkflowInspector } from '../WorkflowInspector'
 import { Icon } from '../icons'
-import type { WfSelection } from '../workflowEdit'
+import { wfPortLabel, type WfSelection } from '../workflowEdit'
 import {
   canOpenPath, crumbs, graphAt, levelIssues, locateId, resolvePath, scopeOf, startCustomSubflow, writeGraphAt, type WfPath
 } from '../workflowNav'
-import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, type WorkflowMigrationInfo } from '../workflowForm'
-import { groupProblems, shortIssueText, type WfProblemGroup } from '../workflowEditorView'
+import { addRetryLimit, exportWorkflowJson, parseWorkflowJson, workflowFileName, workflowSaveError, type WorkflowMigrationInfo } from '../workflowForm'
+import { edgeProblemTitle, groupProblems, shortIssueText, type WfProblemGroup } from '../workflowEditorView'
 import { SectionHead } from '../about/parts'
 import { useLocale, useT } from '../i18n'
 import { nodeTitle, wfIssueText } from '../defaultTitles'
 import { ipcErrorMessage } from '../ipcError'
 import { storedWorkflowNotes } from '../taskTypeEdit'
-import type { NodeTemplatesHook } from '../nodeTemplates'
+import { canBeTemplate, type NodeTemplatesHook } from '../nodeTemplates'
 
 interface Props {
   /** Название типа — имя файла экспорта. */
@@ -127,7 +127,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
       setError(null)
       setNotice(message)
     } catch (e) {
-      setError(ipcErrorMessage(e))
+      setError(workflowSaveError(ipcErrorMessage(e)))
     } finally {
       setBusy(false)
     }
@@ -210,16 +210,30 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
 
   const problems = useMemo(() => groupProblems(issues), [issues])
 
-  /** Заголовок группы «Проблем»: нода (в пути — «Реализация › Ревью»), переход или весь граф. */
+  /** Название с путём подзадачи впереди: «Реализация › Ревью». */
+  const inPath = (path: readonly string[], own: string): string => {
+    if (path.length === 0) return own
+    const parent = draft.nodes.find((n) => n.id === path[0])
+    return `${parent ? nodeTitle(parent) : path[0]} › ${own}`
+  }
+
+  /**
+   * Заголовок группы «Проблем»: нода (в пути — «Реализация › Ревью»), переход («Переход «принять» у ноды «X»», путь
+   * разветвления — «Путь «Бэкенд» разветвления «X»») или весь граф. id перехода — только если перехода уже нет.
+   */
   const problemTitle = (g: WfProblemGroup): string => {
-    if (g.edgeId) return t('config.wf.probs.edge', { id: g.edgeId })
+    if (g.edgeId) {
+      const target = locateId(draft, 'edge', g.edgeId)
+      const graph = graphAt(draft, target.path)?.graph
+      const parts = graph && edgeProblemTitle(graph, target.id, wfPortLabel, nodeTitle)
+      if (!parts) return t('config.wf.probs.edge', { id: g.edgeId })
+      const node = inPath(target.path, parts.node)
+      return parts.fork ? t('config.wf.probs.forkEdge', { outcome: parts.outcome, node }) : t('config.wf.probs.edgeOf', { outcome: parts.outcome, node })
+    }
     if (g.nodeId) {
       const target = locateId(draft, 'node', g.nodeId)
       const node = graphAt(draft, target.path)?.graph.nodes.find((n) => n.id === target.id)
-      const own = node ? nodeTitle(node) : target.id
-      if (target.path.length === 0) return own
-      const parent = draft.nodes.find((n) => n.id === target.path[0])
-      return `${parent ? nodeTitle(parent) : target.path[0]} › ${own}`
+      return inPath(target.path, node ? nodeTitle(node) : target.id)
     }
     return t('config.wf.probs.graph')
   }
@@ -228,7 +242,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
   const saveBlocked = errors.length > 0 ? t('config.wf.tab.fixFirst') : !dirty ? t('config.wf.tab.noChanges') : undefined
   const selectedNode = selection?.kind === 'node' ? level.graph.nodes.find((n) => n.id === selection.id) : undefined
   // «Сохранить выбранную ноду» в палитре — к полю названия в карточке «Своя нода» инспектора.
-  const saveSelected = library && !levelReadOnly && selectedNode && selectedNode.type !== 'start'
+  const saveSelected = library && !levelReadOnly && selectedNode && canBeTemplate(selectedNode.type)
     ? (): void => {
         const card = editorRef.current?.querySelector<HTMLElement>('[data-card="tpl"]')
         card?.scrollIntoView({ block: 'nearest', behavior: motionScrollBehavior() })
@@ -376,7 +390,7 @@ export function TaskTypeWorkflow({ title, workflow, roles, columns, readOnly, ag
                                 <b>{problemTitle(g)}</b>
                                 {g.items.map((i, n) => (
                                   <span key={n} className={`wf-problem-item wf-problem-item--${i.level}`}>
-                                    {g.nodeId && !g.edgeId ? shortIssueText(wfIssueText(i.issue)) : wfIssueText(i.issue)}
+                                    {g.nodeId ? shortIssueText(wfIssueText(i.issue)) : wfIssueText(i.issue)}
                                   </span>
                                 ))}
                               </span>

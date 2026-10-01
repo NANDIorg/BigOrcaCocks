@@ -49,6 +49,8 @@ interface Props {
   live?: boolean
   /** «Подтвердить» на «Проверке». */
   onAccept?(): void
+  /** Сколько approval прогона ждут решения: больше одного (параллельные пути) — кнопок решения нет, их решают во «Входящих». */
+  approvals?: number
   /** «Вернуть в работу…» на «Проверке» — модалка с уточнением (эта закрывается). */
   onReturn?(): void
   onClose(): void
@@ -91,7 +93,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
   // Создание — всегда можно; правка — пока задача не начата (то же правило, что у смены типа), иначе только просмотр.
   const canEditImages = !global || imagesEditable(global, statusKind)
   const attach = useImageAttachments({ saved: imageUsage(savedImages), locked: busy || !canEditImages })
-  const actions = global ? globalTaskActions(global, statusKind, live) : undefined
+  const actions = global ? globalTaskActions(global, statusKind, live, props.approvals) : undefined
   const selectedType = editing ? undefined
     : types?.find((ty) => ty.id === pickedTypeId) ?? types?.find((ty) => ty.id === defaultTypeId) ?? types?.[0]
   // Правка: варианты смены типа, пока задача не начата; undefined — тип только бейджем.

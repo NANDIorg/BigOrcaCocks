@@ -15,6 +15,14 @@ interface Props {
   tasks?: Task[]
   columns?: BoardColumn[]
   dispatches?: Dispatch[]
+  /**
+   * Сколько approval прогона ждут решения. Больше одного — параллельные пути разветвления: окно не знает, какой путь
+   * подтверждать, поэтому «Подтвердить» выключено и вместо него подсказка про «Входящие» (окно могло открыться до того,
+   * как второй путь дошёл до человека).
+   */
+  approvals?: number
+  /** Путь разветвления, который подтверждается (`reviewLaneTitle`): ждущий approval один и стоит внутри пути. */
+  lane?: string
   onClose(): void
   /** «Подтвердить» с решением (пустая строка — без него): граф идёт дальше, решение уйдёт координатору в следующем этапе. */
   onSubmit(decision: string): Promise<void>
@@ -25,13 +33,16 @@ interface Props {
  * пожелание, которое координатор получит в `stage_started` следующего этапа. Ошибка остаётся в окне. Показ подзадач —
  * блоками с превью; в просмотрщике то же поле решения и «Подтвердить» («Вернуть» — отдельная кнопка экрана задачи).
  */
-export function AcceptGlobalModal({ global, request, tasks, columns, dispatches, onClose, onSubmit }: Props): React.JSX.Element {
+export function AcceptGlobalModal({ global, request, tasks, columns, dispatches, approvals = 0, lane, onClose, onSubmit }: Props): React.JSX.Element {
   const t = useT()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busyRef = useRef(false)
-  const canSubmit = !busy && request !== undefined
+  const many = approvals > 1
+  const canSubmit = !busy && request !== undefined && !many
+  const laneShown = many ? undefined : lane
+  const title = laneShown !== undefined ? t('global.accept.titleLane', { lane: laneShown }) : t('global.accept.title')
   const showcases = request ? requestShowcases(request, dispatches, tasks, (status) => columns?.find((c) => c.id === status)?.kind) : []
   const body = bodyWithoutShowcases(request?.body, showcases)
 
@@ -68,10 +79,11 @@ export function AcceptGlobalModal({ global, request, tasks, columns, dispatches,
 
   return (
     <div className="modal-backdrop" onClick={close}>
-      <div className={`modal${showcases.length > 0 ? ' g-accept-modal' : ''}`} role="dialog" aria-modal="true" aria-label={t('global.accept.title')} onClick={(e) => e.stopPropagation()}>
-        <h3>{t('global.accept.title')}</h3>
+      <div className={`modal${showcases.length > 0 ? ' g-accept-modal' : ''}`} role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
         <p className="muted modal-sub" title={global.title}>{global.title}</p>
-        {request ? (
+        {many && <p className="muted g-accept-many">{t('global.action.manyApprovals', { count: approvals })}. {t('global.action.manyApprovalsTitle')}</p>}
+        {request && !many ? (
           <>
             <div className="g-accept-check">
               <div className="g-accept-what muted">{t('global.accept.check')}</div>
@@ -83,7 +95,7 @@ export function AcceptGlobalModal({ global, request, tasks, columns, dispatches,
               decision={{ value: text, onChange: setText, onAccept: () => void submit(), busy, acceptLabel: t('global.action.accept') }}
             />
           </>
-        ) : (
+        ) : !many && (
           <p className="muted">{t('global.accept.noRequest')}</p>
         )}
         <label>
@@ -91,7 +103,7 @@ export function AcceptGlobalModal({ global, request, tasks, columns, dispatches,
           <textarea
             autoFocus
             value={text}
-            disabled={request === undefined}
+            disabled={request === undefined || many}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
@@ -99,7 +111,7 @@ export function AcceptGlobalModal({ global, request, tasks, columns, dispatches,
             placeholder={t('global.accept.placeholder')}
           />
         </label>
-        <span className="muted g-return-hint">{t('global.accept.hint')} {t('global.accept.send')}</span>
+        <span className="muted g-return-hint">{laneShown !== undefined ? t('global.accept.hintLane', { lane: laneShown }) : t('global.accept.hint')} {t('global.accept.send')}</span>
         {error && <span className="error-text">{error}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>{t('global.cancel')}</button>

@@ -104,6 +104,8 @@ export default {
   'node.condition': 'Условие',
   'node.merge': 'Мерж',
   'node.end': 'Конец',
+  'node.fork': 'Разветвление',
+  'node.join': 'Слияние',
 
   // Колонка review глобальной доски (`GLOBAL_REVIEW_TITLE`). Тот же текст, что у ноды «Проверка», поэтому
   // узнаётся не по тексту, а по виду колонки (`displayColumns`).
