@@ -86,7 +86,7 @@ it('пустые заготовки ответа и служебные сооб�
   assert.deepEqual(groupMessages([{ id: 'a1', role: 'agent', text: '  ', at: 1 }, { id: 't1', role: 'tool', text: 'готово', at: 2 }]), [])
   assert.equal(groupMessages([{ id: 'a1', role: 'agent', text: '', hasImage: true, at: 1 }]).length, 1)
 })
-it('индикатор ожидания исчезает с первым текстом ответа, до завершения запроса', () => {
+it('индикатор сохраняется между частями ответа до завершения запроса', () => {
   let state = chatStateFromSnapshot({ ...snapshot, messages: [{ id: 'h1', role: 'human', text: 'Покажи проекты', at: 1 }] })
   assert.equal(isAssistantThinking(state), true)
   state = applyChatUpdate(state, { ptyId: 's1', revision: 3, message: { id: 't1', role: 'tool', text: '[{"id":"project-1"}]', at: 2 } })
@@ -95,9 +95,11 @@ it('индикатор ожидания исчезает с первым тек�
   assert.equal(isAssistantThinking(state), true)
   state = applyChatUpdate(state, { ptyId: 's1', revision: 5, message: { id: 'a1', role: 'agent', text: 'У вас', at: 3 } })
   assert.equal(state.status, 'thinking')
-  assert.equal(isAssistantThinking(state), false)
+  assert.equal(isAssistantThinking(state), true, 'первый фрагмент текста не завершает ответ')
   state = applyChatUpdate(state, { ptyId: 's1', revision: 6, message: { id: 't2', role: 'tool', text: '[]', at: 4 } })
-  assert.equal(isAssistantThinking(state), false, 'скрытые результаты не возвращают индикатор после ответа')
+  assert.equal(isAssistantThinking(state), true, 'после результата команды агент продолжает работу')
+  state = applyChatUpdate(state, { ptyId: 's1', revision: 7, status: 'done' })
+  assert.equal(isAssistantThinking(state), false, 'индикатор убирает завершение запроса')
 })
 it('новый вопрос снова показывает ожидание, даже если в истории уже есть ответ', () => {
   const state = chatStateFromSnapshot({ ...snapshot, messages: [
@@ -123,15 +125,19 @@ it('один вызов обновляет статус на месте и не 
   assert.equal(activity[0].toolCalls?.[0].status, 'ok')
   assert.equal(activity[0].text, '')
 })
-it('активное действие заменяет общее ожидание, после него ожидается текст ответа', () => {
-  const initial = chatStateFromSnapshot({ ...snapshot, messages: [{ id: 'h1', role: 'human', text: 'Проекты', at: 1 }] })
+it('после текста и команды индикатор возвращается до завершения ответа', () => {
+  const initial = chatStateFromSnapshot({ ...snapshot, messages: [
+    { id: 'h1', role: 'human', text: 'Создай воркфлоу', at: 1 },
+    { id: 'a1', role: 'agent', text: 'Создам тип и проверю граф.', at: 2 }
+  ] })
   const tool = { id: 't1', role: 'tool' as const, text: '', at: 2, toolCalls: [{ name: 'Команда', input: 'orca-board projects list', status: 'running' as const }] }
   const running = applyChatUpdate(initial, { ptyId: 's1', revision: 3, message: tool })
   assert.equal(isAssistantThinking(running), false)
   const finished = applyChatUpdate(running, { ptyId: 's1', revision: 4, message: { ...tool, toolCalls: [{ ...tool.toolCalls[0], status: 'ok' }] } })
   assert.equal(isAssistantThinking(finished), true)
-  const answered = applyChatUpdate(finished, { ptyId: 's1', revision: 5, message: { id: 'a1', role: 'agent', text: 'Три проекта', at: 3 } })
-  assert.equal(isAssistantThinking(answered), false)
+  const answered = applyChatUpdate(finished, { ptyId: 's1', revision: 5, message: { id: 'a2', role: 'agent', text: 'Граф проверен, сохраняю тип.', at: 3 } })
+  assert.equal(isAssistantThinking(answered), true)
+  assert.equal(isAssistantThinking(applyChatUpdate(answered, { ptyId: 's1', revision: 6, status: 'done' })), false)
 })
 it('краткое описание действия показывает команду или цель, но не весь JSON аргументов', () => {
   assert.equal(toolActivityDetail('orca-board projects list'), 'orca-board projects list')
