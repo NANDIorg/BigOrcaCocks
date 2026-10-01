@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { imageAttachmentFileName, validateImageAttachments, type ImageAttachment, type RequestResolution, type Task, type TaskStore } from '@orca-board/core'
+import { ATTACHMENT_LIMITS, DEFAULT_ATTACHMENT_OBJECTIVE, attachmentFileName, validateAttachments, type Attachment, type RequestResolution, type Task, type TaskStore } from '@orca-board/core'
+import type { AttachmentCapabilities } from '../shared/ipc'
 import { OrcaError } from './i18n'
 import { ensureRunBranch } from './run-branch'
 
 /**
- * Файлы изображений, приложенных человеком: к цели координатора (`startCoordinator`) и к замечаниям при возврате в
+ * Файлы (картинки и любые другие), приложенные человеком: к цели координатора (`startCoordinator`) и к замечаниям при возврате в
  * работу (`review:reject`, `requests:resolve`, `globalTasks:returnToWork`). Всё лежит в `<cwd читателя>/.orca-attachments`:
  * внутри cwd агент читает файл без запроса разрешения. Модуль без electron и node-pty — тестируется в node.
  */
@@ -15,12 +16,31 @@ export const ATTACHMENTS_DIR = '.orca-attachments'
 /** Подпапка возвратов внутри папки прогона координатора: старт с новой целью (`clearStartImages`) её не трогает. */
 const RETURNS_DIR = 'returns'
 
+/**
+ * Ответ на `attachments:capabilities`: main принимает любые файлы (`validateAttachments`) в лимитах `ATTACHMENT_LIMITS`.
+ * Старый main метода не имеет — renderer тогда остаётся в режиме «только картинки».
+ */
+export function attachmentCapabilities(): AttachmentCapabilities {
+  return { files: true, limits: { ...ATTACHMENT_LIMITS } }
+}
+
+/**
+ * Цель нового координатора (`coordinator:start`): текст человека, а без текста — `DEFAULT_ATTACHMENT_OBJECTIVE`, если
+ * приложены вложения (картинки или файлы). Ни текста, ни вложений — `coordinator.noObjective`.
+ */
+export function coordinatorObjective(objective: unknown, attachments: readonly Attachment[]): string {
+  const text = typeof objective === 'string' ? objective.trim() : ''
+  if (text) return text
+  if (attachments.length === 0) throw new OrcaError('coordinator.noObjective')
+  return DEFAULT_ATTACHMENT_OBJECTIVE
+}
+
 /** Живость терминала: `isAlive` из `pty.ts`, параметром — чтобы модуль не тянул node-pty. */
 export type PtyAlive = (ptyId: string) => boolean
 
 /**
- * Папка изображений: `<cwd>/.orca-attachments`. Внутри лежит свой `.gitignore` с `*`: папка не попадает в
- * `git status`/`git add -A` (картинки не уйдут в коммит и мерж), не мешает `git worktree remove` без `--force`,
+ * Папка вложений: `<cwd>/.orca-attachments`. Внутри лежит свой `.gitignore` с `*`: папка не попадает в
+ * `git status`/`git add -A` (файлы не уйдут в коммит и мерж), не мешает `git worktree remove` без `--force`,
  * а .gitignore репозитория не трогаем.
  */
 export function attachmentsRoot(cwd: string): string {
@@ -35,7 +55,7 @@ export function attachmentsRoot(cwd: string): string {
   }
 }
 
-/** Удаляет папки изображений закрытых прогонов, чей координатор уже не работает. */
+/** Удаляет папки вложений закрытых прогонов, чей координатор уже не работает. */
 export function pruneAttachments(store: TaskStore, root: string, alive: PtyAlive): void {
   let dirs: string[]
   try {
@@ -56,16 +76,17 @@ export function pruneAttachments(store: TaskStore, root: string, alive: PtyAlive
 }
 
 /**
- * Пишет файлы `image-N.ext` в `dir` (создаёт) и возвращает абсолютные пути. Не вышло — созданные файлы удаляются,
- * чужое в папке (изображения возвратов рядом) не трогаем. Имя из буфера обмена в путь не попадает.
+ * Пишет вложения в `dir` (создаёт) и возвращает абсолютные пути: картинки — `image-N.ext`, файлы — `file-N-<slug>[.ext]`
+ * (`attachmentFileName`; номер — позиция в списке, так одноимённые файлы не сталкиваются). Не вышло — созданные файлы
+ * удаляются, чужое в папке (вложения возвратов рядом) не трогаем. Исходное имя попадает в путь только очищенным слагом.
  */
-function writeImageFiles(dir: string, images: readonly ImageAttachment[]): string[] {
+function writeAttachmentFiles(dir: string, attachments: readonly Attachment[]): string[] {
   const written: string[] = []
   try {
     mkdirSync(dir, { recursive: true })
-    for (const [i, img] of images.entries()) {
-      const file = join(dir, imageAttachmentFileName(i, img.ext))
-      writeFileSync(file, img.data, { flag: 'wx', mode: 0o600 })
+    for (const [i, att] of attachments.entries()) {
+      const file = join(dir, attachmentFileName(i, att))
+      writeFileSync(file, att.data, { flag: 'wx', mode: 0o600 })
       written.push(file)
     }
     return written
@@ -80,13 +101,16 @@ function writeImageFiles(dir: string, images: readonly ImageAttachment[]): strin
   }
 }
 
-/** Изображения цели координатора: `<root>/<runId>/image-N.ext`. */
-export function writeAttachments(root: string, runId: string, images: readonly ImageAttachment[]): string[] {
-  return writeImageFiles(join(root, runId), images)
+/** Вложения цели координатора: `<root>/<runId>/image-N.ext` и `file-N-<slug>.ext`. */
+export function writeAttachments(root: string, runId: string, attachments: readonly Attachment[]): string[] {
+  return writeAttachmentFiles(join(root, runId), attachments)
 }
 
+/** Имена вложений старта в корне папки прогона (`attachmentFileName`): `image-N.ext`, `file-N-<slug>[.ext]`. */
+const START_FILE = /^(image|file)-\d+[.-]/
+
 /**
- * Убирает изображения старта прогона (`image-N.ext` в корне его папки) перед записью новых или при неудачном запуске.
+ * Убирает вложения старта прогона (`image-N.ext` и `file-N-*` в корне его папки) перед записью новых или при неудачном запуске.
  * Возвраты (`returns/`) остаются: на них ссылаются `Run.stageInput.images` и `Run.returns`, они нужны перезапущенному
  * координатору. `whole` — прогон новый и без возвратов: папка целиком.
  */
@@ -102,15 +126,15 @@ export function clearStartImages(root: string, runId: string, whole = false): vo
   } catch {
     return
   }
-  for (const name of names) if (/^image-\d+\./.test(name)) rmSync(join(dir, name), { force: true })
+  for (const name of names) if (START_FILE.test(name)) rmSync(join(dir, name), { force: true })
 }
 
 /**
- * Сохраняет изображения одного возврата в новую уникальную папку `<cwd>/.orca-attachments/<ownerId>/[<subdir>/]ret_XXXXXX/`
- * (`mkdtemp`: два возврата подряд не сталкиваются, `image-N` не перезаписываются) и возвращает абсолютные пути.
+ * Сохраняет вложения одного возврата в новую уникальную папку `<cwd>/.orca-attachments/<ownerId>/[<subdir>/]ret_XXXXXX/`
+ * (`mkdtemp`: два возврата подряд не сталкиваются, `image-N`/`file-N-*` не перезаписываются) и возвращает абсолютные пути.
  * Владелец — задача (папка внутри её worktree; уходит вместе с ним) или прогон (`subdir` — `returns`).
  */
-export function saveReturnImages(cwd: string, ownerId: string, subdir: string, images: readonly ImageAttachment[]): string[] {
+export function saveReturnImages(cwd: string, ownerId: string, subdir: string, attachments: readonly Attachment[]): string[] {
   const parent = subdir ? join(attachmentsRoot(cwd), ownerId, subdir) : join(attachmentsRoot(cwd), ownerId)
   let dir: string
   try {
@@ -120,7 +144,7 @@ export function saveReturnImages(cwd: string, ownerId: string, subdir: string, i
     throw new OrcaError('attachments.saveFailed', { error: (e as Error).message })
   }
   try {
-    return writeImageFiles(dir, images)
+    return writeAttachmentFiles(dir, attachments)
   } catch (e) {
     rmSync(dir, { recursive: true, force: true })
     throw e
@@ -146,7 +170,7 @@ export function imagesReferenced(store: TaskStore, paths: readonly string[]): bo
 
 // ---------- куда класть и как вызывать ----------
 
-/** Где читатель картинок видит файлы: его cwd и владелец папки. */
+/** Где читатель вложений видит файлы: его cwd и владелец папки. */
 export interface ReturnImagesPlace {
   cwd: string
   ownerId: string
@@ -154,7 +178,7 @@ export interface ReturnImagesPlace {
 }
 
 /**
- * Воркер читает картинки в своём worktree. Нет worktree на диске (задачу приняли, worktree убрали) — ошибка до
+ * Воркер читает вложения в своём worktree. Нет worktree на диске (задачу приняли, worktree убрали) — ошибка до
  * записи в store: текст замечания остаётся в форме.
  */
 export function workerImagesPlace(task: Pick<Task, 'id' | 'worktree'> | undefined): ReturnImagesPlace {
@@ -163,7 +187,7 @@ export function workerImagesPlace(task: Pick<Task, 'id' | 'worktree'> | undefine
 }
 
 /**
- * Координатор читает картинки в своём cwd: worktree ветки глобальной задачи, а без неё — корень репозитория
+ * Координатор читает вложения в своём cwd: worktree ветки глобальной задачи, а без неё — корень репозитория
  * (то же считает `startCoordinator`). `ensureRunBranch` идемпотентен: убранный worktree восстанавливает.
  */
 export function coordinatorImagesPlace(store: TaskStore, repoRoot: string, runId: string): ReturnImagesPlace {
@@ -172,10 +196,10 @@ export function coordinatorImagesPlace(store: TaskStore, repoRoot: string, runId
 }
 
 /**
- * Возврат в работу с картинками из IPC: проверка (`validateImageAttachments`), запись в cwd читателя и вызов `apply` с
- * абсолютными путями (`apply` меняет store). Картинок нет — `apply([])`, файлы не создаются. Упал `apply`, и store не
- * успел сослаться на файлы (`imagesReferenced`), — папка этого возврата удаляется, текст остаётся в форме.
- * Картинки без текста замечаний не принимаются: текст — то, к чему они приложены, и он обязателен.
+ * Возврат в работу с вложениями из IPC: проверка (`validateAttachments` — любой тип файла, лимиты `ATTACHMENT_LIMITS`),
+ * запись в cwd читателя и вызов `apply` с абсолютными путями (`apply` меняет store). Вложений нет — `apply([])`, файлы
+ * не создаются. Упал `apply`, и store не успел сослаться на файлы (`imagesReferenced`), — папка этого возврата удаляется,
+ * текст остаётся в форме. Вложения без текста замечаний не принимаются: текст — то, к чему они приложены, и он обязателен.
  */
 export function withReturnImages<T>(
   store: TaskStore,
@@ -184,9 +208,9 @@ export function withReturnImages<T>(
   text: string | undefined,
   apply: (paths: string[]) => T
 ): T {
-  let images: ImageAttachment[]
+  let images: Attachment[]
   try {
-    images = validateImageAttachments(input)
+    images = validateAttachments(input)
   } catch (e) {
     throw new OrcaError('attachments.invalid', { error: (e as Error).message })
   }
@@ -215,9 +239,9 @@ export function hasImageInput(images: unknown): boolean {
 }
 
 /**
- * «Уточнить» / «Вернуть» запроса к человеку с картинками (IPC `requests:resolve`). Пути в `resolution.images` из IPC и сокета
+ * «Уточнить» / «Вернуть» запроса к человеку с вложениями (IPC `requests:resolve`). Пути в `resolution.images` из IPC и сокета
  * вырезаются всегда — их ставит только main после записи файлов. Читатель: «Уточнить» и «Вернуть» по запросу на задаче —
- * воркер (её worktree), «Вернуть» по approval прогона (без задачи) — координатор. Картинки к другим действиям — ошибка.
+ * воркер (её worktree), «Вернуть» по approval прогона (без задачи) — координатор. Вложения к другим действиям — ошибка.
  * Запроса нет или он уже решён — обычная ошибка `run`: до записи файлов на диск.
  */
 export function resolveWithImages<T>(
@@ -237,8 +261,8 @@ export function resolveWithImages<T>(
 }
 
 /**
- * «Вернуть» задачи из ревью с картинками (IPC `review:reject`). Проверка ветки глобальной задачи — замечания читает координатор
- * (cwd прогона), остальные задачи — воркер в своём worktree. `run` получает пути сохранённых файлов (пусто — без картинок).
+ * «Вернуть» задачи из ревью с вложениями (IPC `review:reject`). Проверка ветки глобальной задачи — замечания читает координатор
+ * (cwd прогона), остальные задачи — воркер в своём worktree. `run` получает пути сохранённых файлов (пусто — без вложений).
  */
 export function rejectWithImages<T>(
   store: TaskStore,
@@ -254,7 +278,7 @@ export function rejectWithImages<T>(
   return withReturnImages(store, place, images, text, run)
 }
 
-/** «Вернуть в работу» глобальной задачи с картинками (IPC `globalTasks:returnToWork`): читает координатор в cwd прогона. */
+/** «Вернуть в работу» глобальной задачи с вложениями (IPC `globalTasks:returnToWork`): читает координатор в cwd прогона. */
 export function returnRunWithImages<T>(
   store: TaskStore,
   repoRoot: string,

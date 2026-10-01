@@ -7,7 +7,7 @@ import {
   hasPendingRequest, pendingRequestsOf, canChangeRunType, runTypeLockReason
 } from './global-tasks.ts'
 import { defaultWorkflow } from './workflow.ts'
-import { IMAGE_ATTACHMENT_LIMITS } from './attachments.ts'
+import { ATTACHMENT_LIMITS } from './attachments.ts'
 import { coordinatorsToClose, COORDINATOR_FINISH_GRACE_MS } from './coordinator-close.ts'
 import { DEFAULT_COLUMNS, type BoardColumn, type HumanRequest, type Run, type Task } from './types.ts'
 
@@ -903,7 +903,7 @@ describe('глобальные задачи: картинки (только ме
 
   it('лимиты на создании: число и размер — задача не создаётся', () => {
     const store = newStore()
-    const { maxCount, maxTotalBytes } = IMAGE_ATTACHMENT_LIMITS
+    const { maxCount, maxTotalBytes } = ATTACHMENT_LIMITS
     assert.throws(() => store.createGlobalTask({ title: 'G', images: Array.from({ length: maxCount + 1 }, (_, i) => img(`i${i}`)) }), /не больше 8/)
     assert.throws(() => store.createGlobalTask({ title: 'G', images: [img('a', maxTotalBytes), img('b', 1)] }), /вместе были бы больше/)
     assert.equal(store.listGlobalTasks().length, 0)
@@ -911,7 +911,7 @@ describe('глобальные задачи: картинки (только ме
 
   it('addRunImages: суммарный лимит с уже сохранёнными, отказ ничего не меняет', () => {
     const store = newStore()
-    const { maxCount } = IMAGE_ATTACHMENT_LIMITS
+    const { maxCount } = ATTACHMENT_LIMITS
     const g = store.createGlobalTask({ title: 'G', images: Array.from({ length: maxCount - 1 }, (_, i) => img(`i${i}`)) })
     assert.throws(() => store.addRunImages(g.id, [img('x'), img('y')]), /не больше 8/)
     assert.equal(store.getGlobalTask(g.id).images?.length, maxCount - 1)
