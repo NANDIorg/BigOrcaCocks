@@ -132,8 +132,8 @@ Payload короткие: строка события в мониторе коо
 | `question` | `taskId, dispatchId, questionId, question` (≤ 300), `forHuman?: true, options` (метки) | `orca-board question get --question <id>` |
 | `question_answered` | `taskId, dispatchId, questionId, requestId?, question, answer, workerLive, status` | — |
 | `answer_accepted` | `taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
-| `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId`, `images?` (пути картинок к уточнению) | `orca-board request get --request <id>` (`resolution.text`) |
-| `request_resolved` | `taskId` (у approval и decision прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`/`answer`), `requestId, kind, dispatchId?, nodeId?` (approval, decision), `optionId` (decision — выбранный вариант), `decision` (≤ 2000, текст решения по approval, обоснование по decision), `decisionTruncated?`, `images?` (пути картинок к замечаниям `reject`) | `orca-board request get --request <id>` (`resolution.text`) |
+| `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId`, `images?` (пути приложенных к уточнению файлов — скриншоты, документы, логи; читает воркер) | `orca-board request get --request <id>` (`resolution.text`) |
+| `request_resolved` | `taskId` (у approval и decision прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`/`answer`), `requestId, kind, dispatchId?, nodeId?` (approval, decision), `optionId` (decision — выбранный вариант), `decision` (≤ 2000, текст решения по approval, обоснование по decision), `decisionTruncated?`, `images?` (пути приложенных к замечаниям `reject` файлов) | `orca-board request get --request <id>` (`resolution.text`) |
 | `worker_done` | `taskId, dispatchId, summary, files, answerFor?, gateFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 
 Уведомление «нужен ваш ответ» (`notifyKind`, `notify.ts`) приходит только на `request_created` (вопрос / ответ
