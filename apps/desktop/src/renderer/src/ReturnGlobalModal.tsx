@@ -6,6 +6,7 @@ import { isRunWorkflow, returnHint, reviewErrorMessage } from './globalReview'
 import { useT } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
 import { useImageAttachments } from './imageDrafts'
+import { lightboxOpen } from './imageViewer'
 
 interface Props {
   global: GlobalTask
@@ -32,7 +33,8 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, onClose, 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
+      // Esc поверх открытой картинки закрывает только её (ImageLightbox слушает тот же window).
+      if (e.key === 'Escape' && !lightboxOpen()) {
         e.stopPropagation()
         close()
       }
