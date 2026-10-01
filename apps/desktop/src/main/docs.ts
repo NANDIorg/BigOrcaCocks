@@ -1,8 +1,9 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { lstatSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs'
 import { lstat, readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
+import type { TaskStore } from '@orca-board/core'
 import { DOCS_LIST_LIMIT } from '../shared/docs-view'
 import type { DocFile, DocGroup } from '../shared/ipc'
 import { OrcaError, mt } from './i18n'
@@ -88,7 +89,7 @@ export const DOCS_STAT_CONCURRENCY = 64
 /** Список файлов проекта (`docs:list`, группа `project`). */
 export interface ProjectFileList {
   files: DocFile[]
-  /** Файлов больше лимита — отданы первые по порядку git (или обхода папок). */
+  /** Файлов больше лимита — отданы сначала отслеживаемые, затем неотслеживаемые (или первые по обходу папок). */
   truncated: boolean
 }
 
@@ -203,8 +204,27 @@ async function projectFileInfo(root: string, rel: string, untracked: boolean): P
 }
 
 /**
- * Все файлы проекта (группа `project` в `docs:list`), уважая `.gitignore`; свежие сверху. Больше `limit` — первые
- * `limit` по порядку git и `truncated`. `limit` параметризуется ради теста.
+ * Первые `limit` записей: сначала отслеживаемые, потом неотслеживаемые. `ls-files -t --cached --others` отдаёт
+ * неотслеживаемые (`?`) первыми, и при обрезке по порядку git терялись README и исходники, а `.env` и сборочный мусор
+ * оставались. Пачками, с уступками event loop, как разбор вывода git.
+ */
+async function trackedFirst(paths: Map<string, boolean>, limit: number): Promise<[string, boolean][]> {
+  const tracked: [string, boolean][] = []
+  const untracked: [string, boolean][] = []
+  let i = 0
+  for (const entry of paths) {
+    if (++i % PARSE_BATCH === 0) await yieldLoop()
+    if (!entry[1]) {
+      tracked.push(entry)
+      if (tracked.length >= limit) break
+    } else if (untracked.length < limit) untracked.push(entry)
+  }
+  return [...tracked, ...untracked].slice(0, limit)
+}
+
+/**
+ * Все файлы проекта (группа `project` в `docs:list`), уважая `.gitignore`; свежие сверху. Больше `limit` — `limit`
+ * файлов, отслеживаемые в приоритете (`trackedFirst`), и `truncated`. `limit` параметризуется ради теста.
  */
 export async function listProjectFiles(root: string, limit = DOCS_LIST_LIMIT): Promise<ProjectFileList> {
   let paths: Map<string, boolean>
@@ -213,9 +233,9 @@ export async function listProjectFiles(root: string, limit = DOCS_LIST_LIMIT): P
   } catch {
     paths = await walkFiles(root, limit)
   }
-  const entries = [...paths]
-  const truncated = entries.length > limit
-  const infos = await mapLimit(entries.slice(0, limit), DOCS_STAT_CONCURRENCY, ([rel, untracked]) => projectFileInfo(root, rel, untracked))
+  const truncated = paths.size > limit
+  const entries = truncated ? await trackedFirst(paths, limit) : [...paths]
+  const infos = await mapLimit(entries, DOCS_STAT_CONCURRENCY, ([rel, untracked]) => projectFileInfo(root, rel, untracked))
   return { files: infos.filter((f): f is DocFile => f !== null).sort(byMtime), truncated }
 }
 
@@ -247,6 +267,29 @@ export interface DocTask {
   title: string
   worktree: string
   branch?: string
+}
+
+/**
+ * Задачи в работе для «Документов»: у задачи есть worktree на диске и она не в колонке kind=done.
+ * После принятия ревью worktree удаляется — документы задачи уже в проекте.
+ */
+export function docTasks(store: Pick<TaskStore, 'snapshot' | 'columnKind'>): DocTask[] {
+  return store
+    .snapshot()
+    .tasks.filter((t) => t.worktree && store.columnKind(t.status) !== 'done' && existsSync(t.worktree))
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .map((t) => ({ id: t.id, title: t.title, worktree: t.worktree!, branch: t.branch }))
+}
+
+/**
+ * Корень источника `docs:*`: проект или worktree его задачи в работе (`tasks` — из `docTasks`). Задача в done, без
+ * worktree, чужая или несуществующая — `docs.noTaskSource`: читать файлы вне проекта по произвольному id нельзя.
+ */
+export function docSourceRoot(source: unknown, projectRoot: string, tasks: DocTask[]): string {
+  if (source === PROJECT_SOURCE) return projectRoot
+  const task = tasks.find((t) => t.id === source)
+  if (!task) throw new OrcaError('docs.noTaskSource', { id: String(source) })
+  return task.worktree
 }
 
 /**

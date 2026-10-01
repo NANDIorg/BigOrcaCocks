@@ -2223,15 +2223,16 @@ UI работает с активным проектом; воркеры и ко
 
 ### Просмотр файлов проекта (main) — `src/main/docs.ts`, `src/main/docs-view.ts`
 
-Сторона main контракта «IPC: документы (`docs:*`)». Корень — `docRoot(source)` в `index.ts` (проект или worktree задачи в работе).
+Сторона main контракта «IPC: документы (`docs:*`)». Корень — `docRoot(source)` в `index.ts`: чистый `docSourceRoot(source, root,
+docTasks(store))` из `docs.ts` (проект или worktree задачи в работе, иначе `docs.noTaskSource`; тест — `docs.test.ts`).
 
 - **Список** (`listProjectFiles`, группа `project` в `listDocGroups`): один асинхронный процесс
   `git ls-files -z -t --cached --others --exclude-standard` — отслеживаемые (`H`/`S`/`M`; видны и попавшие под `.gitignore`, как в
   `git status`) и неотслеживаемые неигнорируемые (`?` → `untracked`). Затем асинхронный `lstat` пачками по `DOCS_STAT_CONCURRENCY` = 64:
   синхронный обход на 100 000 файлов заморозил бы PTY и сокет. В список попадают обычные файлы и симлинки (`link: true`, размер и mtime
   цели, если она — файл; цель наружу и битая видны, отказ — при открытии); симлинк на папку, подмодуль (запись-папка), FIFO и пропавшие с
-  диска файлы — нет. Шум ОС (`PROJECT_FILES_OS_NOISE`) и `.git` отсекаются. Больше `DOCS_LIST_LIMIT` — первые по порядку git и
-  `truncated`. Git не отработал (не репозиторий, «dubious ownership», git не найден) — обход `readdir` в ширину без `.git`,
+  диска файлы — нет. Шум ОС (`PROJECT_FILES_OS_NOISE`) и `.git` отсекаются. Больше `DOCS_LIST_LIMIT` — `truncated` и сначала
+  отслеживаемые, затем неотслеживаемые (`trackedFirst`, пачками с уступкой event loop; порядок git — см. «Грабли разработки»). Git не отработал (не репозиторий, «dubious ownership», git не найден) — обход `readdir` в ширину без `.git`,
   `node_modules` (`PROJECT_FILES_FALLBACK_HIDDEN`) и шума, до `limit + 1` файла. Группы задач — прежние `.md` (`listWorktreeDocs`).
 - **Резолвер** (`resolveDocFile`): `resolveProjectPath(root, path, followLast = true)` из `project-files.ts` — `splitSafeSegments`
   (`..`, пустые сегменты, абсолютный путь, NUL, на win32 `\` и `:`), realpath внутри корня и не в `.git`; затем `stat` цели **до**
@@ -3339,6 +3340,20 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   variadic-опции и поддержка `--` у них не проверены (агенты не установлены), поэтому argv не менялся: флаг пользователя
   с `...` в `--help` этих агентов ставь не последним. Добавляешь в `invoke` новый флаг — не ставь variadic последним
   перед промптом.
+
+- `git ls-files -t --cached --others` выдаёт **сначала неотслеживаемые** (`?`), потом отслеживаемые (`H`), а не
+  вперемешку по имени. Обрезка списка «Документов» по порядку git при превышении `DOCS_LIST_LIMIT` отрезала README и
+  исходники, а `.env` и сборочный мусор оставляла. Поэтому `listProjectFiles` при обрезке берёт сначала отслеживаемые
+  (`trackedFirst` в `main/docs.ts`, тест «при обрезке отслеживаемые в приоритете»).
+
+- `Markdown.tsx` с `assets` (показ и «Документы») снимает `href` с относительных ссылок и кладёт путь в
+  `data-showcase-href` — вместе с `href` пропадал и `#якорь`: ссылка `other.md#раздел` открывала файл с начала. Якорь
+  теперь едет отдельно в `data-showcase-hash`, просмотрщик прокручивает к нему после открытия файла.
+
+- Аргумент `git add` (и любой команды с pathspec) — не имя файла, а **pathspec**: `:!имя` исключает, `:(icase)` — магия,
+  `*`, `?`, `[1]` — шаблоны. Файл с таким именем в фикстуре теста не добавится или добавит чужие. В тестах со странными
+  именами — `git --literal-pathspecs add -- …` (`main/docs-qa.test.ts`); в коде приложения пути передавай через `--` и,
+  если имя пришло от человека, тоже с `--literal-pathspecs`.
 
 ## Открытые вопросы
 
