@@ -1,4 +1,4 @@
-export type WindowChromeMode = 'system' | 'macos'
+export type WindowChromeMode = 'system' | 'macos' | 'windows'
 
 /** Одна геометрия для AppKit и CSS; размеры ОС остаются нативными. */
 export const macosWindowChrome = {
@@ -8,8 +8,14 @@ export const macosWindowChrome = {
 } as const
 
 export const MACOS_WINDOW_CHROME_ARGUMENT = '--orca-macos-window-chrome'
+export const WINDOWS_WINDOW_CHROME_ARGUMENT = '--orca-windows-window-chrome'
 
-/** Флаг передаёт main: один лишь macOS не означает, что заголовок уже интегрирован. */
+/** Caption-кнопки Windows справа; ширину rail менять не нужно. */
+export const windowsWindowChrome = { height: 36 } as const
+
+/** Флаг передаёт main: одна лишь платформа не означает, что заголовок уже интегрирован. */
 export function windowChromeMode(platform: string, args: readonly string[]): WindowChromeMode {
-  return platform === 'darwin' && args.includes(MACOS_WINDOW_CHROME_ARGUMENT) ? 'macos' : 'system'
+  if (platform === 'darwin' && args.includes(MACOS_WINDOW_CHROME_ARGUMENT)) return 'macos'
+  if (platform === 'win32' && args.includes(WINDOWS_WINDOW_CHROME_ARGUMENT)) return 'windows'
+  return 'system'
 }

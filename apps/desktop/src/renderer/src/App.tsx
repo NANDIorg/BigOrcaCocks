@@ -18,6 +18,7 @@ import { NewTaskModal } from './NewTaskModal'
 import { CoordinatorModal } from './CoordinatorModal'
 import { TaskModal } from './TaskModal'
 import { Icon } from './icons'
+import { WindowMenu } from './WindowMenu'
 import { AgentLogo } from './AgentLogo'
 import { ipcErrorMessage } from './useAutoSave'
 import { AboutProject } from './about/AboutProject'
@@ -44,7 +45,7 @@ import { branchBadge } from './projectBranch'
 import { useProjectBranch } from './useProjectBranch'
 import { startAddProject, type AddProjectStart } from './projectAdd'
 import type { AppMenuAction } from '../../shared/ipc'
-import appLogo from '../../../build/icon.svg'
+import { RailLogo } from './RailLogo'
 import { ProjectList } from './ProjectList'
 import { groupsFromList } from './projectGroups'
 import { globalReviewApi, isRunWorkflow, reviewErrorMessage, runApprovalRequest } from './globalReview'
@@ -865,6 +866,7 @@ export function App(): React.JSX.Element {
   return (
     <div className={`app ${showProjects ? '' : 'no-sidebar'}`}>
       <aside className="rail">
+        <WindowMenu />
         <button className={`icon ${showProjects ? 'active' : ''}`} title={t('shell.rail.projects')} onClick={toggleProjects}><Icon.folder /></button>
         <button
           className={`icon ${showSettings ? 'active' : ''}`}
@@ -901,7 +903,7 @@ export function App(): React.JSX.Element {
           <Icon.assistant />
         </button>
         <div className="grow" />
-        <img className="avatar" src={appLogo} alt="orca-board" width={40} height={40} />
+        <RailLogo />
       </aside>
 
       {showProjects && (

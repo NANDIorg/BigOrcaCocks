@@ -2,11 +2,13 @@ import type { AreaDict } from '../types'
 
 /** Оболочка: App, инбокс, лента внимания, координатор, ассистент, терминал; плашка и тост обновлений. */
 export default {
+  'menu.back': 'Назад к разделам',
   cancel: 'Отмена',
   closeEsc: 'Закрыть (Esc)',
   toggle: 'Открыть / закрыть',
 
   // Rail и сайдбар проектов (App.tsx)
+  'rail.menu': 'Меню приложения',
   'rail.projects': 'Проекты',
   'rail.settings': 'Настройки',
   'rail.docs': 'Документы',

@@ -52,6 +52,7 @@ export interface WfNodePatch {
   question?: string
   /** Роли этапа «Работа»; пустой список — роли не заданы (координатор выбирает сам). */
   roleIds?: string[]
+  runOnly?: boolean
   instructions?: string
   /** Показ человеку у «Работы»: меняются только переданные поля. Пустое «что» без «обязательно» — показа нет. */
   showcase?: { what?: string; required?: boolean }
@@ -89,6 +90,10 @@ export function patchNode(wf: Workflow, nodeId: string, patch: WfNodePatch): Wor
     else delete n.roleIds
   }
   if (patch.question !== undefined && n.type === 'decision') n.question = patch.question
+  if (patch.runOnly !== undefined && n.type === 'work') {
+    if (patch.runOnly) n.runOnly = true
+    else delete n.runOnly
+  }
   if (patch.instructions !== undefined && (n.type === 'gate' || n.type === 'human' || n.type === 'work' || n.type === 'decision')) {
     if (patch.instructions.trim()) n.instructions = patch.instructions
     else delete n.instructions

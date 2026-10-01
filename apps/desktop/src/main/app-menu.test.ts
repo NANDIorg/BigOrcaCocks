@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { MenuItemConstructorOptions } from 'electron'
-import { applicationMenuTemplate, MenuActionQueue, type AppMenuHandlers } from './app-menu'
+import { applicationMenuTemplate, applicationMenuSnapshot, runApplicationMenuCommand, windowMenuCommands, MenuActionQueue, type AppMenuHandlers } from './app-menu'
 import { setMainLocale } from './i18n'
 
 afterEach(() => setMainLocale('ru'))
@@ -17,6 +17,57 @@ function fixture(platform: NodeJS.Platform = 'darwin', development = false): { m
   }
   return { menu: applicationMenuTemplate(platform, development, handlers), calls }
 }
+
+describe('авторское меню Windows', () => {
+  it('передаёт локализованное дерево без функций, с разделителями и сочетаниями', () => {
+    const snapshot = applicationMenuSnapshot(fixture('win32').menu)
+    assert.deepEqual(snapshot.map((entry) => entry.label), ['Файл', 'Правка', 'Вид', 'Окно', 'Справка'])
+    assert.equal(snapshot[0].children?.find((entry) => entry.id === 'settings')?.hint, 'Ctrl+,')
+    assert.equal(snapshot[1].children?.find((entry) => entry.id === 'role:copy')?.hint, 'Ctrl+C')
+    assert.equal(snapshot[3].children?.find((entry) => entry.id === 'role:minimize')?.hint, 'Ctrl+M')
+    assert.equal(snapshot[1].children?.find((entry) => entry.id === 'role:cut')?.separatorBefore, true)
+    assert.deepEqual(JSON.parse(JSON.stringify(snapshot)), snapshot)
+    setMainLocale('en')
+    assert.equal(applicationMenuSnapshot(fixture('win32').menu)[0].label, 'File')
+  })
+
+  it('команда проверяется по доступным листьям: скрытые, выключенные, родитель и dev-команды отклоняются', () => {
+    const { menu } = fixture('win32')
+    const calls: string[] = []
+    const commands = { settings: () => calls.push('settings'), 'role:reload': () => calls.push('reload') }
+    const snapshot = applicationMenuSnapshot(menu)
+    assert.equal(runApplicationMenuCommand(snapshot, 'settings', commands), true)
+    for (const invalid of ['role:reload', 'file-menu', '__proto__', 'toString', {}, null]) {
+      assert.equal(runApplicationMenuCommand(snapshot, invalid, commands), false)
+    }
+    const unavailable = applicationMenuSnapshot([{ label: 'Hidden', visible: false, submenu: [{ id: 'settings', label: 'Settings' }] },
+      { label: 'Disabled', enabled: false, submenu: [{ id: 'settings', label: 'Settings' }] }])
+    assert.equal(runApplicationMenuCommand(unavailable, 'settings', commands), false)
+    assert.deepEqual(calls, ['settings'])
+  })
+
+  it('выход и редактирование проходят через общие обработчики и исходное окно', () => {
+    const calls: string[] = []
+    const host = {
+      close: () => calls.push('close'), minimize: () => calls.push('minimize'),
+      isFullScreen: () => false, setFullScreen: (value: boolean) => calls.push(`fullscreen:${value}`),
+      webContents: {
+        undo: () => calls.push('undo'), redo: () => calls.push('redo'), cut: () => calls.push('cut'), copy: () => calls.push('copy'),
+        paste: () => calls.push('paste'), selectAll: () => calls.push('selectAll'),
+        getZoomLevel: () => 1, setZoomLevel: (level: number) => calls.push(`zoom:${level}`),
+        reload: () => calls.push('reload'), toggleDevTools: () => calls.push('devTools')
+      }
+    }
+    const handlers: AppMenuHandlers = { navigate: (action) => calls.push(action), about: () => calls.push('about'),
+      open: () => calls.push('open'), quit: () => calls.push('guardedQuit'), openExternal: (url) => calls.push(url) }
+    const commands = windowMenuCommands(host, handlers)
+    const snapshot = applicationMenuSnapshot(applicationMenuTemplate('win32', false, handlers))
+    for (const id of ['settings', 'quit', 'role:copy', 'role:undo', 'role:zoomin', 'role:togglefullscreen', 'role:close']) {
+      assert.equal(runApplicationMenuCommand(snapshot, id, commands), true)
+    }
+    assert.deepEqual(calls, ['settings', 'guardedQuit', 'copy', 'undo', 'zoom:1.5', 'fullscreen:true', 'close'])
+  })
+})
 
 function items(menu: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] {
   return menu.flatMap((item) => [item, ...(Array.isArray(item.submenu) ? items(item.submenu) : [])])

@@ -117,7 +117,7 @@ export type WfNode = WfNodeBase &
      * `subflow` — путь, который проходит каждая подзадача этапа (только в графе версии 2). Нет — путь по умолчанию
      * `defaultSubflow()`. Исполняет его движок по подзадачам (`Task.stage`, `TaskStore.advanceStage`).
      */
-    | { type: 'work'; roleIds?: string[]; /** @deprecated одна роль версии 1, см. выше */ roleId?: string; instructions?: string; showcase?: WfShowcase; subflow?: WfSubflow }
+    | { type: 'work'; roleIds?: string[]; /** @deprecated одна роль версии 1, см. выше */ roleId?: string; instructions?: string; showcase?: WfShowcase; subflow?: WfSubflow; /** Организация глобальной задачи; при проекции во «Входящие» обходится по next. */ runOnly?: boolean }
     /**
      * Вопрос человеку: агент роли ноды задаёт вопросы штатным `orca-board ask`, они идут человеку, минуя
      * координатора; ответы попадают в промпт следующих этапов. Код на этапе не меняется. `instructions` — о чём
@@ -379,6 +379,7 @@ export interface WfPipelineWork {
   roleIds?: string[]
   title?: string
   instructions?: string
+  runOnly?: boolean
 }
 
 const PIPELINE_STEP_X = 220
@@ -422,6 +423,7 @@ export function pipelineWorkflow(
     nodes.push({
       id: w.id, type: 'work', title: w.title ?? PIPELINE_WORK_TITLE, x, y: 0,
       ...(w.roleIds?.length ? { roleIds: [...w.roleIds] } : {}),
+      ...(w.runOnly ? { runOnly: true } : {}),
       ...(w.instructions ? { instructions: w.instructions } : {})
     })
     link = (to) => edges.push({ id: `e_${w.id}`, from: w.id, outcome: 'next', to })
@@ -566,10 +568,25 @@ export function legacyDefaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workf
   ])
 }
 
+/** Пропускаемый организационный этап обязан приводить к обычной работе, без цикла или развилки. */
+function taskScopeWorkTarget(wf: Workflow, nodeId: string): string | undefined {
+  const seen = new Set<string>()
+  let current = wf.nodes.find((n) => n.id === nodeId)
+  while (current?.type === 'work' && current.runOnly === true) {
+    if (seen.has(current.id)) return undefined
+    seen.add(current.id)
+    const next = wf.edges.filter((e) => e.from === current!.id && e.outcome === 'next')
+    if (next.length !== 1) return undefined
+    current = wf.nodes.find((n) => n.id === next[0].to)
+  }
+  return current?.type === 'work' ? current.id : undefined
+}
+
 /**
  * Граф воркфлоу глобальной задачи (версия 2) в виде графа **по подзадачам** (версия 1): его читает старый движок
  * для прогонов без своего снимка («Входящие», прогон до воркфлоу), у которых граф берётся из типа задачи. Раньше такая
  * подзадача шла по графу типа — гейты и проверки сохраняются, а смысл нод меняется так:
+ * - `work.runOnly` обходится по next к обычной работе (организационные этапы одиночному воркеру не нужны);
  * - `work` теряет роль: подзадача сама выбрала роль, а этап её не переопределяет;
  * - финальная «Проверка» человеком (`PIPELINE_FINAL_CHECK_ID`, accept → конец) снимается: результат принимает
  *   глобальная задача, а не каждая подзадача;
@@ -581,9 +598,13 @@ export function legacyDefaultWorkflow(roles: readonly Pick<Role, 'id'>[]): Workf
  */
 export function toTaskScopeWorkflow(wf: Workflow): Workflow {
   if (wf.version < WORKFLOW_VERSION) return wf
+  const skipped = new Set(wf.nodes.filter((n) => n.type === 'work' && n.runOnly === true).map((n) => n.id))
   // Путь подзадачи (`subflow`) в графе по подзадачам не читается: он сам и есть граф подзадачи (`TaskStore.taskWorkflow`).
-  let nodes: WfNode[] = wf.nodes.map((n) => (n.type === 'work' ? (({ roleId: _roleId, roleIds: _roleIds, subflow: _subflow, ...rest }) => rest)(n) as WfNode : { ...n }))
-  let edges: WfEdge[] = wf.edges.map((e) => ({ ...e }))
+  let nodes: WfNode[] = wf.nodes.filter((n) => !skipped.has(n.id)).map((n) => (n.type === 'work' ? (({ roleId: _roleId, roleIds: _roleIds, subflow: _subflow, runOnly: _runOnly, ...rest }) => rest)(n) as WfNode : { ...n }))
+  // Непомеченные пользовательские этапы сохраняются; подготовку глобальной задачи одиночный воркер не выполняет.
+  let edges: WfEdge[] = wf.edges.filter((e) => !skipped.has(e.from)).map((e) => ({
+    ...e, to: skipped.has(e.to) ? taskScopeWorkTarget(wf, e.to) ?? e.to : e.to
+  }))
   const isEnd = (id: string): boolean => nodes.find((n) => n.id === id)?.type === 'end'
   // Финальная проверка человеком: входящие в неё переходы ведут туда, куда вёл её accept.
   const finalCheck = nodes.find((n) => n.type === 'human' && n.id === PIPELINE_FINAL_CHECK_ID)
@@ -814,8 +835,12 @@ export const WF_ISSUE_TEXTS = {
   showcaseNoWhat: 'нода «{node}»: не задано, что показать человеку',
   showcaseRequiredNotBool: 'нода «{node}»: «показ обязателен» должен быть да/нет',
   attemptsNoNode: 'нода «{node}»: условие считает заходы в несуществующую ноду «{target}»',
+  attemptsRunOnly: 'нода «{node}»: условие считает пропускаемый этап «{target}» — во «Входящих» такого счётчика нет',
   attemptsBadCount: 'нода «{node}»: число заходов должно быть целым и не меньше 1',
   workRolesNotList: 'нода «{node}»: роли этапа должны быть списком id ролей',
+  runOnlyInvalid: 'нода «{node}»: runOnly должен быть булевым полем ноды «Работа»',
+  runOnlyScope: 'нода «{node}»: пропуск организационного этапа доступен только в графе глобальной задачи',
+  runOnlyNoWorkTarget: 'нода «{node}»: пропускаемый этап должен вести по next к непропускаемой «Работе» без развилок и циклов',
   askNoRole: 'нода «{node}»: не выбрана роль — вопросы человеку задаёт агент этой роли',
   conditionRoleRun: 'нода «{node}»: условие по роли не работает в воркфлоу глобальной задачи — у неё нет роли',
   filesUnsupported: 'нода «{node}»: условие по файлам ветки пока не поддерживается',
@@ -1135,6 +1160,13 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
     if (n.type === 'ask' && !sub && (typeof n.instructions !== 'string' || !n.instructions.trim())) {
       errors.push(at(n, 'askNoInstructions'))
     }
+    const runOnly: unknown = (n as { runOnly?: unknown }).runOnly
+    if (runOnly !== undefined && (n.type !== 'work' || typeof runOnly !== 'boolean')) {
+      errors.push(at(n, 'runOnlyInvalid'))
+    } else if (runOnly === true) {
+      if (sub || wf.version < WORKFLOW_VERSION) errors.push(at(n, 'runOnlyScope'))
+      else if (!taskScopeWorkTarget(wf, n.id)) errors.push(at(n, 'runOnlyNoWorkTarget'))
+    }
     if (n.templateId !== undefined && (typeof n.templateId !== 'string' || !n.templateId.trim())) {
       errors.push(at(n, 'templateIdNotString'))
     }
@@ -1159,6 +1191,8 @@ export function validateWorkflow(wf: Workflow, ctx: WfValidationContext): WfVali
       const t = n.test
       if (t.kind === 'attempts') {
         if (!nodes.has(t.node)) errors.push(at(n, 'attemptsNoNode', { target: t.node }))
+        const target = nodes.get(t.node)
+        if (target?.type === 'work' && target.runOnly === true) errors.push(at(n, 'attemptsRunOnly', { target: t.node }))
         if (!Number.isInteger(t.atLeast) || t.atLeast < 1) errors.push(at(n, 'attemptsBadCount'))
       } else if (t.kind === 'role') {
         // У подзадачи роль есть, а у глобальной задачи — нет.

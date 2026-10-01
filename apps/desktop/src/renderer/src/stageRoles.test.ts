@@ -49,16 +49,17 @@ test('2. роль gate верхнего графа — в проверках с 
   assert.equal(sub.work.find((r) => r.id === 'reviewer')?.checkedBy, undefined)
 })
 
-test('3. роль проверки — по графу, а не по id: qa проверяет у backend, у docs reviewer и qa — обычные', () => {
+test('3. роль проверки — по графу, а не по id: у backend QA проверяет API, у docs reviewer проверяет факты, а добавленный QA остаётся рабочим', () => {
   const b = view(backend.roles, backend.workflow)
   assert.deepEqual(ids(b.checks), ['reviewer', 'qa'])
-  assert.deepEqual(b.checks.find((r) => r.id === 'qa')?.checkedBy, ['Прогон тестов'])
+  assert.deepEqual(b.checks.find((r) => r.id === 'qa')?.checkedBy, ['Проверка API'])
   assert.deepEqual(ids(b.work), ['developer'])
 
   const qa = backend.roles.find((r) => r.id === 'qa')!
   const d = view([...docs.roles, qa], docs.workflow)
-  assert.deepEqual(d.checks, [])
-  assert.deepEqual(ids(d.work), ['writer', 'reviewer', 'qa'])
+  assert.deepEqual(ids(d.checks), ['reviewer'])
+  assert.deepEqual(d.checks[0].checkedBy, ['Точность и примеры'])
+  assert.deepEqual(ids(d.work), ['writer', 'qa'])
 })
 
 test('4. «сироты»: нет в типе — missing, служебная — service; toggle их не теряет, снятие убирает', () => {
