@@ -1582,7 +1582,7 @@ Main принимает готовность только от главного 
 | Window Chrome | `main/window-chrome.ts`, `renderer/windowChrome.ts` | `shared/window-chrome.ts`, WCO | интегрированные нативные кнопки macOS/Windows; системный заголовок Linux | `main/window-chrome.test.ts`, `renderer/windowChrome.test.ts`; ручная проверка билда |
 | About | `main/about-window.ts`, BrowserWindow | `about-content.ts`, `app.getVersion`, язык настроек | немодальное дочернее окно, нативные системные кнопки | `main/about-content.test.ts`, живой Electron |
 | Settings Navigation | `SettingsModal`, `UpdatesSection` | существующие настройки приложения | шестерёнка; команда меню; обновления | живой Electron, восстановление окна, смена языка |
-| Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
+| Appearance | `settings/AppearanceSection.tsx`, `renderer/appearance.ts` | `shared/theme.ts`, `shared/appearance.ts`, `ProjectManager.settings` | Graphite, Slate, Forest, Paper; повышенная насыщенность; system/reduced motion | `projects-appearance.test.ts`, `appearance.test.ts`, `theme.test.ts`; ручная проверка билда |
 | Assistant Chat | `AssistantPanel`, `AssistantInteraction`, `AssistantSession` | `shared/assistant-conversation.ts`, `docs/assistant-chat.md` | справа; Amp/Shell — отдельный терминал | протокольные fixture-тесты, session/IPC тесты; пользователь проверяет билд |
 | Tray | `main/tray.ts`, Electron Tray | `build/tray/orca-logo.svg` | template PNG 18/36 macOS; цветной ICO Windows; PNG Linux | nativeImage, упаковка; Windows проверяется на Windows |
 | Branding | `build/icon.svg`, `build/tray/orcaTemplate.svg` | предоставленный авторский логотип | цветной SVG/PNG; монохромная CSS-маска rail в `--muted` | упаковка ассетов; ручная проверка билда |
@@ -1597,10 +1597,10 @@ Slate, Forest и светлую Paper; `appColors` остаётся адапте
 и xterm используют выбранную палитру. Текст на акценте задаёт `--on-accent`.
 Контраст основного/вторичного текста, кнопок, статусов и фокуса проверяет `theme.test.ts`.
 
-`AppSettings.appearance?: {theme, motion}` хранится в глобальных `settings` файла `projects.json`
+`AppSettings.appearance?: {theme, motion, highSaturation}` хранится в глобальных `settings` файла `projects.json`
 через существующие `app:getSettings` / `app:setSettings`. `shared/appearance.ts` нормализует старые
-или повреждённые сохранённые значения в Graphite/system без изменения версии файла. Новый патч
-проверяется строго; частичное изменение сохраняет второе поле. Ошибка атомарной записи откатывает
+или повреждённые сохранённые значения в Graphite/system с выключенной насыщенностью без изменения версии файла. Новый патч
+проверяется строго; частичное изменение сохраняет остальные поля. Ошибка атомарной записи откатывает
 настройки в памяти, а `app:changed` отправляется только после успешного сохранения.
 
 `appearance` в renderer держит стабильный snapshot для `useAppearance`, обновляется по `app:changed`
@@ -1614,6 +1614,13 @@ Slate, Forest и светлую Paper; `appColors` остаётся адапте
 без пересоздания xterm или PTY. Paper оставляет терминал тёмным с отдельными читаемыми
 `--term-text`, `--term-muted`, `--term-cursor`; подсказки, код и просмотр файлов имеют свои поверхности.
 Пользовательские цвета колонок и ANSI-цвета вывода сохраняются.
+
+`highSaturation: false` — значение по умолчанию и миграция старых настроек. При `true`
+`getAppTheme(theme, true)` усиливает только семантические токены акцента, статусов, приоритетов,
+прогресса и графиков; фон, текст и терминальные токены остаются исходными. Насыщенные варианты
+заданы в `shared/theme.ts` отдельно для светлых и тёмных поверхностей. Renderer передаёт
+`data-saturation=high|normal`; миниатюры тем и «О приложении» используют тот же адаптер палитры.
+Переключатель доступен в `AppearanceSection` и сохраняется через общий `saveAppSettings`.
 
 `motion: system` следует `prefers-reduced-motion` в реальном времени; `reduced` включает уменьшение
 всегда. CSS получает `data-motion`, мастер использует общий helper для Web Animations,
@@ -1681,7 +1688,7 @@ SVG-линия и траектория пакета используют оди�
 Режим подтверждается платформой и дополнительным аргументом главного окна; renderer совместим
 со старым мостом без этого свойства.
 
-- `invoke`: `app:info`, `app:getMenu` → `AppMenuItem[]`, `app:invokeMenu(id)`, `app:dismissMenu` (авторский popup Windows; снимок, разрешённый лист общего меню и возврат нативных сочетаний), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?}`);
+- `invoke`: `app:info`, `app:getMenu` → `AppMenuItem[]`, `app:invokeMenu(id)`, `app:dismissMenu` (авторский popup Windows; снимок, разрешённый лист общего меню и возврат нативных сочетаний), `app:getSettings`, `app:setSettings(patch)` (см. «Фоновый режим», «Общая визуальная тема» и «Язык интерфейса»; в патче есть `updates: {autoCheck?, autoDownload?, installWhenIdle?}`, `appearance: {theme?, motion?, highSaturation?}`);
   `onboarding:getState` → `OnboardingState {required, status: 'pending'|'completed'|'skipped', version, at?}` (мастер первого запуска; `required` — статус `pending`),
   `onboarding:complete({skipped?})` → `OnboardingState` (`skipped: true` — «Пропустить»; повтор на пройденном идемпотентен, статус не понижается до `pending`;
   невалидный аргумент — `OrcaError` `onboarding.invalidInput`; в контрактной версии оба канала — заглушки `completed`);

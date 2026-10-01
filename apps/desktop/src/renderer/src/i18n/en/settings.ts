@@ -33,6 +33,8 @@ export default {
   'appearance.theme.paper': 'Paper',
   'appearance.theme.paper.hint': 'Warm light surfaces, gentle borders, and a dark green accent.',
   'appearance.motion': 'Animations',
+  'appearance.highSaturation': 'Higher saturation',
+  'appearance.highSaturationHint': 'Richer colors for accents, statuses, priorities, and progress in every theme.',
   'appearance.motionHint': 'Reduced motion removes decorative animations and smooth scrolling.',
   'appearance.motion.system': 'Follow system',
   'appearance.motion.reduced': 'Reduce motion',

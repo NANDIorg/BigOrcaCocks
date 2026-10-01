@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import type { AppSettings, AppSettingsPatch } from '../../../shared/ipc'
 import { APP_THEMES, getAppTheme, type ThemeDefinition } from '../../../shared/theme'
 import type { AppearanceSettings, MotionPreference } from '../../../shared/appearance'
-import { SectionHead } from '../about/parts'
+import { SectionHead, Switch } from '../about/parts'
 import { useT } from '../i18n'
 import { useAppearance } from '../useAppearance'
 
@@ -72,7 +72,7 @@ export function AppearanceSection({ settings, error, onChange }: {
             <input className="sr-only" type="radio" name="app-theme" value={id} checked={current.theme === id}
               aria-disabled={busy} aria-describedby={`appearance-${id}-hint`} onChange={() => void choose({ theme: id })} />
             <span className="appearance-card">
-              <span className="appearance-preview-frame"><ThemePreview theme={getAppTheme(id)} /></span>
+              <span className="appearance-preview-frame"><ThemePreview theme={getAppTheme(id, current.highSaturation)} /></span>
               <span className="appearance-card-text">
                 <span className="appearance-card-title"><span className="appearance-radio" aria-hidden="true" />{t(`settings.appearance.theme.${id}`)}</span>
                 <span className="appearance-card-hint" id={`appearance-${id}-hint`}>{t(`settings.appearance.theme.${id}.hint`)}</span>
@@ -81,6 +81,17 @@ export function AppearanceSection({ settings, error, onChange }: {
           </label>)}
         </div>
       </fieldset>
+      <div className="about-box appearance-saturation">
+        <div className="row-act">
+          <div className="row-act-text">
+            <b>{t('settings.appearance.highSaturation')}</b>
+            <span className="hint">{t('settings.appearance.highSaturationHint')}</span>
+          </div>
+          <Switch on={current.highSaturation} disabled={!settings || busy}
+            title={t('settings.appearance.highSaturation')}
+            onChange={highSaturation => void choose({ highSaturation })} />
+        </div>
+      </div>
       <fieldset className="appearance-motion about-box" disabled={!settings}>
         <legend className="sr-only">{t('settings.appearance.motion')}</legend>
         <h3>{t('settings.appearance.motion')}</h3>

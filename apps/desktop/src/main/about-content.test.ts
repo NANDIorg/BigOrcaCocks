@@ -12,11 +12,12 @@ describe('безопасное содержимое окна «О приложе
     assert.match(en, /Version 1\.1\.3 · Sea Lion/)
   })
   it('адаптер окна применяет выбранную палитру и предпочтение движения', () => {
-    for (const theme of ['forest', 'paper'] as const) {
-      const html = buildAboutHtml({ locale: 'en', version: '1.0.1', iconPng: new Uint8Array(), appearance: { theme, motion: 'reduced' } })
-      const palette = getAppTheme(theme)
+    for (const theme of ['forest', 'paper'] as const) for (const highSaturation of [false, true]) {
+      const html = buildAboutHtml({ locale: 'en', version: '1.0.1', iconPng: new Uint8Array(), appearance: { theme, motion: 'reduced', highSaturation } })
+      const palette = getAppTheme(theme, highSaturation)
       assert.ok(html.includes(`--page: ${palette.colors.page};`))
       assert.ok(html.includes(`--text: ${palette.colors.text};`))
+      assert.ok(html.includes(`--accent: ${palette.colors.accent};`))
       assert.ok(html.includes(`color-scheme: ${palette.colorScheme};`))
       assert.match(html, /data-motion="reduced"/)
     }
