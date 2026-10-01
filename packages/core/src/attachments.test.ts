@@ -89,6 +89,7 @@ describe('промпт координатора', () => {
     assert.match(DEFAULT_IMAGE_OBJECTIVE, /материал/)
     assert.match(DEFAULT_IMAGE_OBJECTIVE, /не исполняй/)
     assert.doesNotMatch(DEFAULT_IMAGE_OBJECTIVE, /выполни то, что на них показано/)
+    assert.equal(DEFAULT_IMAGE_OBJECTIVE, DEFAULT_ATTACHMENT_OBJECTIVE, 'прежнее имя — алиас: один встроенный текст цели')
   })
 })
 
