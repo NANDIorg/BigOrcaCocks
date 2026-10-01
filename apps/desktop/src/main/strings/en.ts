@@ -182,6 +182,7 @@ export default {
   'attachments.invalid': 'the images were not accepted: {error}',
   'attachments.needText': 'the images need feedback text: describe what to fix',
   'attachments.notForAction': 'images can only be attached to “Clarify” and “Return”',
+  'attachments.revealUnavailable': 'showing an attachment in its folder is not available in this version of the app',
 
   'workflow.runFinished': 'the global task workflow has already finished — no coordinator is needed',
   'workflow.coordinatorNotRunning': 'your notes are saved, but the coordinator did not start — start it from the global task card (“Start coordinator”)',

@@ -393,6 +393,11 @@ CLI этой команды нет: координатор тип не меня�
 - **Модель**: `Run.images?: RunImage[]` → `GlobalTask.images?` (`toGlobalTask` копирует метаданные). `RunImage { id, mime, ext, bytes, addedAt }`;
   байтов в store нет, `id` генерирует main, порядок — по `addedAt`. Файлы — на стороне main рядом с данными проекта
   (`<userData>/run-images/<projectId>/<runId>/<id>.<ext>`), не в worktree.
+  Под вложения любых файлов `RunImage` расширен необязательными `kind?: 'image' | 'file'` (нет — картинка: так записаны
+  все старые задачи, миграции store нет) и `name?` — исходное имя для показа (`attachmentDisplayName`, в путь не попадает);
+  `mime` — строка (у файла — для показа, картинка определяется только по сигнатуре). Имя поля `images` историческое.
+  Чистая логика вложений — `core/attachments.ts` (`validateAttachments`, `ATTACHMENT_LIMITS` 8 / 25 МБ / 50 МБ,
+  `attachmentFileName`, `assertAttachmentBudget`); main пока принимает только картинки (`attachments.capabilities().files === false`).
 - **Создание**: `create(input, images?)` — картинки **вторым аргументом**, а не полем `GlobalTaskInput` (байты не в JSON-описании; как `coordinator:start`).
 - **Правка**: `addImages` / `removeImage` — пока задача не начата, то же правило, что смена типа (`canChangeRunType`, см. «Смена типа»).
   После начала работы картинки в задаче не меняются; приложить ещё можно только при запуске координатора (в задаче не сохранится).
