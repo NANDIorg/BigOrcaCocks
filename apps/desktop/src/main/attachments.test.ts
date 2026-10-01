@@ -7,11 +7,12 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, workerTaskPrompt, validateImageAttachments, presetTaskType, runTypeInput, type ImageAttachmentInput } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, ATTACHMENT_LIMITS, DEFAULT_ATTACHMENT_OBJECTIVE, coordinatorPrompt, getAgent, workerTaskPrompt, validateAttachments, presetTaskType, runTypeInput, type ImageAttachmentInput } from '@orca-board/core'
 import { OrcaError } from './i18n'
 import { resumeObjective } from './coordinator-resume'
+import { CMD_LINE_LIMIT, win32Launch } from './win32-launch'
 import {
-  ATTACHMENTS_DIR, clearStartImages, coordinatorImagesPlace, discardReturnImages, hasImageInput, imagesReferenced, pruneAttachments,
+  ATTACHMENTS_DIR, attachmentCapabilities, clearStartImages, coordinatorImagesPlace, coordinatorObjective, discardReturnImages, hasImageInput, imagesReferenced, pruneAttachments,
   rejectWithImages, resolveWithImages, returnRunWithImages, saveReturnImages, stripResolutionImages, withReturnImages, workerImagesPlace,
   writeAttachments
 } from './attachments'
@@ -19,6 +20,8 @@ import {
 const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const png = (extra = 0): ImageAttachmentInput => ({ mime: 'image/png', data: Uint8Array.from([...PNG_HEAD, 1, 2, 3, extra]) })
 const jpg: ImageAttachmentInput = { mime: 'image/jpeg', data: Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1]) }
+/** Файл не-картинка с именем, как его присылает новый renderer (`File.name`). */
+const file = (name: string, text = 'data', mime = 'application/octet-stream'): ImageAttachmentInput => ({ mime, name, data: new TextEncoder().encode(text) })
 
 let tmp: string
 let repo: string
@@ -64,8 +67,8 @@ describe('saveReturnImages', () => {
   it('пишет image-N.ext в уникальную ret_* папку внутри .orca-attachments владельца; корень с .gitignore «*»', () => {
     const cwd = path.join(tmp, 'wt')
     mkdirSync(cwd)
-    const a = saveReturnImages(cwd, 't1', '', validateImageAttachments([png(), jpg]))
-    const b = saveReturnImages(cwd, 't1', '', validateImageAttachments([png(1)]))
+    const a = saveReturnImages(cwd, 't1', '', validateAttachments([png(), jpg]))
+    const b = saveReturnImages(cwd, 't1', '', validateAttachments([png(1)]))
     assert.deepEqual(a.map((p) => path.basename(p)), ['image-1.png', 'image-2.jpg'])
     assert.ok(a.every((p) => path.isAbsolute(p) && p.startsWith(path.join(cwd, ATTACHMENTS_DIR, 't1', 'ret_'))))
     assert.notEqual(path.dirname(a[0]), path.dirname(b[0]), 'два возврата — две папки, image-1 не перезаписывается')
@@ -74,7 +77,7 @@ describe('saveReturnImages', () => {
   })
 
   it('подпапка `returns` — для координатора; git status рабочей папки чистый (картинки не попадут в коммит)', () => {
-    const [p] = saveReturnImages(repo, 'run_1', 'returns', validateImageAttachments([png()]))
+    const [p] = saveReturnImages(repo, 'run_1', 'returns', validateAttachments([png()]))
     assert.ok(p.startsWith(path.join(repo, ATTACHMENTS_DIR, 'run_1', 'returns', 'ret_')))
     assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), '')
   })
@@ -82,13 +85,13 @@ describe('saveReturnImages', () => {
   it('не удалось записать — OrcaError, чужого не остаётся', () => {
     const cwd = path.join(tmp, 'file-not-dir')
     writeFileSync(cwd, 'x')
-    assert.throws(() => saveReturnImages(cwd, 't1', '', validateImageAttachments([png()])), (e) => e instanceof OrcaError && e.key === 'attachments.saveFailed')
+    assert.throws(() => saveReturnImages(cwd, 't1', '', validateAttachments([png()])), (e) => e instanceof OrcaError && e.key === 'attachments.saveFailed')
   })
 
   it('discardReturnImages удаляет только папку ret_* из .orca-attachments', () => {
     const cwd = path.join(tmp, 'wt2')
     mkdirSync(cwd)
-    const paths = saveReturnImages(cwd, 't1', '', validateImageAttachments([png()]))
+    const paths = saveReturnImages(cwd, 't1', '', validateAttachments([png()]))
     const stranger = path.join(tmp, 'stranger', 'ret_x')
     mkdirSync(stranger, { recursive: true })
     discardReturnImages([path.join(stranger, 'image-1.png')])
@@ -102,8 +105,8 @@ describe('изображения старта координатора и воз
   it('clearStartImages стирает image-N в корне папки прогона, а returns/ оставляет; whole — папку целиком', () => {
     const cwd = path.join(tmp, 'coord')
     mkdirSync(cwd)
-    writeAttachments(path.join(cwd, ATTACHMENTS_DIR), 'run_1', validateImageAttachments([png(), jpg]))
-    const [ret] = saveReturnImages(cwd, 'run_1', 'returns', validateImageAttachments([png(2)]))
+    writeAttachments(path.join(cwd, ATTACHMENTS_DIR), 'run_1', validateAttachments([png(), jpg]))
+    const [ret] = saveReturnImages(cwd, 'run_1', 'returns', validateAttachments([png(2)]))
     const dir = path.join(cwd, ATTACHMENTS_DIR, 'run_1')
     assert.deepEqual(files(dir), ['image-1.png', 'image-2.jpg', 'returns'])
     clearStartImages(path.join(cwd, ATTACHMENTS_DIR), 'run_1')
@@ -117,10 +120,10 @@ describe('изображения старта координатора и воз
     const cwd = path.join(tmp, 'coord2')
     mkdirSync(cwd)
     const root = path.join(cwd, ATTACHMENTS_DIR)
-    const [ret] = saveReturnImages(cwd, 'run_1', 'returns', validateImageAttachments([png()]))
-    writeAttachments(root, 'run_1', validateImageAttachments([jpg, png()]))
+    const [ret] = saveReturnImages(cwd, 'run_1', 'returns', validateAttachments([png()]))
+    writeAttachments(root, 'run_1', validateAttachments([jpg, png()]))
     // image-2.png уже есть: флаг `wx` падает на втором файле, первый (image-1.png) откатывается.
-    assert.throws(() => writeAttachments(root, 'run_1', validateImageAttachments([png(), png()])), (e) => e instanceof OrcaError)
+    assert.throws(() => writeAttachments(root, 'run_1', validateAttachments([png(), png()])), (e) => e instanceof OrcaError)
     assert.ok(existsSync(ret))
     assert.deepEqual(files(path.join(root, 'run_1')), ['image-1.jpg', 'image-2.png', 'returns'])
   })
@@ -132,7 +135,7 @@ describe('изображения старта координатора и воз
     const open = store.createRun('открытый')
     const closed = store.createRun('закрытый')
     store.closeRun(closed.id)
-    for (const id of [open.id, closed.id]) saveReturnImages(cwd, id, 'returns', validateImageAttachments([png()]))
+    for (const id of [open.id, closed.id]) saveReturnImages(cwd, id, 'returns', validateAttachments([png()]))
     pruneAttachments(store, root, () => false)
     assert.ok(existsSync(path.join(root, open.id)))
     assert.equal(existsSync(path.join(root, closed.id)), false)
@@ -140,7 +143,7 @@ describe('изображения старта координатора и воз
 })
 
 function attachmentsRootOf(cwd: string): string {
-  saveReturnImages(cwd, '_probe', '', validateImageAttachments([png()]))
+  saveReturnImages(cwd, '_probe', '', validateAttachments([png()]))
   rmSync(path.join(cwd, ATTACHMENTS_DIR, '_probe'), { recursive: true })
   return path.join(cwd, ATTACHMENTS_DIR)
 }
@@ -158,13 +161,14 @@ describe('withReturnImages', () => {
     assert.equal(withReturnImages(store, place, [], 'текст', (paths) => paths.length), 0)
   })
 
-  it('картинки без текста, не массив, не картинка, слишком много — понятные ошибки до записи файлов', () => {
+  it('вложения без текста, не массив, пустой файл, слишком много — понятные ошибки до записи файлов', () => {
     const key = (input: unknown, text: string | undefined) =>
       (() => withReturnImages(store, place, input, text, () => 1))
     assert.throws(key([png()], '  '), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
     assert.throws(key([png()], undefined), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
     assert.throws(key('картинка', 'т'), (e) => e instanceof OrcaError && e.key === 'attachments.invalid')
-    assert.throws(key([{ mime: 'image/png', data: Uint8Array.from([1, 2, 3]) }], 'т'), (e) => e instanceof OrcaError && e.key === 'attachments.invalid')
+    assert.throws(key([{ mime: 'text/plain', data: new Uint8Array(0), name: 'empty.txt' }], 'т'), (e) => e instanceof OrcaError && e.key === 'attachments.invalid')
+    assert.throws(key([{ mime: 'application/pdf', data: new Uint8Array(ATTACHMENT_LIMITS.maxBytes + 1) }], 'т'), /больше 25 МБ/)
     assert.throws(key(Array.from({ length: 9 }, () => png()), 'т'), /не больше 8/)
     assert.equal(existsSync(path.join(tmp, ATTACHMENTS_DIR)), false, 'ничего не записано')
   })
@@ -336,5 +340,102 @@ describe('hasImageInput', () => {
   it('undefined, null и пустой массив — «не присылали»; остальное, даже мусор, — присылали (его отвергнет валидация)', () => {
     assert.deepEqual([undefined, null, []].map(hasImageInput), [false, false, false])
     assert.deepEqual([[png()], 'x', {}, 0].map(hasImageInput), [true, true, true, true])
+  })
+})
+
+describe('вложения любых файлов', () => {
+  it('имена на диске: картинки image-N.ext, файлы file-N-<slug>.ext; одноимённые файлы не сталкиваются, путь из имени не проходит', () => {
+    const cwd = path.join(tmp, 'files')
+    mkdirSync(cwd)
+    const paths = saveReturnImages(cwd, 't1', '', validateAttachments([
+      png(), file('spec v2.pdf', '%PDF-1.4', 'application/pdf'), file('error.log'), file('dir/error.log', 'другой'),
+      file('../../etc/passwd'), file('.env', 'SECRET=1'), file('Отчёт Q3.xlsx'), file('noext')
+    ]))
+    assert.deepEqual(paths.map((p) => path.basename(p)), [
+      'image-1.png', 'file-2-spec_v2.pdf', 'file-3-error.log', 'file-4-error.log', 'file-5-passwd', 'file-6-env', 'file-7-Otchet_Q3.xlsx', 'file-8-noext'
+    ])
+    const dir = path.dirname(paths[0])
+    assert.ok(paths.every((p) => path.dirname(p) === dir), 'всё в одной ret_* папке, наружу не вышло')
+    assert.equal(readFileSync(paths[2], 'utf8'), 'data')
+    assert.equal(readFileSync(paths[3], 'utf8'), 'другой')
+  })
+
+  it('clearStartImages удаляет image-* и file-* в корне папки прогона, returns/ (и файлы в нём) не трогает', () => {
+    const cwd = path.join(tmp, 'coord-files')
+    mkdirSync(cwd)
+    const root = path.join(cwd, ATTACHMENTS_DIR)
+    const [ret] = saveReturnImages(cwd, 'run_1', 'returns', validateAttachments([file('fix.patch')]))
+    writeAttachments(root, 'run_1', validateAttachments([file('a.txt'), png(), file('Makefile')]))
+    writeFileSync(path.join(root, 'run_1', 'notes.md'), 'чужое')
+    const dir = path.join(root, 'run_1')
+    assert.deepEqual(files(dir), ['file-1-a.txt', 'file-3-Makefile', 'image-2.png', 'notes.md', 'returns'])
+    clearStartImages(root, 'run_1')
+    assert.deepEqual(files(dir), ['notes.md', 'returns'])
+    assert.ok(existsSync(ret) && path.basename(ret) === 'file-1-fix.patch')
+  })
+
+  it('откат при падении apply: папка возврата с файлами удаляется', () => {
+    const place = (): ReturnType<typeof workerImagesPlace> => ({ cwd: tmp, ownerId: 'o2', subdir: '' })
+    assert.throws(() => withReturnImages(store, place, [file('log.txt'), png()], 'т', (paths) => {
+      assert.ok(paths.every((p) => existsSync(p)))
+      throw new Error('store отказал')
+    }), /store отказал/)
+    assert.equal(returnDirs(path.join(tmp, ATTACHMENTS_DIR, 'o2')).length, 0)
+  })
+
+  it('весь путь: файл из IPC → .orca-attachments координатора → Run.stageInput.images → промпт координатора', () => {
+    const run = store.createGlobalTask({ title: 'G', type: runTypeInput(presetTaskType('general')!) })
+    const runTree = mkdtempSync(path.join(tmp, 'run-tree-'))
+    store.setRunGit(run.id, { branch: 'feature/g', base: 'master', worktree: runTree })
+    const pdf = file('spec.pdf', '%PDF-1.7 текст', 'application/pdf')
+    returnRunWithImages(store, repo, run.id, [pdf, png()], 'см. спеку', (paths) => store.enterRunStage(run.id, { feedback: 'см. спеку', images: paths }))
+    const images = store.getRun(run.id)!.stageInput!.images!
+    assert.deepEqual(images.map((p) => path.basename(p)), ['file-1-spec.pdf', 'image-2.png'])
+    assert.ok(images.every((p) => p.startsWith(path.join(runTree, ATTACHMENTS_DIR, run.id, 'returns', 'ret_')) && existsSync(p)))
+    assert.equal(readFileSync(images[0], 'utf8'), '%PDF-1.7 текст')
+  })
+
+  it('пути из resolution.images вырезаются и для файлов; «Уточнить» с файлом — путь в промпте воркера', () => {
+    const { task, taskTree } = setup({ answerFor: 'human' })
+    const req = store.pendingRequests().find((r) => r.kind === 'answer')!
+    resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'лог', images: ['/etc/passwd'] }, [file('trace.log')], (r) => store.resolveRequest(req.id, r))
+    const [p] = store.getTask(task.id)!.feedbackImages!
+    assert.ok(p.startsWith(path.join(taskTree, ATTACHMENTS_DIR, task.id, 'ret_')) && p.endsWith('file-1-trace.log'), p)
+    assert.ok(workerTaskPrompt(store.getTask(task.id)!, 'ответ').includes(`\`${p}\``))
+  })
+})
+
+describe('цель координатора и рукопожатие', () => {
+  it('coordinatorObjective: текст — как есть; пустая цель + только файл — цель по умолчанию; ничего — coordinator.noObjective', () => {
+    const one = validateAttachments([file('task.md', '# задача')])
+    assert.equal(coordinatorObjective('  Сделать логин  ', one), 'Сделать логин')
+    assert.equal(coordinatorObjective('   ', one), DEFAULT_ATTACHMENT_OBJECTIVE)
+    assert.equal(coordinatorObjective(undefined, validateAttachments([png()])), DEFAULT_ATTACHMENT_OBJECTIVE)
+    assert.throws(() => coordinatorObjective('', []), (e) => e instanceof OrcaError && e.key === 'coordinator.noObjective')
+    assert.throws(() => coordinatorObjective(42, []), (e) => e instanceof OrcaError && e.key === 'coordinator.noObjective')
+  })
+
+  it('attachments:capabilities — files: true и лимиты ATTACHMENT_LIMITS (копия, не сама константа)', () => {
+    const caps = attachmentCapabilities()
+    assert.deepEqual(caps, { files: true, limits: { ...ATTACHMENT_LIMITS } })
+    assert.notEqual(caps.limits, ATTACHMENT_LIMITS)
+  })
+})
+
+describe('Windows: стартовый промпт координатора с 8 файлами', () => {
+  it('8 путей максимальной длины укладываются в CMD_LINE_LIMIT через npm-шим (cmd.exe)', () => {
+    const shim = path.join(tmp, 'claude.cmd')
+    writeFileSync(shim, '@echo off\r\n')
+    // Длинный, но реальный cwd координатора: профиль, папка проектов и worktree ветки глобальной задачи.
+    const cwd = 'C:\\Users\\very.long.user.name.2026\\Documents\\projects\\some-long-repository-name\\.orca-worktrees\\run_mqx1y2z3abcd'
+    const slug = 'x'.repeat(40)
+    const paths = Array.from({ length: ATTACHMENT_LIMITS.maxCount }, (_, i) =>
+      `${cwd}\\${ATTACHMENTS_DIR}\\run_mqx1y2z3abcd\\file-${i + 1}-${slug}.${'e'.repeat(10)}`)
+    assert.ok(paths[0].length >= 170, `путь ${paths[0].length} знаков`)
+    const prompt = coordinatorPrompt(DEFAULT_ATTACHMENT_OBJECTIVE, paths)
+    const inv = getAgent('claude')!.invoke('SYSTEM', prompt, { permissionMode: 'auto', shell: 'cmd.exe' })
+    const launch = win32Launch(shim, inv.args)
+    assert.equal(launch.command, 'cmd.exe')
+    assert.ok(typeof launch.args === 'string' && launch.args.length <= CMD_LINE_LIMIT, `строка ${String(launch.args.length)} из ${CMD_LINE_LIMIT}`)
   })
 })

@@ -26,7 +26,7 @@ import {
 } from './global-tasks.ts'
 import type { RunTypeInput, TaskTypeSnapshot } from './task-types.ts'
 import type { RunGit } from './run-branch.ts'
-import { assertImageBudget, type RunImage } from './attachments.ts'
+import { assertAttachmentBudget, type RunImage } from './attachments.ts'
 import { forkBranches, runPositionAt, runPositions, type RunPosition } from './run-lanes.ts'
 
 /**
@@ -2176,7 +2176,7 @@ export class TaskStore {
    */
   createGlobalTask(input: {
     title?: string; description?: string; status?: string; priority?: TaskPriority; workflow?: Workflow; type?: RunTypeInput
-    /** Метаданные картинок (файлы пишет main): не больше `IMAGE_ATTACHMENT_LIMITS` на задачу. Картинки не заменяют название/описание: цель координатора берётся из них. */
+    /** Метаданные вложений — картинок и файлов (файлы пишет main): не больше `ATTACHMENT_LIMITS` на задачу. Вложения не заменяют название/описание: цель координатора берётся из них. */
     images?: RunImage[]
   }): GlobalTask {
     const title = input.title?.trim() || undefined
@@ -2185,7 +2185,7 @@ export class TaskStore {
     if (input.status !== undefined) this.assertGlobalColumn(input.status)
     if (input.priority !== undefined) assertPriority(input.priority)
     const images = input.images ?? []
-    assertImageBudget([], images)
+    assertAttachmentBudget([], images)
     const run = this.addRun({
       objective,
       ...(title ? { title } : {}),
@@ -2241,9 +2241,9 @@ export class TaskStore {
   }
 
   /**
-   * Добавить картинки (метаданные; файлы пишет main) к глобальной задаче до начала работы — правило смены типа
-   * (`runTypeLockReason`). Лимиты `IMAGE_ATTACHMENT_LIMITS` — на задачу суммарно с уже сохранёнными
-   * (`assertImageBudget`); нарушение — ошибка, ничего не меняется. Порядок — по добавлению.
+   * Добавить вложения — картинки и файлы (метаданные; файлы пишет main) к глобальной задаче до начала работы — правило смены типа
+   * (`runTypeLockReason`). Лимиты `ATTACHMENT_LIMITS` — на задачу суммарно с уже сохранёнными
+   * (`assertAttachmentBudget`); нарушение — ошибка, ничего не меняется. Порядок — по добавлению.
    */
   addRunImages(id: string, images: RunImage[]): GlobalTask {
     const run = this.mustRun(id)
@@ -2254,7 +2254,7 @@ export class TaskStore {
       if (ids.has(img.id)) throw new Error(`изображение с id ${img.id} у задачи уже есть`)
       ids.add(img.id)
     }
-    assertImageBudget(run.images ?? [], images)
+    assertAttachmentBudget(run.images ?? [], images)
     run.images = [...(run.images ?? []), ...images.map((i) => ({ ...i }))]
     run.updatedAt = Date.now()
     this.commit()
