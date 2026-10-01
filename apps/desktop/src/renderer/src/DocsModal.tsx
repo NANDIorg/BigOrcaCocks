@@ -16,10 +16,10 @@ import { DocsToc } from './DocsToc'
 import { DocsBlank, DocsStart, taskCards } from './DocsStart'
 import { DocActionsMenu, DocKindIcon, DocStatus, DocViewControls, DocViewer } from './DocViewer'
 import { DocStub } from './DocStub'
-import { docActions, docFindable, effectiveMode, type DocAction, type DocMode, type DocZoom } from './docView'
+import { docActions, docFindable, docModes, docZoomable, effectiveMode, type DocAction, type DocMode, type DocZoom } from './docView'
 import { DocViewStaleError, docViewApi, docViewFailure, hasDocView, type DocViewFailure } from './docViewApi'
 import { DocIcon } from './docsIcons'
-import { useT } from './i18n'
+import { t as translateNow, useT } from './i18n'
 
 /** Запись истории переходов: документ и где он был прокручен, когда с него ушли. */
 interface Entry extends DocRef {
@@ -54,6 +54,11 @@ function errorMessage(e: unknown): string {
 function isNotFound(e: unknown): boolean {
   const code = ipcErrorCode(e)
   return code === 'files.notFound' || code === 'docs.notFound' || (!code && /не найден/i.test(ipcErrorMessage(e)))
+}
+
+/** Заголовок баннера: «Файл не найден: путь» понятнее текста main, остальное — текст main как есть. */
+function errorTitle(e: unknown, path: string): string {
+  return isNotFound(e) ? translateNow('config.docs.err.notFound', { path }) : errorMessage(e)
 }
 
 /** Отказы, которые показываются заглушкой вместо просмотра: человек выбрал файл, и это ответ про сам файл. */
@@ -294,7 +299,7 @@ export function DocsModal({ projectId, projectName, root, tasks, columns, onClos
           title: t('config.docs.err.notFound', { path: doc.path }),
           detail: `${t('config.docs.err.deletedLink', { name: nameOf(current.path) })} ${t('config.docs.err.stay')}`
         })
-      } else setDocError({ title: errorMessage(e), detail: current ? t('config.docs.err.stay') : undefined })
+      } else setDocError({ title: errorTitle(e, doc.path), detail: current ? t('config.docs.err.stay') : undefined })
       return
     }
     if (seq !== navSeq.current) return
@@ -329,7 +334,7 @@ export function DocsModal({ projectId, projectName, root, tasks, columns, onClos
     } catch (e) {
       if (seq !== navSeq.current) return
       if (shown?.failure) setShown({ failure: docViewFailure(e) })
-      else setDocError({ title: errorMessage(e), detail: t('config.docs.err.staleVersion') })
+      else setDocError({ title: errorTitle(e, current.path), detail: t('config.docs.err.staleVersion') })
     }
   }
 
@@ -645,7 +650,7 @@ export function DocsModal({ projectId, projectName, root, tasks, columns, onClos
           {markdownDoc && (
             <button className={`icon-btn docs-tool ${showToc ? 'on' : ''}`} title={t('config.docs.nav.toc')} aria-label={t('config.docs.nav.toc')} aria-pressed={showToc} onClick={toggleToc}><DocIcon.toc /></button>
           )}
-          <span className="docs-vsep docs-acts" />
+          {(findable || markdownDoc || (view && (docModes(view).length > 0 || docZoomable(view, docMode)))) && <span className="docs-vsep docs-acts" />}
           <span className="docs-ctl docs-acts">
             <button className="icon-btn docs-tool" title={t('config.docs.view.copyPath')} aria-label={t('config.docs.view.copyPath')} onClick={() => void onAction('copy')}><DocIcon.copy /></button>
             <button className="icon-btn docs-tool" title={t('config.docs.nav.reveal')} aria-label={t('config.docs.nav.reveal')} onClick={() => void onAction('reveal')}><DocIcon.reveal /></button>
