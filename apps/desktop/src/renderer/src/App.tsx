@@ -59,6 +59,7 @@ import { StatsView } from './StatsView'
 import type { StatsSnapshot } from './taskStatsFormat'
 import { pickAssistant } from './assistantPty'
 import { assistantAgentOf } from './assistantSettings'
+import { assistantRailState, type AssistantActivity, type AssistantReadMarker } from './assistantActivity'
 import { availableTypes, globalTypeTitle, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
 interface OpenTerminal {
@@ -224,6 +225,8 @@ export function App(): React.JSX.Element {
   const [inboxFocus, setInboxFocus] = useState<{ requestId: string; nonce: number } | null>(null)
   /** Панель ассистента (⌘K, кнопка в rail). Ассистент один на приложение — при смене проекта тот же PTY. */
   const [showAssistant, setShowAssistant] = useState(false)
+  const [assistantActivity, setAssistantActivity] = useState<AssistantActivity | null>(null)
+  const [assistantRead, setAssistantRead] = useState<AssistantReadMarker | null>(null)
   const workflowNonce = useRef(0)
   const [workflowAttachment, setWorkflowAttachment] = useState<WorkflowAttachment | null>(null)
   const [workflowComposerRequest, setWorkflowComposerRequest] = useState<WorkflowComposerRequest | null>(null)
@@ -515,6 +518,14 @@ export function App(): React.JSX.Element {
 
   const workflowSessionRef = useRef(assistantPty)
   workflowSessionRef.current = assistantPty
+  const currentAssistantActivity = assistantActivity?.ptyId === assistantPty ? assistantActivity : null
+  const assistantVisible = showAssistant && !showSettings
+  const assistantRail = assistantRailState(currentAssistantActivity, assistantRead, assistantVisible, assistantState.busy)
+  const assistantRailTitle = t(assistantRail === 'idle' ? 'shell.rail.assistant' : `shell.assistant.rail.${assistantRail}`)
+  useEffect(() => {
+    // Настройки могут закрывать чат: ответ считается прочитанным только в видимой панели.
+    if (assistantVisible && currentAssistantActivity) setAssistantRead(currentAssistantActivity)
+  }, [assistantVisible, currentAssistantActivity])
 
   /** Запустить (open) или перезапустить (reset) ассистента приложения. */
   async function launchAssistant(reset: boolean): Promise<void> {
@@ -944,12 +955,16 @@ export function App(): React.JSX.Element {
         </button>
         <button
           className={`icon ${showAssistant ? 'active' : ''}`}
-          title={t('shell.rail.assistant')}
+          title={assistantRailTitle}
+          aria-label={assistantRailTitle}
+          aria-expanded={showAssistant}
           onClick={() => {
             toggleAssistant()
           }}
         >
           <Icon.assistant />
+          {assistantRail === 'working' && <span className="assistant-rail-working" aria-hidden="true"><span className="update-spin"><Icon.spinner /></span></span>}
+          {assistantRail !== 'idle' && assistantRail !== 'working' && <span className="rail-dot assistant-rail-unread" aria-hidden="true" />}
         </button>
         <div className="grow" />
         <RailLogo />
@@ -1200,6 +1215,7 @@ export function App(): React.JSX.Element {
           suspended={showSettings}
           activePty={assistantPty}
           status={assistantState}
+          onActivityChange={setAssistantActivity}
           onClose={closeAssistant}
           onReset={() => { clearWorkflowContext(); setWorkflowResult(null); void launchAssistant(true) }}
           attachment={workflowAttachment}

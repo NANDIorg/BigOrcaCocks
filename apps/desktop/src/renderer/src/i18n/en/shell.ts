@@ -295,6 +295,10 @@ export default {
   'coord.tailEmpty': 'No output yet.',
 
   "assistant.settings": "Assistant settings",
+  'assistant.rail.working': 'Assistant is working · ⌘K',
+  'assistant.rail.unread': 'Assistant response is ready · ⌘K',
+  'assistant.rail.waiting': 'Assistant needs your input · ⌘K',
+  'assistant.rail.error': 'Assistant error · ⌘K',
   "assistant.welcomeTitle": "Where shall we start?",
   "assistant.welcomeDescription": "Sort out tasks, set up your board, and prepare work for your agents.",
   "assistant.suggestion.tasks.label": "Plan the next tasks",
