@@ -2,7 +2,7 @@ import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, presetTaskType,
   type AgentInfo, type BoardColumn, type Role, type TaskType, type TaskTypeSettings, type WfMigrationNote, type Workflow
 } from '@orca-board/core'
-import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState } from '../../shared/ipc'
+import type { OrcaApi, PermissionMode, Project, ProjectTaskTypesInput, TaskTypeInput, TaskTypesState, TaskTypePatch } from '../../shared/ipc'
 import { t } from './i18n'
 import { builtinText } from './defaultTitles'
 
@@ -85,11 +85,7 @@ export function resolveTypeSettings(s: TaskTypeSettings): ResolvedTypeSettings {
   }
 }
 
-/** Правка настроек типа: null удаляет поле (= встроенное значение), undefined — не трогать. */
-export type TaskTypePatch = { [K in keyof TaskTypeSettings]?: TaskTypeSettings[K] | null } & {
-  /** Предупреждения автомиграции графа (`TaskType.workflowNotes`); пустой список — человек их закрыл. */
-  workflowNotes?: WfMigrationNote[]
-}
+export type { TaskTypePatch } from '../../shared/ipc'
 
 /**
  * `taskTypes:save` заменяет тип целиком — собираем полный TaskTypeInput из текущего типа и правки.

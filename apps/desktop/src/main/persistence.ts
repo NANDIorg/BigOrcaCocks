@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { Persistence, StoreSnapshot } from '@orca-board/core'
 
@@ -29,6 +29,49 @@ export function writeFileAtomic(file: string, text: string): void {
   } catch (e) {
     rmSync(tmp, { force: true })
     throw e
+  }
+}
+
+export interface AtomicFileWrite { file: string; text: string }
+
+/**
+ * Сначала готовит все файлы, затем заменяет их в заданном порядке. При известной ошибке I/O возвращает
+ * прежние байты уже заменённых файлов; callbacks вызывающий код запускает только после успеха всей записи.
+ * Это откат ошибки синхронной записи, а не журнал восстановления после аварийного завершения процесса.
+ */
+export function writeFilesAtomic(writes: readonly AtomicFileWrite[]): void {
+  if (new Set(writes.map(({ file }) => file)).size !== writes.length) throw new Error('повтор файла в одной записи')
+  const prepared: { file: string; tmp: string; previous?: string }[] = []
+  const staged = new Set<string>()
+  const committed: typeof prepared = []
+  try {
+    for (const { file, text } of writes) {
+      const previous = existsSync(file) ? readFileSync(file, 'utf8') : undefined
+      mkdirSync(dirname(file), { recursive: true })
+      const tmp = `${file}.tmp`
+      // Чужой каталог на месте tmp — причина отказа, его не удаляем при уборке.
+      if (!existsSync(tmp) || statSync(tmp).isFile()) staged.add(tmp)
+      writeFileSync(tmp, text)
+      prepared.push({ file, tmp, previous })
+    }
+    for (const entry of prepared) {
+      renameSync(entry.tmp, entry.file)
+      staged.delete(entry.tmp)
+      committed.push(entry)
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = []
+    for (const { file, previous } of committed.reverse()) {
+      try {
+        if (previous === undefined) rmSync(file, { force: true })
+        else writeFileAtomic(file, previous)
+      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
+    for (const tmp of staged) {
+      try { rmSync(tmp, { force: true }) } catch (cleanupError) { rollbackErrors.push(cleanupError) }
+    }
+    if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'ошибка записи и отката файлов состояния')
+    throw error
   }
 }
 

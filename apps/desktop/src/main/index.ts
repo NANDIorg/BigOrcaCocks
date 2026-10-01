@@ -1,3 +1,6 @@
+import type { Workflow } from '@orca-board/core'
+import { buildWorkflowAssistantContext, saveWorkflowDraft } from './assistant-workflow'
+import type { TaskTypePatch } from '../shared/ipc'
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -903,6 +906,9 @@ function registerIpc(): void {
   })
   handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.setProjectTaskTypes(id, input))
   handle('taskTypes:list', () => projects.taskTypesState())
+  handle('taskTypes:patch', (_e, id: string, patch: TaskTypePatch) => projects.patchTaskType(id, patch))
+  handle('taskTypes:rename', (_e, id: string, title: string, description: string) => projects.renameTaskType(id, { title, description }))
+  handle('workflowAssistant:save', (_e, id: string, baseline: Workflow, workflow: Workflow | null) => saveWorkflowDraft(projects, id, baseline, workflow))
   handle('taskTypes:save', (_e, input: TaskTypeInput) => projects.saveTaskType(input))
   handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
   handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
@@ -1038,6 +1044,7 @@ function registerIpc(): void {
   handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
   handle('assistantChat:available', (_e, id: string) => assistantSession.available(id))
   handle('assistantChat:getMessages', (_e, id: string) => assistantSession.snapshot(id))
+  handle('assistantChat:sendWithWorkflow', (_e, id: string, text: unknown, context: unknown) => assistantSession.send(id, text, buildWorkflowAssistantContext(projects, context)))
   handle('assistantChat:send', (_e, id: string, text: unknown) => assistantSession.send(id, text))
   handle('assistantChat:interrupt', (_e, id: string) => assistantSession.interrupt(id))
   handle('assistantChat:respond', (_e, id: string, requestId: string, answer: InteractionAnswer) => assistantSession.respond(id, requestId, answer))
@@ -1149,6 +1156,9 @@ app.whenReady().then(() => {
     syncMainAppearance()
     if (win && !win.isDestroyed()) win.webContents.send('app:changed')
   })
+  projects.onWorkflowSaved((saved) => {
+    if (win && !win.isDestroyed()) win.webContents.send('workflowAssistant:saved', saved)
+  })
   const { support, backend } = createPlatformUpdater({
     version: app.getVersion(),
     isPackaged: app.isPackaged,
@@ -1185,6 +1195,11 @@ app.whenReady().then(() => {
   updater.start()
   registerIpc()
   startSocketServer(SOCKET_PATH, {
+    libraryTaskTypes: () => ({ taskTypes: projects.taskTypes(), defaultTypeId: projects.defaultTaskTypeId() }),
+    workflowGet: (id) => projects.workflowGet(id),
+    workflowValidate: (definition, selection) => projects.workflowValidate(definition, selection),
+    workflowSet: (id, revision, definition) => projects.workflowSet(id, revision, definition),
+    workflowCreate: (input) => projects.workflowCreate(input),
     resolve: (projectId) => {
       const p = resolveProject(projectId)
       return {

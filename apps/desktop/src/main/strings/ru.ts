@@ -6,6 +6,7 @@ export default {
   'assistantTransport.windowsLauncher': 'CLI {command} использует неподдерживаемый Windows launcher. Укажите native executable или стандартный npm shim.',
   'assistantTransport.windowsEntry': 'Не найден файл Windows launcher: {entry}',
   'assistantTransport.terminalOnly': 'Агент {agent} работает через отдельный терминал; структурированный чат не поддерживается.',
+  'assistantTransport.interruptedSend': 'Отправка прервана до подтверждения агента. Контекст сохранён.',
   'assistantTransport.invalidMessage': 'Сообщение пустое или слишком длинное.',
   'assistantTransport.unavailable': 'Транспорт недоступен.',
   'assistantTransport.busy': 'Дождитесь ответа или остановите текущий запрос.',
@@ -212,6 +213,9 @@ export default {
 
   'type.label': 'тип «{title}»',
   'type.notFound': 'тип задачи не найден: {id}',
+  'type.snapshotFailed': 'не удалось сохранить прежние настройки прогонов из доски {file}: {reason}',
+  'type.snapshotBoardShape': 'некорректная форма доски',
+  'type.snapshotRunShape': 'некорректная форма прогона',
   'type.notFoundHint': 'тип задачи не найден: {id} (доступные: orca-board types list)',
   'type.unavailable': 'тип «{title}» недоступен в проекте «{project}» (доступные: orca-board types list)',
   'type.notObject': 'тип задачи: ожидается объект',
@@ -237,6 +241,9 @@ export default {
 
   'workflow.future': 'воркфлоу сохранён в формате версии {version}, приложение знает только {known} — обновите приложение',
   'workflow.notSaved': 'воркфлоу не сохранён: {errors}',
+  'workflow.contextInvalid': 'Контекст воркфлоу имеет неверную форму. Вернитесь в редактор и передайте граф снова.',
+  'workflow.conflict': 'тип «{title}» изменён после чтения: перечитайте граф и повторите правку с новой ревизией',
+  'workflow.selectors': 'укажите только один из --type и --base-type',
 
   'nodeTemplate.notObject': 'шаблон нод: ожидается объект',
   'nodeTemplate.emptyId': 'шаблон нод: пустой id',

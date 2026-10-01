@@ -1,19 +1,20 @@
 import { DEFAULT_APPEARANCE, mergeAppearance, normalizeAppearance } from '../shared/appearance'
-import { writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  TaskStore, isAgentKind, DEFAULT_ASSISTANT_SETTINGS, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
-  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate,
+  TaskStore, assertStoreFormat, isAgentKind, DEFAULT_ASSISTANT_SETTINGS, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
+  WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate, prepareWorkflow,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
   buildTaskTypeFile, serializeTaskTypeFile, taskTypeFileName, type TaskTypeFileMeta,
   type OrcaEvent, type AgentKind, type Role, type BoardColumn, type Workflow, type WfMigrationNote, type WfValidationContext,
   type WfNodeTemplate, type WfTemplateNode,
-  type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput
+  type TaskType, type TaskTypeSettings, type ResolvedRunType, type RunTypeInput,
+  type WorkflowTypeContext, type WorkflowPreparation, type WorkflowSaveResult, type WorkflowCreateInput, type WorkflowRoleSelection, type WorkflowAssistantSaved
 } from '@orca-board/core'
-import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, type StateWarning } from './persistence'
+import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, writeFilesAtomic, type AtomicFileWrite, type StateWarning } from './persistence'
 import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, libraryDefaultTypeId, migrateAssistant, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
@@ -21,12 +22,12 @@ import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
 import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
   AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
-  TaskTypesState, NodeTemplateInput
+  TaskTypesState, NodeTemplateInput, TaskTypePatch
 } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 import { runImagesRoot, removeRunImagesDir } from './run-images'
 import { loadedAssistantSettings, mergedAssistantSettings } from './assistant'
-import { extraArgsProblem } from './launch-extra-args'
+import { extraArgsProblem, withoutExtraArgs } from './launch-extra-args'
 import { removeShowcaseDir, showcaseSnapshotsRoot } from './showcase-snapshot'
 
 export type PermissionMode = 'auto' | 'bypassPermissions' | 'acceptEdits'
@@ -194,6 +195,7 @@ export class ProjectManager {
   private eventListeners = new Set<(projectId: string, events: OrcaEvent[]) => void>()
   private openListeners = new Set<(projectId: string) => void>()
   private dataListeners = new Set<() => void>()
+  private workflowSavedListeners = new Set<(saved: WorkflowAssistantSaved) => void>()
   private seenEvents = new Map<string, number>()
   private warnings: StateWarning[] = []
 
@@ -276,8 +278,12 @@ export class ProjectManager {
     }
   }
 
-  private save(rollback?: () => void): void {
-    try { writeFileAtomic(this.file, JSON.stringify(this.data, null, 2)) } catch (error) { rollback?.(); throw error }
+  private save(rollback?: () => void, beforeWrites: readonly AtomicFileWrite[] = []): void {
+    try {
+      const text = JSON.stringify(this.data, null, 2)
+      if (beforeWrites.length) writeFilesAtomic([...beforeWrites, { file: this.file, text }])
+      else writeFileAtomic(this.file, text)
+    } catch (error) { rollback?.(); throw error }
     this.dataListeners.forEach((fn) => fn())
   }
 
@@ -486,11 +492,12 @@ export class ProjectManager {
       id, title: input.title.trim(), ...(description ? { description } : {}), settings,
       ...(notes.length ? { workflowNotes: notes } : {})
     }
-    if (i !== -1) this.settleLegacyRuns(id)
+    const boardWrites = i !== -1 ? this.legacyRunSnapshots(user[i]) : []
     if (i === -1) user.push(type)
     else user[i] = type
+    const previous = this.data.taskTypes
     this.data.taskTypes = user
-    this.save()
+    this.save(() => { this.data.taskTypes = previous }, boardWrites)
     return clone(type)
   }
 
@@ -498,10 +505,12 @@ export class ProjectManager {
    * Смержить патч в настройки типа (`validTypeSettings`: null у графа и разрешений — встроенное значение,
    * правила из пробелов — нет правил) и сохранить через `saveTaskType`.
    */
-  patchTaskType(id: string, patch: Partial<Record<keyof TaskTypeSettings, unknown>>): TaskType {
+  patchTaskType(id: string, patch: Partial<Record<keyof TaskTypeSettings, unknown>> & Pick<TaskTypePatch, 'workflowNotes'>): TaskType {
     const t = this.requireType(id)
-    const settings = validTypeSettings(patch, t.settings, typeLabel(t.title))
-    return this.saveTaskType({ id: t.id, title: t.title, ...(t.description ? { description: t.description } : {}), settings })
+    if (!isObject(patch)) throw new OrcaError('type.notObject')
+    const { workflowNotes, ...settingsPatch } = patch
+    const settings = validTypeSettings(settingsPatch, t.settings, typeLabel(t.title))
+    return this.saveTaskType({ id: t.id, title: t.title, ...(t.description ? { description: t.description } : {}), settings, ...(workflowNotes !== undefined ? { workflowNotes } : {}) })
   }
 
   /**
@@ -515,22 +524,50 @@ export class ProjectManager {
     const t = types.find((x) => x.id === id)
     if (!t) throw new OrcaError('type.notFound', { id })
     if (types.length === 1) throw new OrcaError('type.lastOne', { title: t.title })
-    this.settleLegacyRuns(id)
+    const boardWrites = this.legacyRunSnapshots(t)
+    const previousDefault = this.data.defaultTaskTypeId
     this.data.taskTypes = types.filter((x) => x.id !== id)
     if (this.data.defaultTaskTypeId === id) delete this.data.defaultTaskTypeId
-    this.save()
+    this.save(() => {
+      this.data.taskTypes = types
+      if (previousDefault === undefined) delete this.data.defaultTaskTypeId
+      else this.data.defaultTaskTypeId = previousDefault
+    }, boardWrites)
     return this.taskTypesState()
   }
 
   /**
-   * Перед правкой или удалением типа, в который миграция перенесла настройки проекта, загрузить незагруженные
-   * доски таких проектов: `store` отдаёт их старым прогонам снимок типа (`assignRunTypes`), пока он ещё прежний.
-   * Иначе доска, открытая после удаления, не нашла бы тип и прогоны ушли бы на тип проекта по умолчанию,
-   * а после правки их снимок был бы уже с изменёнными ролями — не как у прогонов, созданных до правки. Снимок не хранится в projects.json заранее: роли с
-   * промптами дублировались бы в файле, а момент, когда тип перестаёт совпадать со старыми настройками, — ровно этот.
+   * Старые прогоны получают прежний тип до его правки/удаления, даже если доска ещё не открывалась.
+   * Читаем её офлайн: настоящий `store()` мигрирует задачи, эскалирует вопросы и запускает recovery.
+   * Уже открытые доски получили снимки при открытии; сохраняем только typeId/taskType остальных прогонов,
+   * оставляя графы, неизвестные поля и прочее состояние для обычной загрузки доски позже.
    */
-  private settleLegacyRuns(typeId: string): void {
-    for (const p of this.data.projects) if (p.legacyTypeId === typeId) this.store(p.id)
+  private legacyRunSnapshots(type: TaskType): AtomicFileWrite[] {
+    const writes: AtomicFileWrite[] = []
+    const snapshot = snapshotTaskType(type)
+    for (const project of this.data.projects) {
+      if (project.legacyTypeId !== type.id || this.stores.has(project.id)) continue
+      const file = join(this.userData, 'boards', `${project.id}.json`)
+      if (!existsSync(file)) continue
+      let board: unknown
+      try { board = JSON.parse(readFileSync(file, 'utf8')) } catch (error) {
+        throw new OrcaError('type.snapshotFailed', { file, reason: (error as Error).message })
+      }
+      if (!isObject(board) || (board.runs !== undefined && !Array.isArray(board.runs))) {
+        throw new OrcaError('type.snapshotFailed', { file, reason: { key: 'type.snapshotBoardShape' } })
+      }
+      assertStoreFormat(board.formatVersion)
+      let changed = false
+      for (const run of board.runs ?? []) {
+        if (!isObject(run)) throw new OrcaError('type.snapshotFailed', { file, reason: { key: 'type.snapshotRunShape' } })
+        if (run.inbox || run.typeId !== undefined) continue
+        run.typeId = type.id
+        run.taskType = clone(snapshot)
+        changed = true
+      }
+      if (changed) writes.push({ file, text: JSON.stringify(board, null, 2) })
+    }
+    return writes
   }
 
   /** Копия типа под новым id: отдельный тип рядом с исходным. */
@@ -630,6 +667,66 @@ export class ProjectManager {
     const own = t.settings.workflow
     if (own && own.version > WORKFLOW_VERSION) throw futureWorkflowError(own.version)
     return { typeId: t.id, title: t.title, workflow: own ? clone(own) : resolveTaskType(t).workflow, custom: own !== undefined }
+  }
+
+  /** Полный эффективный граф для обсуждения; приватные флаги не покидают main даже через прямой вызов. */
+  workflowGet(typeId: string): WorkflowTypeContext {
+    const type = this.requireType(typeId)
+    const graph = this.taskTypeWorkflow(typeId)
+    const roles = resolveTaskType(type).roles.map(({ extraArgs: _private, ...role }) => role)
+    return {
+      ...graph,
+      roles,
+      revision: createHash('sha256').update(JSON.stringify(type)).digest('hex'),
+      // Граф мог прийти из старого файла с лишними полями: фильтр тот же, что у всего сокета.
+      workflow: JSON.parse(JSON.stringify(graph.workflow, withoutExtraArgs)) as Workflow
+    }
+  }
+
+  /** Проверка нового или изменённого графа без создания типа и записи projects.json. */
+  workflowValidate(definition: unknown, selection: WorkflowRoleSelection = {}): WorkflowPreparation {
+    if (selection.typeId !== undefined && selection.baseTypeId !== undefined) throw new OrcaError('workflow.selectors')
+    const id = selection.typeId ?? selection.baseTypeId
+    const roles = id !== undefined ? resolveTaskType(this.requireType(id)).roles : DEFAULT_ROLES
+    return prepareWorkflow(definition, { roles })
+  }
+
+  /** Сравнение ревизии и запись не разделены await: чужая правка не может вклиниться между ними. */
+  workflowSet(typeId: string, revision: string, definition: unknown): WorkflowSaveResult {
+    const current = this.workflowGet(typeId)
+    if (!nonEmpty(revision) || revision !== current.revision) throw new OrcaError('workflow.conflict', { title: current.title })
+    const prepared = this.workflowValidate(definition, { typeId })
+    const workflow = requirePreparedWorkflow(prepared)
+    this.patchTaskType(typeId, { workflow })
+    return this.workflowSaved(typeId, prepared)
+  }
+
+  /** Создание одним сохранением: ошибка формы или ролей не оставляет пустой тип в библиотеке. */
+  workflowCreate(input: WorkflowCreateInput): WorkflowSaveResult {
+    if (!isObject(input)) throw new OrcaError('type.notObject')
+    if (!nonEmpty(input.title)) throw new OrcaError('type.emptyTitle')
+    const base = input.baseTypeId !== undefined ? this.requireType(input.baseTypeId) : undefined
+    const prepared = this.workflowValidate(input.definition, { baseTypeId: input.baseTypeId })
+    const workflow = requirePreparedWorkflow(prepared)
+    const saved = this.saveTaskType({
+      title: input.title,
+      description: input.description,
+      settings: { ...(base ? clone(base.settings) : {}), workflow }
+    })
+    return this.workflowSaved(saved.id, prepared)
+  }
+
+  private workflowSaved(typeId: string, prepared: WorkflowPreparation): WorkflowSaveResult {
+    const context = this.workflowGet(typeId)
+    const { title, revision } = context
+    this.workflowSavedListeners.forEach((fn) => fn({ typeId, title, revision }))
+    return { ...context, warnings: prepared.warnings }
+  }
+
+  /** Только новые операции ассистента; обычный Save редактора продолжает пользоваться app:changed. */
+  onWorkflowSaved(fn: (saved: WorkflowAssistantSaved) => void): () => void {
+    this.workflowSavedListeners.add(fn)
+    return () => this.workflowSavedListeners.delete(fn)
   }
 
   /**
@@ -1161,6 +1258,18 @@ function checkedWorkflow(v: unknown, ctx: WfValidationContext): Workflow {
   // Тексты проблем — из core, по-русски: renderer проверяет граф сам и переводит их по коду до сохранения.
   if (errors.length) throw new OrcaError('workflow.notSaved', { errors: errors.map((e) => e.message).join('; ') })
   return wf
+}
+
+/** Сокет получает детали, а IPC — существующую локализованную ошибку workflow.notSaved. */
+export class WorkflowValidationError extends OrcaError {
+  constructor(readonly validation: WorkflowPreparation) {
+    super('workflow.notSaved', { errors: validation.errors.map((issue) => issue.message).join('; ') })
+  }
+}
+
+function requirePreparedWorkflow(prepared: WorkflowPreparation): Workflow {
+  if (prepared.errors.length || !prepared.workflow) throw new WorkflowValidationError(prepared)
+  return prepared.workflow
 }
 
 // ---------- типы задач ----------

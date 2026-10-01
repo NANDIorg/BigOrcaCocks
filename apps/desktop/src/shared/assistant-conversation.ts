@@ -68,7 +68,7 @@ export type ConversationUpdate =
 export interface AssistantConversation {
   readonly id: string
   snapshot(): ConversationSnapshot
-  send(text: string): Promise<void>
+  send(text: string, context?: string): Promise<void>
   interrupt(): Promise<void>
   respond(requestId: string, answer: InteractionAnswer): Promise<void>
   dispose(): void

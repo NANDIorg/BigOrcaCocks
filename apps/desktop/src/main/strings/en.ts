@@ -6,6 +6,7 @@ export default {
   'assistantTransport.windowsLauncher': 'CLI {command} uses an unsupported Windows launcher. Use a native executable or a standard npm shim.',
   'assistantTransport.windowsEntry': 'Windows launcher entry was not found: {entry}',
   'assistantTransport.terminalOnly': 'Agent {agent} runs in a separate terminal; structured chat is not supported.',
+  'assistantTransport.interruptedSend': 'The send was interrupted before agent acceptance. Your context is preserved.',
   'assistantTransport.invalidMessage': 'The message is empty or too long.',
   'assistantTransport.unavailable': 'The transport is unavailable.',
   'assistantTransport.busy': 'Wait for the reply or stop the current request.',
@@ -207,6 +208,9 @@ export default {
 
   'type.label': 'type “{title}”',
   'type.notFound': 'task type not found: {id}',
+  'type.snapshotFailed': 'could not preserve previous run settings from board {file}: {reason}',
+  'type.snapshotBoardShape': 'invalid board structure',
+  'type.snapshotRunShape': 'invalid run structure',
   'type.notFoundHint': 'task type not found: {id} (available: orca-board types list)',
   'type.unavailable': 'type “{title}” is not available in project “{project}” (available: orca-board types list)',
   'type.notObject': 'task type: an object is expected',
@@ -232,6 +236,9 @@ export default {
 
   'workflow.future': 'the workflow is saved in format version {version}, the app only knows {known} — update the app',
   'workflow.notSaved': 'workflow not saved: {errors}',
+  'workflow.contextInvalid': 'The workflow context has an invalid shape. Return to the editor and attach the workflow again.',
+  'workflow.conflict': 'type “{title}” changed since it was read: reload the graph and retry with the new revision',
+  'workflow.selectors': 'use only one of --type and --base-type',
 
   'nodeTemplate.notObject': 'node template: an object is expected',
   'nodeTemplate.emptyId': 'node template: empty id',

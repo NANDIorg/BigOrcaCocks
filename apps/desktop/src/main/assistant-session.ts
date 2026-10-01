@@ -58,10 +58,10 @@ export class AssistantSession {
     if (!this.conversation || this.conversation.id !== id) throw new OrcaError('assistantChat.unknownPty')
     return this.conversation
   }
-  send(id: string, text: unknown): Promise<void> {
+  send(id: string, text: unknown, context?: string): Promise<void> {
     const conversation = this.require(id)
     if (typeof text !== 'string' || !text.trim()) throw new OrcaError('assistantChat.emptyText')
-    return conversation.send(text)
+    return conversation.send(text, context)
   }
   interrupt(id: string): Promise<void> { return this.require(id).interrupt() }
   respond(id: string, requestId: string, answer: InteractionAnswer): Promise<void> { return this.require(id).respond(requestId, answer) }

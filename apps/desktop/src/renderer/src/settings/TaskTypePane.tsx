@@ -1,3 +1,4 @@
+import type { WorkflowAssistantContext } from '../../../shared/assistant-workflow'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { AgentInfo, TaskType } from '@orca-board/core'
@@ -34,6 +35,9 @@ interface Props {
   projects: Project[]
   /** Библиотека своих нод: палитра и инспектор редактора воркфлоу. */
   nodeTemplates: NodeTemplatesHook
+  workflowRequest?: { nonce: number; restore?: Extract<WorkflowAssistantContext, { mode: 'edit' }> }
+  onWorkflowRestoreApplied(nonce: number): void
+  onWorkflowAssistant(context: WorkflowAssistantContext): void
 }
 
 const TAB_LABELS: Record<TaskTypeTab, TKey> = {
@@ -48,7 +52,7 @@ const TAB_LABELS: Record<TaskTypeTab, TKey> = {
  * глобальные задачи берут роли и правила типа при каждом запуске агента. Все типы равны — и созданные человеком,
  * и заготовки, с которыми приходит приложение: любой правится, переименовывается и удаляется (кроме последнего).
  */
-export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSelect, projects, nodeTemplates }: Props): React.JSX.Element {
+export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSelect, projects, nodeTemplates, workflowRequest, onWorkflowRestoreApplied, onWorkflowAssistant }: Props): React.JSX.Element {
   const t = useT()
   const editorKey = typeEditorKey(type)
   const isLast = state.taskTypes.length <= 1
@@ -144,9 +148,14 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
       case 'workflow':
         return (
           <TaskTypeWorkflow
-            key={editorKey}
+            key={`${editorKey}:${workflowRequest?.nonce ?? 0}`}
+            restore={workflowRequest?.restore}
+            onRestoreApplied={() => { if (workflowRequest) onWorkflowRestoreApplied(workflowRequest.nonce) }}
+            autoFocusEditor={workflowRequest !== undefined}
+            onAssistant={(workflow, baseline, dirty, path) => onWorkflowAssistant({ mode: 'edit', typeId: type.id, title: type.title, workflow, baseline, dirty, path: [...path] })}
             title={type.title}
             workflow={s.workflow}
+            observation={api.observation}
             roles={s.roles}
             columns={typeColumnChoices(projects)}
             readOnly={false}
@@ -154,7 +163,7 @@ export function TaskTypePane({ type, state, usage, agents, tab, onTab, api, onSe
             library={nodeTemplates}
             notes={type.workflowNotes}
             onDismissNotes={() => api.patch(type.id, { workflowNotes: [] })}
-            onSave={(wf) => api.patch(type.id, { workflow: wf })}
+            onSave={(wf, baseline) => api.saveWorkflow(type.id, baseline, wf)}
           />
         )
       case 'perm':
@@ -275,7 +284,7 @@ function RenameForm({ type, onCancel, onSave }: {
   const [title, setTitle] = useState(type.title)
   const [description, setDescription] = useState(type.description ?? '')
   return (
-    <form
+    <form noValidate
       className="tpl-rename"
       onSubmit={(e) => {
         e.preventDefault()
@@ -320,7 +329,7 @@ function TypeRules({ storageKey, text, onSave }: {
         hint={t('config.taskType.rulesHint')}
       />
       <div className="agent-rules">
-        <textarea
+        <textarea className="resize-none"
           value={draft}
           placeholder={agentRulesPlaceholder()}
           rows={12}

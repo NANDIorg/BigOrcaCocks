@@ -3203,3 +3203,14 @@ html[data-motion='reduced'] :is(.onboarding-packet, .onboarding-fork-signal, .on
 html[data-motion='reduced'] .onboarding-workspace-progress span { transform: scaleX(1); opacity: .65; }
 html[data-motion='reduced'] .onboarding .onboarding-review-check path { stroke-dashoffset: 0; opacity: 1; }
 html[data-motion='reduced'] .onboarding button:active:not(:disabled) { transform: none; }
+
+
+/* Контекст графа остаётся рядом с сообщением и независимыми действиями возврата. */
+.chat-workflow-context { padding: 10px 18px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.chat-workflow-chip { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; background: var(--card); border-radius: var(--radius); }
+.chat-workflow-chip > svg { flex-shrink: 0; width: 18px; height: 18px; color: var(--accent); }
+.chat-workflow-chip > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-workflow-chip small { display: block; color: var(--muted); font-size: 12px; }
+.chat-workflow-chip .icon-btn { flex-shrink: 0; }
+.chat-workflow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-workflow-actions .btn-sm { max-width: 100%; white-space: normal; }

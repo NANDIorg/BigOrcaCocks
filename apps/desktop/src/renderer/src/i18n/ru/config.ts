@@ -2,6 +2,8 @@ import type { AreaDict } from '../types'
 
 /** «О проекте»: роли, воркфлоу, типы задач, документация. */
 export default {
+  'wf.tab.assistant': 'Изменить с ассистентом',
+  'wf.tab.externalConflict': 'Сохранённый воркфлоу изменился. Ваш черновик сохранён, но его исходная база устарела. Отмените правки, чтобы загрузить новый граф.',
   'about.navAria': 'Разделы',
   'about.nav.overview': 'Обзор',
   'about.nav.agents': 'Агенты',

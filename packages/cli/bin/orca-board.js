@@ -27,9 +27,26 @@ const HELP = `orca-board — управление доской агентов
                                           тип задач проекта по умолчанию; без проектов — []
 
 Типы задач (тип выбирается у глобальной задачи и задаёт её роли, воркфлоу, правила агентов и разрешения):
-  types list                              типы, доступные проекту: id, title, description, default — тип проекта
+  types list [--all]                       типы, доступные проекту: id, title, description, default — тип проекта
                                           по умолчанию, роли (agent, agentEnabled), этапы графа (у «Решения ИИ» —
                                           options: id вариантов, они же исходы рёбер)
+                                          --all — вся библиотека без проекта; default — тип библиотеки,
+                                          agentEnabled не задаётся (нет контекста проекта)
+
+Граф типа через ассистента (уровень приложения, --project не нужен; задачи не запускаются):
+  workflow schema                         версия, поля нод и переходов, порты, стандартные роли и пример
+  workflow get --type <id>                 полный граф, безопасные роли, title, custom, revision всего типа
+  workflow validate [--type <id> | --base-type <id>] --definition '<JSON>'
+                                          проверить без записи; без выбора типа — стандартные роли;
+                                          результат: подготовленный workflow, errors, warnings
+  workflow set --type <id> --revision <token> --definition '<JSON>'
+                                          заменить только граф при актуальной revision из workflow get;
+                                          изменённый или удалённый тип не перезаписывается
+  workflow create --title "..." [--description "..."] [--base-type <id>] --definition '<JSON>'
+                                          создать тип с готовым графом; база — настройки указанного типа,
+                                          без базы — стандартные роли и настройки
+                                          --file workflow.json вместо --definition — JSON из файла;
+                                          оба источника вместе запрещены; пропуски координат расставляются автоматически
 
 Правила агентов доски — правила типа задачи (попадают только в системный промпт воркеров и координатора,
 не в CLAUDE.md/AGENTS.md). Тип: --type <id>, иначе тип глобальной задачи --run (координатору — $ORCA_RUN_ID),
@@ -362,6 +379,36 @@ if (method === 'project.columns.set') {
   }
   delete params.file
 }
+// Новые инструменты графа — уровня приложения. JSON разбирается в cwd CLI, приложение файлов агента не читает.
+const WORKFLOW_APP_METHODS = new Set(['workflow.schema', 'workflow.get', 'workflow.validate', 'workflow.set', 'workflow.create'])
+if (WORKFLOW_APP_METHODS.has(method)) {
+  const required = method === 'workflow.get' ? ['type'] : method === 'workflow.set' ? ['type', 'revision'] : method === 'workflow.create' ? ['title'] : []
+  for (const flag of [...required, ...['type', 'base-type', 'revision', 'title', 'description'].filter((key) => params[key] !== undefined)]) {
+    if (typeof params[flag] !== 'string' || (flag !== 'description' && !params[flag].trim())) {
+      console.error(`ошибка: --${flag} требует значения`)
+      process.exit(1)
+    }
+  }
+  if (params.type !== undefined && params['base-type'] !== undefined) {
+    console.error('ошибка: укажи только один из --type и --base-type')
+    process.exit(1)
+  }
+  if (['workflow.validate', 'workflow.set', 'workflow.create'].includes(method)) {
+    if ((params.definition === undefined) === (params.file === undefined)) {
+      console.error('ошибка: нужен один источник графа: --definition <JSON> или --file <путь>')
+      process.exit(1)
+    }
+    try {
+      const raw = params.definition !== undefined ? params.definition : typeof params.file === 'string' ? readFileSync(params.file, 'utf8') : undefined
+      if (typeof raw !== 'string') throw new Error('--definition/--file требует значения')
+      params.definition = JSON.parse(raw)
+    } catch (error) {
+      console.error(`ошибка: не удалось прочитать или разобрать граф: ${error.message}`)
+      process.exit(1)
+    }
+    delete params.file
+  }
+}
 if (method === 'runs.finish' || method === 'stage.finish') readFileParam('summary-file', 'summary')
 if ((method === 'runs.finish' || method === 'stage.finish') && params.summary === true) {
   console.error('ошибка: --summary требует текста сводки')
@@ -402,7 +449,8 @@ const request = {
   dispatchId: process.env.ORCA_DISPATCH_ID,
   taskId: process.env.ORCA_TASK_ID,
   // Команды уровня приложения (settings.*, как projects.list) проект не выбирают: --project и $ORCA_PROJECT им не передаём.
-  projectId: ['projects.list', 'settings.get', 'settings.set'].includes(method) ? undefined : params.project ?? process.env.ORCA_PROJECT
+  projectId: ['projects.list', 'settings.get', 'settings.set'].includes(method) || WORKFLOW_APP_METHODS.has(method) || (method === 'types.list' && params.all === true)
+    ? undefined : params.project ?? process.env.ORCA_PROJECT
 }
 delete params.project
 
