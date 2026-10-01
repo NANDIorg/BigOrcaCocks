@@ -1,11 +1,17 @@
 import type React from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DocFile, DocGroup } from '../../shared/ipc'
+import { DOCS_LIST_LIMIT } from '../../shared/docs-view'
 import { isRecent } from './docLinks'
-import { buildTree, chainLabel, highlight, matchPath, sameDoc, shortTime, type DocRef, type PathMatch, type TaskMark, type TreeNode } from './docTree'
+import {
+  buildTree, chainLabel, highlight, recentFiles, RECENT_LIMIT, sameDoc, searchFiles, shortTime,
+  type DocRef, type FileHit, type PathMatch, type TaskMark, type TreeNode
+} from './docTree'
+import { docIconOf } from './docView'
 import type { TextMatch } from './docFind'
 import { DocIcon } from './docsIcons'
 import { useT } from './i18n'
+import { formatInteger } from './i18n/format'
 
 export type TreeMode = 'tree' | 'recent'
 
@@ -24,20 +30,28 @@ export function TaskDot({ mark }: { mark?: TaskMark }): React.JSX.Element {
 const dirOf = (path: string): string => path.slice(0, path.lastIndexOf('/') + 1)
 export const dirKey = (source: string, path: string): string => `${source}:${path}`
 
-interface FileHit {
+interface SourceHit extends FileHit {
   source: string
-  file: DocFile
-  match: PathMatch
 }
 
-function searchGroup(g: DocGroup | undefined, query: string): FileHit[] {
-  if (!g) return []
-  return g.files
-    .flatMap((file) => {
-      const match = matchPath(file.path, query)
-      return match ? [{ source: g.source, file, match }] : []
-    })
-    .sort((a, b) => b.match.score - a.match.score || b.file.mtime - a.file.mtime)
+/** Выдача группы: не больше `HIT_LIMIT` строк, `more` — сколько совпадений не показано. */
+function searchGroup(g: DocGroup | undefined, query: string): { hits: SourceHit[]; more: number } {
+  if (!g) return { hits: [], more: 0 }
+  const { hits, total } = searchFiles(g.files, query)
+  return { hits: hits.map((h) => ({ ...h, source: g.source })), more: total - hits.length }
+}
+
+/** Значок файла по виду (`docIconOf`, без IPC); цвет — по `data-kind` в styles.css. */
+export function FileKindIcon({ path }: { path: string }): React.JSX.Element {
+  const kind = docIconOf(path)
+  const Icon = DocIcon[kind]
+  return <span className="docs-fi" data-kind={kind}><Icon /></span>
+}
+
+/** Пометка симлинка: куда он ведёт, выяснится при открытии (`docs:view`). */
+function LinkMark(): React.JSX.Element {
+  const t = useT()
+  return <span className="docs-lnk" title={t('config.docs.view.link')} role="img" aria-label={t('config.docs.view.link')}><DocIcon.link /></span>
 }
 
 function Marked({ text, hit, offset = 0 }: { text: string; hit: PathMatch; offset?: number }): React.JSX.Element {
@@ -55,7 +69,10 @@ export interface DocsTreeProps {
   openDirs: Set<string>
   onToggleDir(key: string): void
   onCollapseAll(): void
+  /** Текст в поле поиска. */
   query: string
+  /** Запрос, по которому ищем: `query` с задержкой ввода — на 100 000 файлов поиск на каждую букву заметен. */
+  searchQuery: string
   onQuery(q: string): void
   searchRef: React.RefObject<HTMLInputElement | null>
   /** Совпадения в тексте открытого документа (группа «В тексте открытого документа»). */
@@ -67,7 +84,7 @@ export interface DocsTreeProps {
 /** Левая колонка «Документов»: поиск, «Папки / Недавние», дерево проекта и файлы задач в работе. */
 export function DocsTree(p: DocsTreeProps): React.JSX.Element {
   const t = useT()
-  const { groups, now, current, marks, query } = p
+  const { groups, now, current, marks, query, searchQuery } = p
   const [focus, setFocus] = useState(false)
   const [kb, setKb] = useState(0)
   const kbRef = useRef<HTMLButtonElement>(null)
@@ -76,19 +93,22 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
   const tasks = useMemo(() => (groups ?? []).filter((g) => g.source !== 'project'), [groups])
   const taskFiles = tasks.reduce((n, g) => n + g.files.length, 0)
   const total = (project?.files.length ?? 0) + taskFiles
-  const searching = query.trim() !== ''
+  const searching = query.trim() !== '' && searchQuery.trim() !== ''
+  const projectCount = project?.files.length ?? 0
+  const projectCountLabel = project?.truncated ? t('config.docs.tree.countTruncated', { n: formatInteger(projectCount) }) : formatInteger(projectCount)
 
   const tree = useMemo(() => buildTree(project?.files ?? []), [project])
-  const recent = useMemo(() => [...(project?.files ?? [])].sort((a, b) => b.mtime - a.mtime), [project])
+  const recent = useMemo(() => (p.mode === 'recent' ? recentFiles(project?.files ?? []) : []), [project, p.mode])
 
-  const projectHits = useMemo(() => (searching ? searchGroup(project, query) : []), [searching, project, query])
-  const taskHits = useMemo(() => (searching ? tasks.flatMap((g) => searchGroup(g, query)) : []), [searching, tasks, query])
+  const projectSearch = useMemo(() => (searching ? searchGroup(project, searchQuery) : { hits: [], more: 0 }), [searching, project, searchQuery])
+  const projectHits = projectSearch.hits
+  const taskHits = useMemo(() => (searching ? tasks.flatMap((g) => searchGroup(g, searchQuery).hits) : []), [searching, tasks, searchQuery])
   const textHits = searching ? p.textHits.slice(0, 8) : []
   const hitCount = projectHits.length + taskHits.length + textHits.length
 
   useEffect(() => {
     setKb(0)
-  }, [query])
+  }, [searchQuery])
   useEffect(() => {
     kbRef.current?.scrollIntoView({ block: 'nearest' })
   }, [kb])
@@ -119,10 +139,11 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
     const doc = { source, path: f.path }
     const active = sameDoc(current, doc)
     return (
-      <button key={`${source}:${f.path}`} className={`docs-row file ${active ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={f.path} onClick={() => p.onOpen(doc)}>
+      <button key={`${source}:${f.path}`} className={`docs-row file ${active ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={f.path} aria-current={active ? 'true' : undefined} onClick={() => p.onOpen(doc)}>
         {spacer && <span className="docs-spacer" />}
-        <DocIcon.file />
+        <FileKindIcon path={f.path} />
         <span className="docs-nm">{label ?? f.path.slice(f.path.lastIndexOf('/') + 1)}</span>
+        {f.link && <LinkMark />}
         <DocBadge file={f} now={now} />
         <span className="docs-tm">{shortTime(f.mtime, now)}</span>
       </button>
@@ -135,18 +156,18 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
       const key = dirKey('project', n.path)
       const open = p.openDirs.has(key)
       return [
-        <button key={key} data-dir-key={key} className={`docs-row dir ${open ? 'open' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={n.path} onClick={() => p.onToggleDir(key)}>
+        <button key={key} data-dir-key={key} className={`docs-row dir ${open ? 'open' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={n.path} aria-expanded={open} onClick={() => p.onToggleDir(key)}>
           <DocIcon.chev />
-          <DocIcon.folder />
+          {open ? <DocIcon.folderOpen /> : <DocIcon.folder />}
           <span className="docs-nm">{chainLabel(n.name)}</span>
-          <span className="docs-cnt">{n.count}</span>
+          <span className="docs-cnt">{formatInteger(n.count)}</span>
         </button>,
         ...(open ? nodes(n.children, depth + 1) : [])
       ]
     })
 
   let hitIndex = 0
-  const hitRow = (h: FileHit, sub?: React.ReactNode): React.JSX.Element => {
+  const hitRow = (h: SourceHit, sub?: React.ReactNode): React.JSX.Element => {
     const i = hitIndex++
     const nameStart = h.file.path.lastIndexOf('/') + 1
     const dir = dirOf(h.file.path)
@@ -160,8 +181,9 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
         title={h.file.path}
       >
         <span className="docs-hit-l1">
-          <DocIcon.file />
+          <FileKindIcon path={h.file.path} />
           <span className="docs-nm"><Marked text={h.file.path.slice(nameStart)} hit={h.match} offset={nameStart} /></span>
+          {h.file.link && <LinkMark />}
           <DocBadge file={h.file} now={now} />
           <span className="docs-tm">{shortTime(h.file.mtime, now)}</span>
         </span>
@@ -210,13 +232,20 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
           )}
         </div>
       )}
+      {project?.truncated && !searching && (
+        <div className="docs-trunc" role="status">
+          <DocIcon.warn />
+          <span><b>{t('config.docs.tree.truncatedTitle')}</b> {t('config.docs.tree.truncatedText', { limit: formatInteger(DOCS_LIST_LIMIT) })}</span>
+        </div>
+      )}
       <div className="docs-tree-body">
         {p.listError && <div className="editor-error docs-hint">{p.listError}</div>}
         {groups === null && !p.listError && <div className="muted docs-hint">{t('common.loading')}</div>}
         {groups !== null && searching && (
           <>
-            <div className="docs-grp">{t('config.docs.tree.project')}<span className="n">{t('config.docs.tree.ofTotal', { n: projectHits.length, total: project?.files.length ?? 0 })}</span></div>
+            <div className="docs-grp">{t('config.docs.tree.project')}<span className="n">{t('config.docs.tree.ofTotal', { n: formatInteger(projectHits.length + projectSearch.more), total: projectCountLabel })}</span></div>
             {projectHits.length ? projectHits.map((h) => hitRow(h)) : <div className="muted docs-hint">{t('config.docs.tree.noMatches')}</div>}
+            {projectSearch.more > 0 && <div className="docs-more">{t('config.docs.tree.hitsMore', { count: projectSearch.more })}</div>}
             <div className="docs-grp">{t('config.docs.tree.tasks')}<span className="n">{taskHits.length}</span></div>
             {taskHits.length ? (
               taskHits.map((h) => hitRow(h, <><TaskDot mark={marks.get(h.source)} />{tasks.find((g) => g.source === h.source)?.title} · </>))
@@ -242,8 +271,9 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
         )}
         {groups !== null && !searching && (
           <>
-            <div className="docs-grp">{t('config.docs.tree.project')}<span className="n">{project?.files.length ?? 0}</span></div>
+            <div className="docs-grp">{t('config.docs.tree.project')}<span className="n">{projectCountLabel}</span></div>
             {p.mode === 'tree' ? nodes(tree, 0) : recent.map((f) => fileRow('project', f, 0, <>{f.path.slice(f.path.lastIndexOf('/') + 1)}{f.path.includes('/') && <span className="docs-row-dir">{dirOf(f.path)}</span>}</>))}
+            {p.mode === 'recent' && projectCount > RECENT_LIMIT && <div className="docs-more">{t('config.docs.tree.recentMore', { limit: formatInteger(RECENT_LIMIT) })}</div>}
             <div className="docs-grp">{t('config.docs.tree.tasks')}<span className="n">{taskFiles}</span></div>
             {!empty && taskFiles === 0 && <div className="muted docs-hint">{t('config.docs.tree.noTaskFiles')}</div>}
             {tasks

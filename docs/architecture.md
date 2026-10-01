@@ -1061,34 +1061,47 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## UI: доска и «О проекте»
 
-- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Файлы` / `Статистика` / `О проекте`) и выбранный
+- **Состояние по проектам** (`App.tsx`): вкладка (`Канбан` / `Терминалы` / `Статистика` / `О проекте`, список и разбор — `renderer/src/projectTabs.ts`) и выбранный
   терминал — свои у каждого проекта: `views: Record<projectId, ProjectView { tab, activePty }>`,
   запись через `updateView(projectId, patch)` (функциональный апдейтер, безопасен из обработчиков событий).
   Вкладка дублируется в `localStorage` ключом `orca.tab.<projectId>` (`storedTab` / `storeTab`,
-  ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти.
+  ошибки localStorage глотаются) и переживает перезапуск; `activePty` — только в памяти. Неизвестное сохранённое значение
+  (`parseTab`), в том числе бывшая вкладка `files`, открывает «Канбан» — миграции нет.
   Без активного проекта ключ `''` — вкладки работают, но не сохраняются. Если `activePty` проекта
   указывает на закрытый терминал или не выбран — берётся первый терминал проекта.
-- **Вкладка «Файлы»** (`FilesView.tsx`, состояние — `renderer/src/fileTree.ts`, API и тексты отказов — `projectFiles.ts`):
-  ленивое дерево корня проекта `Project.root`, только чтение; визуально — строки `.docs-row` «Документов». Монтируется с
-  `key={projectId}`. Читает одну папку за запрос через `files:list(projectId, dir)`; какие папки читать, решает одна
-  чистая функция `pendingLoads` (раскрытие, «Повторить», «Обновить» и восстановление только меняют состояние): видимые
-  раскрытые папки, родители раньше детей, не больше `LOAD_CONCURRENCY` = 4 запросов сразу, папка в полёте повторно не
-  запрашивается (двойной «Обновить» не даёт двойной загрузки). Ответ применяется, только если совпали проект, эхо `dir` и
-  номер запроса. Пропавшие записи молча выпадают из раскрытых и из выделения; `files.notFound` у вложенной папки —
-  перечитывается родитель. Раскрытые папки — в `localStorage` `orca.files.open.<projectId>` (до `OPEN_LIMIT` = 200, в
-  `try/catch`). «Обновить» — кнопкой и при возврате фокуса окну (не чаще раза в 5 с); слежения за диском нет.
-  Клавиатура — WAI-ARIA tree (↑↓, ←→, Home/End, Enter/пробел — раскрыть папку), roving tabindex. Нижняя панель
-  выделенного: «Копировать путь» (относительный; полный — в подсказке) и «Показать в папке» (`files:reveal`). Отказы —
-  по `ipcErrorCode` (`config.files.err.*`), `files.readFailed` и неизвестный код — текст main; старый main/preload —
-  `filesStaleMessage()` без «Повторить». Содержимое файлов во вкладке не показывается и ничего не запускается.
-  **Открыть в «Документах»:** у выделенного `.md` в нижней панели кнопка, то же — двойной клик и Enter по строке
-  (`isOpenableDoc` в `fileTree.ts`: только обычный файл `*.md` без учёта регистра — `.markdown` и симлинки `docs:read`
-  не примет, см. `resolveDocPath` в `main/docs.ts`). `FilesView` зовёт `onOpenDoc(path)` → `App.tsx` кладёт путь в
-  `docsInitialPath` и открывает `DocsModal` с `initialDoc = {source: 'project', path}`; кнопка «Документы» в rail
-  сбрасывает его в `null`. `DocsModal` один раз после первой загрузки списка вызывает `go(initialDoc)`: путь и размер
-  проверяет `docs:read`, отказ показывается ошибкой в модалке, дерево раскрывается до файла. Без `initialDoc` модалка
-  открывается на стартовом экране, как раньше. Нового IPC нет; игнорируемые git'ом `.md` в «Файлах» не видны, поэтому
-  и отсюда не открываются.
+- **«Документы»: все файлы проекта** (`DocsModal.tsx` — окно, `DocsTree.tsx` — дерево и поиск, `DocsStart.tsx` — стартовый
+  экран, `DocsToc.tsx` — оглавление; просмотр — `DocViewer.tsx` и соседи, см. «IPC: документы»; чистая логика — `docTree.ts`,
+  `docLinks.ts`, `docView.ts`). Отдельной вкладки «Файлы» нет: единственный вход — кнопка «Документы» в rail, окно открывается
+  с `key={projectId}`. Раскладка — `docs/design/docs-files/variant-1.html` («Проводник») плюс меню «⋯» из `variant-2.html`:
+  дерево | одна панель просмотра | оглавление — **только у markdown в режиме «Документ»**, у остальных видов колонка скрыта,
+  а тип, кодировка, строки, размер и время — в строке статуса (`DocStatus`).
+  - **Дерево** строится из `docs:list` (группа `project` — все файлы, группы задач — только `.md`) функцией `buildTree`: папки
+    сверху, цепочка из одной папки схлопывается. Значок — по виду файла `docIconOf(path)` (`shared/docs-view.ts`, без IPC), цвет —
+    `data-kind` в `styles.css`; симлинк (`DocFile.link`) — значок цепочки, куда он ведёт, выясняет `docs:view`. `DocGroup.truncated` —
+    баннер `docs-trunc` и счётчик «100 000+». «Недавние» — не больше `RECENT_LIMIT` = 200 строк, выдача поиска по пути в группе —
+    не больше `HIT_LIMIT` = 100 и строка «ещё N» (`searchFiles`); ввод поиска — с задержкой 120 мс (`useDebounced` в `DocsModal`),
+    сброс — сразу. Раскрытые папки — `localStorage` `orca.docs.open.<projectId>` (`readOpenDirs`/`writeOpenDirs`, до
+    `OPEN_DIRS_LIMIT` = 200, родители раньше детей); не сохраняли — раскрыт верхний уровень. Ключи бывшей вкладки
+    `orca.files.open.<projectId>` удаляются при открытии окна. Список и открытый файл перечитываются кнопкой «Обновить» и при
+    возврате фокуса окну, но не чаще `FOCUS_REFRESH_MS` = 5 с (`focusRefreshDue`): список проекта — это `git ls-files` и `lstat`.
+  - **Просмотр.** `go(doc)` сначала читает (`loadView`: `docs:view`), и только если прочиталось — переходит (история ‹ ›,
+    прокрутка запоминается). Заглушки (`stub`) — обычный ответ. Отказы «приложение устарело», «ссылка ведёт за пределы проекта»
+    (`files.outside`) и «это не файл» показываются заглушкой на месте просмотра (`DocStub` с `failure`); «файла нет», «нет прав»
+    и прочее — баннер `docs-err` над прежним документом. Режим вида (`docModes`: Документ ⇄ Исходник, Код ⇄ Превью, у SVG Картинка ⇄
+    Код) сбрасывается при переходе, масштаб «Вписать / 100 %» — нет. «Обновить» перечитывает файл и увеличивает `reload`
+    просмотрщиков (картинка, исходник, превью); возврат фокуса — только если у файла изменились `mtime`/`size`/текст, иначе превью
+    HTML сбрасывалось бы при каждом переключении окна. ⌘F (`findInDoc`) ищет в `<article>` markdown или `<code>` кода — корень
+    приходит ref-колбэком, поэтому поиск и прокрутка к якорю ждут, пока файл догрузится.
+  - **Ссылки** из markdown: Markdown в режиме `links: 'project'` сам разрешает относительный адрес в путь источника и `#якорь`
+    (`data-showcase-href`), окно открывает файл любого вида там же. Неразрешимая ссылка на `.md` (выход за корень, `.git`)
+    остаётся в `data-doc-href` → `resolveDocLink` → ошибка «ведёт за пределы проекта». Внешние — во внешнем браузере.
+  - **Действия** с файлом: иконки в строке крошек (копировать путь, показать в папке, «Открыть» — только при `DocView.openable`)
+    и меню «⋯» (`DocActionsMenu`: ещё «Копировать абсолютный путь» — `absolutePath(Project.root, path)`, только у источника
+    «Проект»); на узком окне (≤ 820 px) остаётся только меню. «Скопировано» — короткий тост внизу панели.
+  - **Стартовый экран**: «Изменены задачами в работе» и «Недавние в проекте» — **только markdown** (`markdownFiles`), иначе их
+    заполнили бы свежие `.ts`; весь проект — в дереве и по ⌘P.
+  - **Старый main/preload** (renderer обновился по HMR): дерево работает на старом `docs:list` (только `.md`), `.md` открываются
+    через `docs:read` (`loadView` строит `DocView` сам), всё остальное — заглушка «перезапустите приложение» (`DocViewStaleError`).
 - **Меню веток у бейджа ветки** (`BranchMenu.tsx`, логика — `renderer/src/projectGit.ts`, ветка — `useProjectBranch.ts`):
   бейдж текущей ветки в шапке — кнопка; по клику поповер с «Fetch», «Pull» (у Pull — ↑ahead ↓behind текущей ветки),
   поиском и списками локальных / удалённых веток (текущая отмечена, занятая другим worktree недоступна, удалённые без
@@ -1697,13 +1710,13 @@ SVG-линия и траектория пакета используют оди�
   `terminals:list` (реестр PTY с хвостами, см. «Реестр терминалов»); `worker:start`; `coordinator:start`; `assistant:open`, `assistant:reset` (см. «Ассистент»);
   `assistantChat:available(ptyId)` → `boolean`, `assistantChat:getMessages(ptyId)` → `AssistantChatSnapshot`, `assistantChat:send(ptyId, text)`, `assistantChat:interrupt(ptyId)`, `assistantChat:respond(ptyId, requestId, answer)` (см. «Ассистент»);
   `rules:list` → `RuleFile[]`, `rules:save(name, text)` → `RuleFile` (только `CLAUDE.md`/`AGENTS.md` в корне активного проекта, см. «О проекте → Правила»); `review:info`, `review:accept`, `review:reject(taskId, feedback, images?)` (картинки к замечаниям); `attachments:ping` → `true` (рукопожатие: renderer перед показом «Приложить» проверяет, что main новый и принимает `images`; старый main — «No handler registered» → «перезапустите приложение»);
-  `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта для вкладки «Файлы»:
+  `files:list(projectId, dir?)` → `ProjectFilesListing {dir, entries: ProjectFileEntry[{name, kind: 'dir'|'file'|'symlink'}], truncated}` (одна папка корня проекта; вкладки «Файлы» больше нет — канал нужен диалогу начального коммита (`.gitignore` в корне) и тестам резолвера:
   `dir` — от корня через `/`, '' — корень, эхо запроса; папки, затем файлы и симлинки по имени; не больше `PROJECT_FILES_DIR_LIMIT` = 5000 записей, остальное — `truncated: true`;
   `.git`, `.DS_Store`, `Thumbs.db` и игнорируемое git'ом не отдаются), `files:reveal(projectId, path)` — показать запись (симлинк — сам симлинк) в Finder/Проводнике.
   `projectId` явный, а не «активный проект» (как у `projects:branches`, `stats:project`): между вызовом и обработкой человек может переключить проект.
   Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.notFile` (ожидался файл — для `docs:*`), `files.rootMissing`,
   `files.readFailed`; неизвестный `projectId` — обычная ошибка «project not found». `files:open` и `files:read` нет намеренно: запуск произвольного файла
-  системой опасен (политика `shared/showcase.ts`), `.md` открываются в «Документах», предпросмотра нет. Реализация — `main/project-files.ts`:
+  системой опасен (политика `shared/showcase.ts`); смотреть и открывать файлы проекта — через «Документы» (`docs:*`). Реализация — `main/project-files.ts`:
   `listProjectDir` — async `readdir` одной папки (синхронный заморозил бы PTY и сокет), без кэша и watcher'а; путь режет `splitSafeSegments`
   (только `/`, без `''`/`.`/`..`; `\` и `:` отклоняются только на win32, на unix это символы имени; сегмент `.git` в любом регистре — `files.hidden`), `realpath` сверяется с корнем (`isInside`,
   симлинк на `.git` — тоже `files.hidden`); симлинки в списке не разворачиваются (`kind: 'symlink'`), сокеты/FIFO пропускаются; игнор — одна
@@ -2829,7 +2842,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Системное меню | macOS: меню приложения, службы, скрытие, стандартные роли окон; значок Dock | настройки и выход в «Файл», «О приложении» в справке; значок окна | `applicationMenuTemplate()` — `src/main/app-menu.ts`; `src/main/index.ts` |
 | Пути картинок к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; до 8 путей в стартовом промпте (`CMD_LINE_LIMIT`) | `saveReturnImages` — `src/main/attachments.ts` |
 | git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
-| Каталог файлов (вкладка «Файлы») | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
+| Каталог файлов (`files:*`, резолвер путей `docs:*`) | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 | Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `renderer/src/styles.css` |
 
@@ -3277,7 +3290,7 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   Chromium нормализует `..` и `%2e%2e` до обработчика, поэтому проверка сегментов в `resolvePreviewRequest` — вторая линия, а главная —
   realpath внутри корня токена.
 
-- **`git check-ignore` (вкладка «Файлы», `gitCheckIgnore` в `main/git.ts`).** Код выхода `1` значит «ничего не игнорируется», а не ошибку —
+- **`git check-ignore` (`files:list`, `gitCheckIgnore` в `main/git.ts`).** Код выхода `1` значит «ничего не игнорируется», а не ошибку —
   `execFile` отдаёт его как исключение, ответ пустой; `128` — не репозиторий или «dubious ownership», тогда фильтра нет. Папки передаются с `/`
   на конце: шаблон `node_modules/` без слэша на путь не срабатывает. Без `--no-index` отслеживаемые файлы игнорируемыми не считаются, даже если
   подпадают под правило (`git add -f`), — они видимы, как в `git status`. Пути — через stdin с `-z`: в argv тысячи имён упираются в лимит

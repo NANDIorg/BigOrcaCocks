@@ -106,7 +106,6 @@ export default {
   'tab.boardBack': 'Back to the main board',
   'tab.terminals': 'Terminals',
   'tab.stats': 'Stats',
-  'tab.files': 'Files',
   'tab.info': 'Project',
   noSubtasks: 'No subtasks',
 
