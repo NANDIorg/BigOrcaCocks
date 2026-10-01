@@ -887,6 +887,7 @@ export default {
   'files.err.hidden': 'Не показывается во вкладке: {path}',
   'files.err.notFound': 'Уже нет на диске: {path}',
   'files.err.notDir': 'Это не папка: {path}',
+  'files.err.notFile': 'Это не файл: {path}',
   'files.err.rootMissing': 'Папка проекта не найдена: {path}',
   'files.err.readFailed': 'Не удалось прочитать: {path}'
 } satisfies AreaDict

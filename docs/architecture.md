@@ -1701,7 +1701,7 @@ SVG-линия и траектория пакета используют оди�
   `dir` — от корня через `/`, '' — корень, эхо запроса; папки, затем файлы и симлинки по имени; не больше `PROJECT_FILES_DIR_LIMIT` = 5000 записей, остальное — `truncated: true`;
   `.git`, `.DS_Store`, `Thumbs.db` и игнорируемое git'ом не отдаются), `files:reveal(projectId, path)` — показать запись (симлинк — сам симлинк) в Finder/Проводнике.
   `projectId` явный, а не «активный проект» (как у `projects:branches`, `stats:project`): между вызовом и обработкой человек может переключить проект.
-  Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.rootMissing`,
+  Коды отказов — `PROJECT_FILES_ERROR_CODES` (`shared/ipc.ts`): `files.badPath`, `files.outside`, `files.hidden`, `files.notFound`, `files.notDir`, `files.notFile` (ожидался файл — для `docs:*`), `files.rootMissing`,
   `files.readFailed`; неизвестный `projectId` — обычная ошибка «project not found». `files:open` и `files:read` нет намеренно: запуск произвольного файла
   системой опасен (политика `shared/showcase.ts`), `.md` открываются в «Документах», предпросмотра нет. Реализация — `main/project-files.ts`:
   `listProjectDir` — async `readdir` одной папки (синхронный заморозил бы PTY и сокет), без кэша и watcher'а; путь режет `splitSafeSegments`
@@ -1752,6 +1752,42 @@ SVG-линия и траектория пакета используют оди�
   `app:changed` и `window.orca.app.onChanged` — опциональные (нет у старого preload — renderer просто не подписывается, без ошибки: правки из сокета видны после перезапуска, как раньше).
 - В preload: `window.orca.app.{info, getSettings, setSettings, onChanged?, onMenuAction?}`, `window.orca.onboarding.{getState, complete}`, `window.orca.updates.{getState, check, download, install, cancelPending, getJustUpdated, onChanged}`, `window.orca.terminals.{list, onChanged}`, `window.orca.assistantChat.{available, getMessages, send, interrupt, respond, onMessage}`;
   у `window.orca.worker` остался только `start`.
+
+### IPC: документы (`docs:*`) — все файлы проекта
+
+Контракт окна «Документы» после переноса туда вкладки «Файлы»: дерево показывает все файлы проекта, просмотрщик —
+любой файл, только чтение. Типы — `shared/ipc.ts` (`OrcaApi['docs']`, `DocFile`, `DocGroup`, `DocView`, `DocStub`,
+`DocBytes`, `DocPreviewUrl`, `DOC_VIEW_ERROR_CODES`), классификация и лимиты — чистый модуль `shared/docs-view.ts`
+(без node/electron: его импортирует renderer; тест — `main/docs-kind.test.ts`, потому что из `shared/` тесты не запускаются).
+
+- `source` — `'project'` или id задачи в работе с worktree (иначе `docs.noTaskSource`); `path` — от корня источника через `/`.
+- `docs:list()` → `DocGroup[]`: группа `project` — **все** файлы проекта (уважая `.gitignore`, без `.git`; точечные `.env`,
+  `.github/…` видны), не больше `DOCS_LIST_LIMIT` = 100 000 (больше — `truncated: true`); симлинк на файл — `DocFile.link`.
+  Группы задач — по-прежнему только `.md`. Старый main отдаёт и в `project` только `.md` — renderer это переживает.
+- `docs:read(source, path)` → `string` — без изменений: только `.md`, ≤ 2 МБ, коды `docs.*` (`docs.notMarkdown`, `docs.tooBig`…).
+- `docs:view(source, path, opts?: {source?: boolean})` → `DocView {kind, size, mtime, mime?, text?, stub?, openable}`.
+  `kind` — `DocViewKind` (`markdown | text | image | html | pdf | binary`) по `docKindOf(path)`: полное имя (`Makefile`, `.gitignore`,
+  `.env`) → префикс имени (`.env.local`, `Dockerfile.dev`) → последнее расширение (`x.d.ts`, `a.test.ts` — по `.ts`); `unknown` main
+  уточняет по содержимому: NUL в первых `DOC_SNIFF_BYTES` = 8192 байт — `binary`, иначе `text`. Инварианты: `stub` задан ⇒ `text` нет;
+  `stub: 'pdf'` ⇔ `kind: 'pdf'`; у заглушки `kind` — предполагаемый вид; `text` (UTF-8 без BOM, ≤ `DOC_TEXT_MAX_BYTES` = 1 МиБ) есть
+  всегда у `markdown`/`text`, у `html` и SVG — только при `opts.source` (вкладка «Код»); `mime` — у `image` и `html`; `size`/`mtime` — цели симлинка.
+  `stub`: `binary`, `notUtf8` (других кодировок не угадываем), `tooBig` (текст > 1 МиБ, картинка > `DOC_IMAGE_MAX_BYTES` = 10 МиБ), `pdf` — это
+  **не ошибки**, а обычный ответ. `openable` — расширение из `SHOWCASE_FILE_TYPES` и у пути, и у цели симлинка.
+- `docs:bytes(source, path)` → `DocBytes` (= `ShowcaseFileData {mime, bytes: Uint8Array}`, подходит для `useBlobUrl`): только `kind: 'image'`,
+  ≤ 10 МиБ; не картинка — `docs.noPreview`.
+- `docs:previewUrl(source, path)` → `DocPreviewUrl` (= `ShowcasePreviewUrl {url, mime, base}`): токен протокола `orca-preview://` на корень
+  источника, **всегда без сети** — параметра `network` нет намеренно (HTML проекта — недоверенный код). `url` — страница для
+  `<iframe sandbox="allow-scripts">`, `base` — для относительных картинок markdown. Не html/markdown или путь со скрытым сегментом — `docs.noPreview`.
+- `docs:open(source, path)` — любой файл из `SHOWCASE_FILE_TYPES` (расширение проверяется и по пути, и по realpath: `a.png` → `run.sh` не
+  откроется), иначе `docs.notOpenable`. `docs:reveal(source, path)` — любой файл источника в Finder/Проводнике, симлинк — сам симлинк
+  (`resolveProjectPath(…, followLast = false)`). Старый main принимает в обоих только `.md`.
+- Ошибки пути — общий резолвер и коды `PROJECT_FILES_ERROR_CODES` (`files.badPath`, `files.outside`, `files.hidden`, `files.notFound`,
+  `files.notFile` — не обычный файл: папка, FIFO, сокет, `files.rootMissing`, `files.readFailed`); свои коды новых каналов —
+  `DOC_VIEW_ERROR_CODES`: `docs.notOpenable`, `docs.noPreview`. Тексты — `main/strings/{ru,en}.ts`; renderer узнаёт отказ по `ipcErrorCode`.
+- Совместимость: `view?`, `bytes?`, `previewUrl?` в `OrcaApi` необязательные — в старом preload их нет, а старый main отвечает
+  «No handler registered for 'docs:…'». Renderer проверяет наличие метода и в обоих случаях показывает «перезапустите приложение»,
+  а дерево и `.md` продолжают работать на `docs:list`/`docs:read`. Канал в четырёх местах: `shared/ipc.ts`, `preload/index.ts`,
+  `preload/api.d.ts` (там только `window.orca: OrcaApi` — правка не нужна), `registerIpc` в `main/index.ts`.
 
 ## Протокол сокета
 

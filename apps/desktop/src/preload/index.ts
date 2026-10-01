@@ -165,6 +165,9 @@ const api: OrcaApi = {
   docs: {
     list: () => ipcRenderer.invoke('docs:list'),
     read: (source, path) => ipcRenderer.invoke('docs:read', source, path),
+    view: (source, path, opts) => ipcRenderer.invoke('docs:view', source, path, opts),
+    bytes: (source, path) => ipcRenderer.invoke('docs:bytes', source, path),
+    previewUrl: (source, path) => ipcRenderer.invoke('docs:previewUrl', source, path),
     open: (source, path) => ipcRenderer.invoke('docs:open', source, path),
     reveal: (source, path) => ipcRenderer.invoke('docs:reveal', source, path)
   },

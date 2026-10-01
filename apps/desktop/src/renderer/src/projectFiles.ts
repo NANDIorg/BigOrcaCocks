@@ -35,6 +35,7 @@ const MESSAGES: Record<ProjectFilesErrorCode, (ctx: FilesErrorContext) => string
   'files.hidden': (ctx) => t('config.files.err.hidden', { path: ctx.path }),
   'files.notFound': (ctx) => t('config.files.err.notFound', { path: ctx.path }),
   'files.notDir': (ctx) => t('config.files.err.notDir', { path: ctx.path }),
+  'files.notFile': (ctx) => t('config.files.err.notFile', { path: ctx.path }),
   'files.rootMissing': (ctx) => t('config.files.err.rootMissing', { path: ctx.root }),
   'files.readFailed': (ctx) => t('config.files.err.readFailed', { path: ctx.path })
 }
