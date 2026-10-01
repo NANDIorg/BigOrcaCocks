@@ -1,6 +1,6 @@
 import type { Workflow } from '@orca-board/core'
 import { buildWorkflowAssistantContext, saveWorkflowDraft } from './assistant-workflow'
-import type { TaskTypePatch } from '../shared/ipc'
+import type { TaskTypePatch, AttachmentCapabilities } from '../shared/ipc'
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateImageAttachments, IMAGE_ATTACHMENT_LIMITS, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
 import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
@@ -969,6 +969,10 @@ function registerIpc(): void {
     const p = resolveProject()
     return loadTaskImage(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId)
   })
+  // Заглушка до приёма файлов в main: вложения задачи пока только картинки, показ в папке не нужен.
+  handle('globalTasks:revealAttachment', () => {
+    throw new OrcaError('attachments.revealUnavailable')
+  })
   handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
   handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
     removeGlobalTask(resolveProject(), id, opts?.cascade === true)
@@ -1069,6 +1073,8 @@ function registerIpc(): void {
   })
   // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
+  // Что main принимает во вложениях: пока только картинки с прежними лимитами (`validateImageAttachments`).
+  handle('attachments:capabilities', (): AttachmentCapabilities => ({ files: false, limits: { ...IMAGE_ATTACHMENT_LIMITS } }))
   // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
   // расширений — main/showcase.ts.
   const source = (taskId: unknown, dispatchId: unknown): string => {

@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  IMAGE_ATTACHMENT_TYPES, assertImageBudget, newId,
+  IMAGE_ATTACHMENT_TYPES, assertImageBudget, isImageAttachmentMime, newId,
   type GlobalTask, type ImageAttachment, type Run, type RunImage, type TaskStore
 } from '@orca-board/core'
 import { OrcaError } from './i18n'
@@ -82,7 +82,8 @@ export function readRunImages(dir: string, metas: readonly RunImage[]): { images
   const missing: RunImage[] = []
   for (const meta of [...metas].sort((a, b) => a.addedAt - b.addedAt)) {
     const file = runImageFile(dir, meta)
-    if (!existsSync(file)) {
+    // Не-картинка (`RunImage.mime` теперь шире) сюда не попадает, пока main принимает только картинки.
+    if (!isImageAttachmentMime(meta.mime) || !existsSync(file)) {
       missing.push(meta)
       continue
     }
