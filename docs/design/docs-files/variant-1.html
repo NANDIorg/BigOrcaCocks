@@ -1,0 +1,1099 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Документы со всеми файлами — вариант 1: «Проводник»</title>
+<!--
+  Макет окна «Документы» со всеми файлами проекта. Дерево | одна панель | правая колонка только у markdown.
+  Самодостаточный файл: открывается в браузере без сборки и без сети (стили и скрипт — внутри).
+  Токены — тема graphite (apps/desktop/src/shared/theme.ts), классы docs-* — из styles.css, новое — docs-code / docs-status / docs-html / docs-blank.
+  Панель сверху — не часть приложения: переключает состояние, ширину окна и подсветку. Данные выдуманы.
+  Адрес: #code, #md, #search … (id состояния) и ?w=812 (ширина окна).
+-->
+<style>
+/* ===== Токены — тема graphite из apps/desktop/src/shared/theme.ts (тема по умолчанию) ===== */
+:root {
+  color-scheme: dark;
+  --page: #252422; --frame: #2b2a28; --side: #302f2c; --side-2: #363530; --card: #3a3935; --card-hover: #42413c;
+  --chip: #5a5850; --line: #eeebe31c; --overlay-ink: #ffffff; --code-bg: #1e1d1b; --tooltip-bg: #1f1e1c; --preview-bg: #1f1e1c;
+  --text: #eeebe3; --muted: #b2afa5; --subtle: #d2cfc5;
+  --accent: #b4c9bd; --accent-2: #98b3a4; --accent-hover: #cad9cf; --on-accent: #252422;
+  --col-backlog: #848279; --col-ready: #a5b5c4; --col-progress: #d8a36a; --col-input: #dfc58f; --col-review: #bea8c1; --col-done: #99bfa6;
+  --danger: #e9998e; --term-bg: #1f1e1c;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: #171615; color: var(--text); font: 14px/1.45 var(--font-sans); -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; overflow: hidden; }
+button { font: inherit; cursor: pointer; color: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible, [tabindex]:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+svg.i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+svg.i.s { width: 14px; height: 14px; }
+svg.i.xs { width: 12px; height: 12px; }
+kbd { font: 11px var(--font-mono); padding: 1px 5px; border-radius: 5px; border: 1px solid var(--chip); color: var(--muted); background: var(--frame); }
+.muted { color: var(--muted); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* ===== Панель макета (не часть приложения) ===== */
+.mk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 8px 14px; background: #121110; border-bottom: 1px solid #000; font-size: 12px; color: var(--muted); flex-shrink: 0; }
+.mk-bar b { color: var(--text); font-weight: 600; }
+.mk-bar a { color: var(--accent); text-decoration: none; }
+.mk-grp { display: flex; align-items: center; gap: 6px; }
+.mk-grp .lbl { color: #8d8a82; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.mk-seg { display: inline-flex; flex-wrap: wrap; }
+.mk-seg button { background: transparent; border: 1px solid #3a3835; color: var(--muted); padding: 3px 9px; font-size: 12px; margin-left: -1px; }
+.mk-seg button:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+.mk-seg button:last-child { border-radius: 0 8px 8px 0; }
+.mk-seg button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.mk-seg button:hover:not(.on) { color: var(--text); border-color: #5a5850; position: relative; }
+.mk-note { padding: 6px 14px; font-size: 12.5px; background: #1b1a18; color: var(--subtle); border-bottom: 1px solid #000; flex-shrink: 0; line-height: 1.4; }
+.mk-note .dec { color: var(--col-input); }
+.stage { flex: 1; min-height: 0; display: flex; justify-content: center; padding: 14px; }
+
+/* ===== Окно «Документы» (аналог .docs-modal) ===== */
+.dv { position: relative; width: 100%; max-width: var(--w, 1480px); height: 100%; background: var(--page); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 30px 80px rgba(0,0,0,.5); container: docs / inline-size; transition: max-width .2s; }
+.docs-grow { flex: 1; min-width: 0; }
+.docs-i { width: 14px; height: 14px; }
+.icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; flex-shrink: 0; }
+.icon-btn:hover:not(:disabled) { color: var(--text); background: var(--side-2); }
+.icon-btn:disabled { opacity: .4; cursor: default; }
+.icon-btn.on { color: var(--accent); }
+.icon-btn.sm { width: 24px; height: 24px; }
+.btn-sm { height: 32px; padding: 0 14px; border-radius: 16px; border: 1px solid var(--chip); background: transparent; color: var(--text); font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn-sm:hover { border-color: var(--text); }
+.btn-sm.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn-sm.primary:hover { background: var(--accent-hover); }
+.btn-sm.xs { height: 26px; font-size: 12px; padding: 0 12px; }
+.chip { border: 1px solid var(--chip); color: var(--subtle); border-radius: 999px; padding: 2px 10px; font-size: 12px; white-space: nowrap; }
+.docs-chip { font-size: 10px; padding: 0 6px; line-height: 16px; flex-shrink: 0; }
+.docs-chip.new { border-color: color-mix(in srgb, var(--col-done) 50%, transparent); color: var(--col-done); }
+.docs-chip.mod { border-color: color-mix(in srgb, var(--col-input) 50%, transparent); color: var(--col-input); }
+.docs-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+.docs-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.docs-head h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; gap: 8px; align-items: center; min-width: 0; white-space: nowrap; }
+.docs-head h3 svg { width: 18px; height: 18px; }
+.docs-head .proj { color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.docs-keys { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.docs-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px minmax(0, 1fr); }
+
+/* ----- дерево ----- */
+.docs-tree { background: var(--frame); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.docs-tree-search { margin: 12px 12px 8px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; height: 34px; border-radius: 10px; background: var(--side); color: var(--muted); border: 1px solid transparent; }
+.docs-tree-search:focus-within { border-color: var(--accent); background: var(--side-2); }
+.docs-tree-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); outline: none; font: inherit; font-size: 13px; padding: 0; }
+.docs-tree-search input::placeholder { color: var(--muted); }
+.docs-tree-tools { display: flex; align-items: center; gap: 4px; padding: 0 12px 6px; font-size: 12px; color: var(--muted); }
+.docs-seg { display: inline-flex; background: var(--side); border-radius: 8px; padding: 2px; }
+.docs-seg button { border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 3px 9px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.docs-seg button:hover:not(.on) { color: var(--text); }
+.docs-seg button.on { background: var(--card); color: var(--text); }
+.docs-tree-body { flex: 1; overflow-y: auto; padding: 0 6px 16px; font-size: 13px; }
+.docs-grp { display: flex; align-items: center; gap: 6px; padding: 12px 8px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.docs-grp .n { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.docs-hint { padding: 2px 8px; font-size: 12px; color: var(--muted); }
+.docs-row { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 7px; color: var(--subtle); white-space: nowrap; min-width: 0; font-size: 13px; }
+.docs-row:hover { background: color-mix(in srgb, var(--overlay-ink) 3.5%, transparent); }
+.docs-row:focus-visible, .docs-hit:focus-visible, .docs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.docs-row .docs-nm { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.docs-row .docs-tm, .docs-hit .docs-tm { margin-left: auto; font-size: 11px; color: var(--muted); flex-shrink: 0; padding-left: 6px; }
+.docs-row .docs-chip + .docs-tm { margin-left: 0; }
+.docs-row .docs-nm + .docs-tm { margin-left: auto; }
+.docs-spacer { width: 14px; flex-shrink: 0; }
+.docs-chev { color: var(--muted); transition: transform .15s; }
+.docs-row.open .docs-chev { transform: rotate(90deg); }
+.docs-row.dir { color: var(--muted); }
+.docs-row.dir .docs-cnt { margin-left: auto; font-size: 11px; }
+.docs-row.active { background: var(--side-2); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.docs-row.dim .docs-nm { color: var(--muted); }
+.fi { display: inline-grid; place-items: center; color: var(--tint, var(--muted)); flex-shrink: 0; }
+.docs-row.dir > .fi { color: var(--muted); }
+.ext { font: 600 9.5px/1 var(--font-mono); min-width: 24px; text-align: center; padding: 3px 0; border-radius: 4px; color: var(--tint, var(--muted)); background: color-mix(in srgb, var(--tint, var(--muted)) 14%, transparent); letter-spacing: .02em; flex-shrink: 0; }
+.lnk { display: inline-grid; place-items: center; color: var(--muted); flex-shrink: 0; }
+.lnk.out { color: var(--danger); }
+.docs-task-row { display: flex; align-items: center; gap: 8px; padding: 8px 8px 4px; font-size: 12.5px; font-weight: 600; min-width: 0; }
+.docs-task-row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-task-row .st { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--muted); flex-shrink: 0; }
+.docs-hit { width: 100%; border: 0; background: transparent; color: var(--subtle); font: inherit; text-align: left; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: 7px; min-width: 0; }
+.docs-hit:hover { background: color-mix(in srgb, var(--overlay-ink) 3.5%, transparent); }
+.docs-hit.kb { background: var(--side-2); box-shadow: inset 2px 0 0 var(--accent); }
+.docs-hit-l1 { display: flex; gap: 6px; align-items: center; font-weight: 500; min-width: 0; width: 100%; font-size: 13px; }
+.docs-hit-l1 .docs-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.docs-hit-l1.text { display: block; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-hit-l2 { display: flex; gap: 5px; align-items: center; font: 11px var(--font-mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; width: 100%; padding-left: 20px; }
+.docs-hit-l1.text + .docs-hit-l2 { padding-left: 0; }
+.docs-hit b, .docs-row b { color: var(--col-input); font-weight: 600; }
+.docs-more { margin: 6px 8px 2px; padding: 8px 10px; border-radius: 8px; border: 1px dashed var(--chip); color: var(--muted); font-size: 12px; line-height: 1.4; }
+.docs-more b { color: var(--text); font-weight: 600; }
+.docs-tree-foot { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.docs-row-dir { margin-left: 6px; font: 11px var(--font-mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.docs-trunc { margin: 0 12px 6px; display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; font-size: 12px; line-height: 1.4; background: color-mix(in srgb, var(--col-input) 8%, transparent); border: 1px solid color-mix(in srgb, var(--col-input) 35%, transparent); color: var(--subtle); }
+.docs-trunc svg { color: var(--col-input); margin-top: 1px; }
+.docs-trunc b { color: var(--text); font-weight: 600; }
+
+/* ----- панель документа ----- */
+.docs-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+.docs-crumbs { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line); min-height: 48px; flex-shrink: 0; }
+.docs-path { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; white-space: nowrap; }
+.docs-path .src, .docs-path .seg, .docs-path .cur { padding: 2px 6px; border-radius: 6px; }
+.docs-path .src { color: var(--subtle); }
+.docs-path button.seg { border: 0; background: transparent; color: inherit; font: inherit; }
+.docs-path button.seg:hover { background: var(--side-2); color: var(--text); }
+.docs-path .cur { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.docs-path .sep { color: var(--chip); }
+.docs-path .seg { flex-shrink: 8; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.docs-path .src { flex-shrink: 0; }
+.docs-path .cur { flex-shrink: 1; min-width: 48px; white-space: nowrap; }
+.docs-ctl { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.vsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; flex-shrink: 0; }
+.seg2 { display: inline-flex; border: 1px solid var(--chip); border-radius: 14px; overflow: hidden; flex-shrink: 0; }
+.seg2 button { height: 26px; padding: 0 11px; border: 0; background: transparent; color: var(--muted); font-size: 12.5px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.seg2 button + button { border-left: 1px solid var(--chip); }
+.seg2 button:hover:not(.on) { color: var(--text); }
+.seg2 button.on { background: var(--accent); color: var(--on-accent); }
+.docs-find { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 16px; border-bottom: 1px solid var(--line); background: var(--frame); color: var(--muted); flex-shrink: 0; }
+.docs-find input { flex: 0 1 320px; min-width: 0; height: 28px; border-radius: 8px; border: 1px solid var(--accent); background: var(--side-2); color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; outline: none; }
+.docs-find-count { font-size: 12px; min-width: 90px; }
+.docs-find .icon-btn { width: 28px; height: 28px; }
+.docs-body { flex: 1; overflow-y: auto; padding: 36px 56px 80px; min-height: 0; }
+.docs-article { max-width: 76ch; margin: 0 auto; font-size: 15px; }
+.docs-note, .docs-err { max-width: 76ch; margin: 0 auto 22px; display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 12px; font-size: 13px; }
+.docs-note { background: color-mix(in srgb, var(--col-progress) 7%, transparent); border: 1px solid color-mix(in srgb, var(--col-progress) 30%, transparent); }
+.docs-err { align-items: flex-start; background: color-mix(in srgb, var(--danger) 8%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+.docs-err > svg { width: 18px; height: 18px; color: var(--danger); }
+.docs-err b { color: var(--danger); }
+.docs-err .icon-btn { width: 22px; height: 22px; }
+.docs-err.flat { margin: 0 0 22px; max-width: none; }
+
+/* ----- правая колонка: оглавление ----- */
+.docs-toc { border-left: 1px solid var(--line); padding: 20px 16px; overflow-y: auto; font-size: 13px; min-width: 0; }
+.docs-toc h4 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+.docs-toc a { display: block; color: var(--muted); text-decoration: none; padding: 4px 10px; border-left: 2px solid var(--line); line-height: 1.35; }
+.docs-toc a.l3 { padding-left: 22px; font-size: 12.5px; }
+.docs-toc a:hover { color: var(--text); }
+.docs-toc a.on { color: var(--text); border-left-color: var(--accent); }
+.docs-prog { margin-top: 18px; height: 3px; border-radius: 2px; background: var(--side-2); overflow: hidden; }
+.docs-prog i { display: block; height: 100%; width: 34%; background: var(--accent); }
+.docs-toc-meta { margin-top: 18px; display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.docs-toc-meta div { display: flex; gap: 6px; align-items: center; min-width: 0; }
+
+/* ----- старт / пустые состояния / заглушки ----- */
+.docs-start { overflow-y: auto; padding: 56px; min-width: 0; }
+.docs-start h2 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+.docs-start .sub { color: var(--muted); margin: 0 0 26px; }
+.docs-start h5 { margin: 26px 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+.docs-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; max-width: 900px; }
+.docs-card { background: var(--side); border: 1px solid transparent; border-radius: 12px; padding: 14px 16px; color: var(--text); display: flex; flex-direction: column; gap: 6px; text-align: left; font: inherit; min-width: 0; }
+.docs-card:hover { border-color: var(--chip); background: var(--card); }
+.docs-card .t { font-weight: 600; display: flex; gap: 6px; align-items: center; min-width: 0; }
+.docs-card .p { font: 11px var(--font-mono); color: var(--muted); }
+.docs-card .x { font-size: 12.5px; color: var(--subtle); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.docs-card .f { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--muted); min-width: 0; }
+.docs-blank { display: grid; place-items: center; padding: 40px; flex: 1; min-height: 0; overflow-y: auto; }
+.docs-blank .box { max-width: 480px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.docs-blank .ill { width: 72px; height: 72px; border-radius: 20px; background: var(--side); display: grid; place-items: center; color: var(--tint, var(--muted)); margin-bottom: 6px; }
+.docs-blank .ill svg { width: 32px; height: 32px; }
+.docs-blank h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.docs-blank p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.docs-blank code { font: 12px var(--font-mono); background: var(--side); padding: 1px 6px; border-radius: 6px; color: var(--subtle); }
+.docs-blank .acts { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; justify-content: center; }
+.docs-blank .meta { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
+.docs-blank .hint { font-size: 12px; margin-top: 4px; }
+.docs-blank .lock-ill { color: var(--col-input); }
+
+/* ----- просмотр кода ----- */
+.docs-code { flex: 1; min-height: 0; overflow: auto; background: var(--code-bg); font: 13px/1.6 var(--font-mono); color: color-mix(in srgb, var(--text) 90%, var(--muted)); outline-offset: -2px; }
+.docs-code-in { display: flex; min-width: max-content; min-height: 100%; }
+.docs-code pre { margin: 0; font: inherit; }
+.docs-code .gutter { position: sticky; left: 0; z-index: 1; flex-shrink: 0; padding: 12px 12px 12px 18px; min-width: 52px; text-align: right; color: color-mix(in srgb, var(--muted) 78%, transparent); background: var(--code-bg); border-right: 1px solid var(--line); user-select: none; }
+.docs-code .src { padding: 12px 24px 12px 16px; tab-size: 2; }
+.docs-code code { font: inherit; }
+.docs-code mark, .doc-md mark { background: color-mix(in srgb, var(--col-input) 30%, transparent); color: inherit; border-radius: 3px; padding: 0; }
+.docs-code mark.cur, .doc-md mark.cur { background: var(--col-input); color: #1e1d1b; }
+.docs-code.hl .tk-c { color: #8f8c82; font-style: italic; }
+.docs-code.hl .tk-s { color: #a9cdb2; }
+.docs-code.hl .tk-k { color: #c3b4d6; }
+.docs-code.hl .tk-n { color: #e0b68a; }
+.docs-code.hl .tk-t { color: #a5c0d8; }
+.docs-wrapnote { color: var(--muted); font-size: 12px; }
+
+/* ----- статус-строка ----- */
+.docs-status { display: flex; align-items: center; gap: 14px; min-height: 30px; padding: 4px 14px 4px 16px; border-top: 1px solid var(--line); background: var(--frame); color: var(--muted); font-size: 12px; flex-shrink: 0; white-space: nowrap; overflow: hidden; }
+.docs-status .it { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.docs-status .it.path { font-family: var(--font-mono); font-size: 11.5px; color: var(--subtle); overflow: hidden; text-overflow: ellipsis; }
+.docs-status .iso { color: var(--col-done); }
+.docs-status b { color: var(--subtle); font-weight: 500; }
+.docs-status .btn-text { border: 0; background: transparent; color: var(--muted); font-size: 12px; padding: 2px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; height: 24px; }
+.docs-status .btn-text:hover { color: var(--text); background: var(--side-2); }
+
+/* ----- картинка ----- */
+.docs-img { flex: 1; min-height: 0; overflow: auto; display: grid; place-items: center; padding: 20px; background:
+  conic-gradient(#2a2927 25%, #302f2c 0 50%, #2a2927 0 75%, #302f2c 0) 0 0 / 20px 20px; }
+.docs-img.fit svg.pic { max-width: 100%; max-height: 100%; width: 100%; height: auto; }
+.docs-img.fit { place-items: center; }
+.docs-img.actual { place-items: start; }
+.docs-img.actual svg.pic { width: 1280px; height: 800px; max-width: none; flex-shrink: 0; }
+.docs-img svg.pic { filter: drop-shadow(0 6px 18px rgba(0,0,0,.5)); }
+
+/* ----- HTML: код ⇄ превью ----- */
+.docs-html { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--preview-bg); }
+.docs-html .banner { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 12.5px; color: var(--subtle); background: color-mix(in srgb, var(--col-done) 7%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--col-done) 25%, transparent); flex-shrink: 0; flex-wrap: wrap; }
+.docs-html .banner svg { color: var(--col-done); }
+.docs-html .banner .grow { flex: 1; min-width: 0; }
+.docs-html .banner code { font: 11.5px var(--font-mono); color: var(--muted); }
+.docs-html .frame-wrap { flex: 1; min-height: 0; padding: 16px; display: flex; }
+.docs-html iframe { flex: 1; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; min-height: 0; }
+.iso-chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 12px; font-size: 12px; color: var(--col-done); border: 1px solid color-mix(in srgb, var(--col-done) 45%, transparent); white-space: nowrap; }
+
+/* ----- markdown (из docs-markdown.css, сокращено) ----- */
+.doc-md { font-size: 15px; line-height: 1.7; color: color-mix(in srgb, var(--text) 92%, var(--muted)); max-width: 76ch; overflow-wrap: anywhere; }
+.doc-md > :first-child { margin-top: 0; }
+.doc-md h1, .doc-md h2, .doc-md h3 { color: var(--text); font-weight: 600; scroll-margin-top: 16px; }
+.doc-md h1 { font-size: 28px; line-height: 1.25; font-weight: 650; letter-spacing: -.015em; margin: 0 0 16px; }
+.doc-md h2 { font-size: 20px; line-height: 1.3; margin: 40px 0 12px; padding-top: 18px; border-top: 1px solid var(--line); }
+.doc-md h3 { font-size: 16px; line-height: 1.4; margin: 28px 0 8px; }
+.doc-md p, .doc-md ul, .doc-md ol, .doc-md blockquote, .doc-md .doc-code, .doc-md .doc-table, .doc-md figure { margin: 0 0 14px; }
+.doc-md ul, .doc-md ol { padding-left: 22px; }
+.doc-md li { margin: 4px 0; }
+.doc-md li::marker { color: var(--muted); }
+.doc-md strong { color: var(--text); font-weight: 600; }
+.doc-md code { font: 13px var(--font-mono); padding: 1px 6px; border-radius: 6px; background: color-mix(in srgb, var(--overlay-ink) 7%, transparent); color: var(--text); }
+.doc-md a { color: color-mix(in srgb, var(--accent) 70%, var(--text)); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); cursor: pointer; }
+.doc-md a:hover { border-bottom-color: var(--accent); }
+.doc-md a[data-open]::before { content: "▤ "; font-size: 11px; color: var(--muted); }
+.doc-md a[data-open].code::before { content: "‹› "; font-size: 11px; color: var(--muted); }
+.doc-md a.ext::after { content: " ↗"; font-size: 11px; color: var(--muted); }
+.doc-md figure { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--code-bg); }
+.doc-md figure svg { display: block; width: 100%; height: auto; }
+.doc-md figcaption { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
+.doc-md .doc-code { border-radius: 10px; background: var(--code-bg); border: 1px solid var(--line); overflow: hidden; }
+.doc-md .doc-code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 14px; border-bottom: 1px solid color-mix(in srgb, var(--overlay-ink) 5%, transparent); font: 11px var(--font-mono); color: var(--muted); }
+.doc-md .doc-copy { border: 0; background: transparent; color: var(--muted); font: 11px var(--font-mono); padding: 3px 8px; border-radius: 6px; }
+.doc-md .doc-copy:hover { background: var(--side-2); color: var(--text); }
+.doc-md pre { margin: 0; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 var(--font-mono); color: color-mix(in srgb, var(--text) 90%, var(--muted)); }
+.doc-md pre code { padding: 0; background: none; font-size: inherit; color: inherit; }
+.doc-md blockquote { margin-left: 0; margin-right: 0; padding: 10px 16px; border-left: 3px solid var(--col-input); background: color-mix(in srgb, var(--col-input) 6%, transparent); border-radius: 0 10px 10px 0; color: color-mix(in srgb, var(--text) 85%, var(--col-input)); }
+.doc-md blockquote p { margin: 0; }
+.doc-md blockquote strong:first-child { color: var(--col-input); }
+.doc-md .doc-table { overflow-x: auto; border: 1px solid color-mix(in srgb, var(--overlay-ink) 8%, transparent); border-radius: 10px; }
+.doc-md table { border-collapse: collapse; width: 100%; font-size: 13.5px; line-height: 1.55; }
+.doc-md th, .doc-md td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.doc-md th { background: color-mix(in srgb, var(--overlay-ink) 4%, transparent); font-weight: 600; color: var(--text); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.doc-md tr:last-child td { border-bottom: 0; }
+.doc-md td code { font-size: 12px; }
+
+/* ----- popup-menu / toast ----- */
+.popup-menu { position: absolute; z-index: 30; background: var(--side-2); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.35); padding: 4px; font-size: 13px; min-width: 230px; }
+.popup-menu-item { width: 100%; display: flex; gap: 8px; align-items: center; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; }
+.popup-menu-item:hover, .popup-menu-item:focus-visible { background: color-mix(in srgb, var(--accent) 16%, transparent); outline: none; }
+.popup-menu-item[aria-disabled='true'] { color: var(--muted); cursor: default; }
+.popup-menu-item[aria-disabled='true']:hover { background: transparent; }
+.popup-menu-hint { margin-left: auto; color: var(--muted); font-size: 11px; }
+.popup-menu-sep { height: 1px; margin: 4px 2px; background: var(--line); }
+.toast { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 50; background: var(--tooltip-bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 13px; box-shadow: 0 10px 28px rgba(0,0,0,.4); display: flex; gap: 8px; align-items: center; }
+.toast svg { color: var(--col-done); }
+
+/* ----- узкое окно (общее для вариантов 1 и 2) ----- */
+@container docs (max-width: 1100px) {
+  .docs-body { padding: 28px 32px 64px; }
+}
+@container docs (max-width: 820px) {
+  .docs-keys { display: none; }
+  .docs-row .docs-chip, .docs-hit .docs-chip { display: none; }
+  .docs-path .src, .docs-path .src + .sep { display: none; }
+  .docs-body, .docs-start { padding: 24px 20px 48px; }
+}
+
+/* ----- состояние «Вход» (не часть окна; показывает, откуда оно открывается) ----- */
+.dv.entry { max-width: 100%; border-radius: 0; box-shadow: none; background: var(--frame); }
+.en-app { flex: 1; min-height: 0; display: grid; grid-template-columns: 72px 260px minmax(0, 1fr); background: var(--frame); }
+.en-rail { display: flex; flex-direction: column; align-items: center; padding: 22px 0; gap: 8px; border-right: 1px solid var(--line); }
+.en-icon { position: relative; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 12px; background: transparent; color: var(--muted); }
+.en-icon:hover { color: var(--text); background: var(--side-2); }
+.en-icon.target { color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.en-n { display: inline-grid; place-items: center; min-width: 18px; height: 18px; border-radius: 9px; background: var(--col-input); color: #1e1d1b; font-size: 11px; font-weight: 700; padding: 0 5px; }
+.en-icon .en-n { position: absolute; right: -6px; top: -6px; }
+.en-side { background: var(--side); border-right: 1px solid var(--line); }
+.en-side h2 { margin: 0; padding: 22px 20px 18px; font-size: 20px; font-weight: 600; border-bottom: 1px solid var(--line); }
+.en-proj { padding: 14px 20px; border-left: 3px solid transparent; }
+.en-proj.on { background: var(--side-2); border-left-color: var(--accent); }
+.en-proj .nm { font-size: 16px; font-weight: 500; }
+.en-proj .sub { color: var(--muted); font: 13px var(--font-mono); margin-top: 2px; }
+.en-main { display: flex; flex-direction: column; min-width: 0; }
+.en-main header { padding: 24px 32px 0; border-bottom: 1px solid var(--line); }
+.en-main h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+.en-tabs { display: flex; gap: 32px; margin-top: 22px; }
+.en-tab { color: var(--muted); font-size: 16px; padding: 0 0 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; display: inline-flex; gap: 8px; align-items: center; }
+.en-tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.en-tab i { font-style: normal; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--chip); color: var(--text); font-size: 11px; line-height: 18px; text-align: center; }
+.en-tab.gone { text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: var(--danger); border: 1px dashed var(--chip); border-bottom-color: transparent; border-radius: 8px 8px 0 0; padding: 0 10px 14px; margin-top: -4px; opacity: .85; }
+.en-gone { display: inline-flex; align-items: flex-start; gap: 4px; }
+.en-board { display: flex; gap: 20px; padding: 28px 32px 0; }
+.en-col { flex: 0 0 240px; background: var(--side); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 220px; }
+.en-col-h { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.en-col-h .n { margin-left: auto; color: var(--muted); font-weight: 400; }
+.en-card { height: 64px; border-radius: 10px; background: var(--card); }
+.en-card.s { height: 44px; opacity: .7; }
+.en-legend { margin: 26px 32px 0; max-width: 640px; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.en-legend p { margin: 0; color: var(--subtle); display: flex; gap: 10px; align-items: flex-start; line-height: 1.5; }
+.en-legend p b { flex-shrink: 0; margin-top: 2px; }
+.en-tab .en-n { margin-left: 4px; }
+@container docs (max-width: 900px) { .en-app { grid-template-columns: 72px minmax(0, 1fr); } .en-side { display: none; } .en-board { display: none; } }
+
+/* ===== Вариант 1: правая колонка — только оглавление markdown; у остального просмотр на всю ширину ===== */
+.docs-grid.with-toc { grid-template-columns: 290px minmax(0, 1fr) 230px; }
+.docs-toc-pop { display: none; }
+.v1-more { display: none; }
+.docs-pane > .docs-status { border-top: 1px solid var(--line); }
+@container docs (max-width: 1100px) {
+  .docs-grid.with-toc { grid-template-columns: 290px minmax(0, 1fr); }
+  .docs-toc { display: none; }
+  .docs-toc-pop.open { display: block; position: absolute; right: 12px; top: 54px; z-index: 20; width: 250px; max-height: 60%; overflow-y: auto; background: var(--side-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 12px 8px; box-shadow: 0 12px 30px rgba(0,0,0,.4); }
+  .docs-toc-pop h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+  .docs-toc-pop a { display: block; color: var(--subtle); text-decoration: none; padding: 5px 10px; border-left: 2px solid var(--line); font-size: 13px; }
+  .docs-toc-pop a.l3 { padding-left: 22px; }
+  .docs-toc-pop a.on { border-left-color: var(--accent); color: var(--text); }
+}
+@container docs (max-width: 820px) {
+  .docs-grid, .docs-grid.with-toc { grid-template-columns: 230px minmax(0, 1fr); }
+  .docs-status .opt { display: none; }
+  .v1-more { display: grid; }
+  .docs-ctl.acts, .vsep.acts { display: none; }
+  .docs-seg button { padding: 3px 7px; }
+}
+
+</style>
+</head>
+<body>
+<script>
+/* ===== Общая часть макета: иконки, данные, состояния, просмотрщики. Данные выдуманы. ===== */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------- иконки (14/18 px, штрих 1.8 — как docsIcons.tsx; новые помечены «новая») ---------- */
+const FILE = '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>';
+const P = {
+  file: FILE,
+  md: FILE.replace('M14 3v5h5', 'M14 3v5h5M9 13h6M9 17h4'),
+  code: FILE.replace('M14 3v5h5', 'M14 3v5h5M10.2 12.4 8.6 14l1.6 1.6M13.8 12.4l1.6 1.6-1.6 1.6'),
+  cfg: FILE.replace('M14 3v5h5', 'M14 3v5h5M10.4 11.6c-1 0-1.3.4-1.3 1.2v.5c0 .6-.4 1-1 1.2.6.2 1 .6 1 1.2v.5c0 .8.3 1.2 1.3 1.2M13.6 11.6c1 0 1.3.4 1.3 1.2v.5c0 .6.4 1 1 1.2-.6.2-1 .6-1 1.2v.5c0 .8-.3 1.2-1.3 1.2'),
+  txt: FILE.replace('M14 3v5h5', 'M14 3v5h5M9 12h6M9 15h6M9 18h4'),
+  html: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.4 3 14.6 0 18M12 3c-3 3.4-3 14.6 0 18"/>',
+  img: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
+  pdf: FILE.replace('M14 3v5h5', 'M14 3v5h5M8.6 12.4h6.8v5.2H8.6z'),
+  bin: FILE.replace('M14 3v5h5', 'M14 3v5h5M10 12.4v4.8M13.6 12.4h1.8v4.8h-1.8z'),
+  key: '<circle cx="8" cy="15.5" r="3.6"/><path d="M10.6 13 20 3.6M16.4 7.2l2.6 2.6M13.8 9.8l1.8 1.8"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  chev: '<path d="M9 6l6 6-6 6"/>',
+  back: '<path d="M15 18l-6-6 6-6"/>',
+  forward: '<path d="M9 6l6 6-6 6"/>',
+  up: '<path d="M6 15l6-6 6 6"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
+  toc: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  external: '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>',
+  close: '<path d="M18 6L6 18M6 6l12 12"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  reveal: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5 12 16l2.5-2.5"/>',
+  doc: FILE.replace('M14 3v5h5', 'M14 3v5h5M9 13h6M9 17h4'),
+  branch: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10c0 4-6 3-10 6"/>',
+  /* новые */
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  fit: '<path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4"/>',
+  more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+  warn: '<path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.5v.01"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  findin: '<path d="M4 6h9M4 11h5M4 16h7"/><circle cx="16" cy="14" r="3.6"/><path d="M21 19l-2.8-2.8"/>',
+  wand: '<path d="M4 20 15 9M14 4l1.2 2.3L17.5 7.5l-2.3 1.2L14 11l-1.2-2.3L10.5 7.5l2.3-1.2zM19 13l.7 1.3L21 15l-1.3.7L19 17l-.7-1.3L17 15l1.3-.7z"/>'
+};
+const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n]}</svg>`;
+const icS = (n) => ic(n, 's');
+
+/* ---------- виды файлов: иконка, оттенок (токены темы), подпись ---------- */
+const KIND = {
+  md: { icon: 'md', tint: 'var(--accent)', label: 'Markdown' },
+  code: { icon: 'code', tint: 'var(--col-ready)', label: 'Код' },
+  cfg: { icon: 'cfg', tint: 'var(--col-input)', label: 'Конфигурация' },
+  html: { icon: 'html', tint: 'var(--col-progress)', label: 'HTML' },
+  img: { icon: 'img', tint: 'var(--col-done)', label: 'Картинка' },
+  pdf: { icon: 'pdf', tint: 'var(--danger)', label: 'PDF' },
+  bin: { icon: 'bin', tint: 'var(--col-backlog)', label: 'Бинарный файл' },
+  txt: { icon: 'txt', tint: 'var(--muted)', label: 'Текст' },
+  env: { icon: 'key', tint: 'var(--col-input)', label: 'Переменные окружения' }
+};
+
+/* ---------- файлы проекта (список сокращён; в приложении их 585). Флаги: n — новый, m — изменён, l — симлинк, o — наружу ---------- */
+const F = (p, k, size, t, f = '', x = {}) => ({ p, k, size, t, f, ...x });
+const FILES = [
+  F('.env', 'env', '214 Б', '12.09'), F('.env.example', 'cfg', '96 Б', '12.09'), F('.gitignore', 'txt', '312 Б', '02.09'),
+  F('.github/pull_request_template.md', 'md', '1,8 КБ', '18.09'), F('.github/workflows/ci.yml', 'cfg', '2,1 КБ', '02.09'),
+  F('AGENTS.md', 'md', '8,2 КБ', 'вчера', 'l', { link: 'CLAUDE.md' }), F('CLAUDE.md', 'md', '8,2 КБ', 'вчера'),
+  F('LICENSE', 'txt', '11 КБ', '01.07'), F('README.md', 'md', '4,1 КБ', '18.09'),
+  F('notes.txt', 'txt', '—', '', 'lo', { v: 'outside', link: '../../notes/todo.txt' }),
+  F('package.json', 'cfg', '1,4 КБ', '21.09'), F('pnpm-lock.yaml', 'cfg', '212 КБ', '21.09'), F('tsconfig.base.json', 'cfg', '0,8 КБ', '01.07'),
+  F('apps/desktop/electron-builder.yml', 'cfg', '3,4 КБ', '21.09'), F('apps/desktop/package.json', 'cfg', '2,6 КБ', '21.09'),
+  F('apps/desktop/resources/icon.icns', 'bin', '412 КБ', '01.07', '', { v: 'binary' }), F('apps/desktop/resources/icon.png', 'img', '38 КБ', '01.07'),
+  F('apps/desktop/src/main/docs.ts', 'code', '5,1 КБ', 'вчера', 'm'), F('apps/desktop/src/main/docs.test.ts', 'code', '6,0 КБ', 'вчера', 'm'),
+  F('apps/desktop/src/main/docs-view.ts', 'code', '5,6 КБ', '14:32', 'n'), F('apps/desktop/src/main/index.ts', 'code', '71 КБ', 'вчера', 'm'),
+  F('apps/desktop/src/renderer/index.html', 'html', '0,9 КБ', '10.09'),
+  F('apps/desktop/src/renderer/src/DocsModal.tsx', 'code', '24 КБ', 'вчера', 'm'), F('apps/desktop/src/renderer/src/DocsTree.tsx', 'code', '11 КБ', 'вчера'),
+  F('apps/desktop/src/renderer/src/logos/orca.svg', 'img', '1,2 КБ', '10.09'), F('apps/desktop/src/renderer/src/styles.css', 'code', '188 КБ', 'вчера', 'm'),
+  F('apps/desktop/src/shared/ipc.ts', 'code', '48 КБ', 'вчера', 'm'),
+  F('docs/architecture.md', 'md', '38 КБ', '14:32', 'm'), F('docs/nested-kanban.md', 'md', '12 КБ', 'вчера', 'm'),
+  F('docs/assets/processes.png', 'img', '184 КБ', '10.09'), F('docs/assets/board-4k.png', 'img', '14 МБ', '05.09', '', { v: 'bigimg' }),
+  F('docs/assets/spec.pdf', 'pdf', '1,1 МБ', '05.09'), F('docs/investigations/trace.log', 'txt', '3,4 МБ', '03.09', '', { v: 'big' }),
+  F('fixtures/export-1251.csv', 'txt', '27 КБ', '03.09', '', { v: 'notutf8' }),
+  F('packages/cli/bin/orca-board.js', 'code', '64 КБ', '21.09'), F('packages/core/src/store.ts', 'code', '142 КБ', 'вчера'),
+  F('site/index.html', 'html', '1,2 КБ', '17.09'),
+  F('skills/coordinator.md', 'md', '23 КБ', '15.09'), F('skills/worker.md', 'md', '11 КБ', '15.09')
+];
+const DIR_COUNT = { '.github': 4, 'apps/desktop': 326, 'apps/desktop/resources': 6, 'apps/desktop/src': 318, 'apps/desktop/src/main': 71, 'apps/desktop/src/renderer': 201, 'apps/desktop/src/renderer/src': 188, 'apps/desktop/src/shared': 14, docs: 125, 'docs/assets': 9, 'docs/investigations': 11, fixtures: 9, packages: 80, 'packages/cli': 14, 'packages/core': 66, site: 6, skills: 5 };
+const TASKS = [
+  { id: 't1', title: 'Уведомления о вопросах в трее', st: 'В работе', color: 'var(--col-progress)', files: [F('docs/notifications.md', 'md', '6 КБ', '14:50', 'n'), F('docs/architecture.md', 'md', '38 КБ', '14:41', 'm')] },
+  { id: 't2', title: 'Редизайн окна «Документы»', st: 'На ревью', color: 'var(--col-review)', files: [F('docs/mockups/docs-viewer/README.md', 'md', '9 КБ', '13:10', 'n')] }
+];
+const TOTAL = 585;
+const FILE_OF = (p) => FILES.find((f) => f.p === p) || TASKS.flatMap((t) => t.files).find((f) => f.p === p) || { p, k: 'txt', size: '—', t: '', f: '' };
+const nameOf = (p) => p.slice(p.lastIndexOf('/') + 1);
+const dirOf = (p) => p.slice(0, p.lastIndexOf('/') + 1);
+const byName = (a, b) => a.localeCompare(b, 'ru', { numeric: true, sensitivity: 'base' });
+const viewOf = (f) => f.v || { md: 'md', code: 'code', cfg: 'code', txt: 'code', env: 'code', html: 'html', img: 'image', pdf: 'pdf', bin: 'binary' }[f.k];
+const OPENABLE = (f) => /\.(png|jpe?g|webp|gif|avif|svg|md|markdown|html?|pdf)$/i.test(f.p) && !f.f.includes('o');
+const extOf = (p) => { const m = /\.([^./]+)$/.exec(p); return m ? m[1].toLowerCase() : ''; };
+const LANG = { ts: 'TypeScript', tsx: 'TypeScript JSX', js: 'JavaScript', json: 'JSON', yml: 'YAML', css: 'CSS', html: 'HTML', md: 'Markdown', txt: 'Обычный текст', svg: 'SVG', png: 'PNG', csv: 'CSV', log: 'Лог', icns: 'ICNS', pdf: 'PDF', env: 'Переменные окружения', example: 'Переменные окружения', gitignore: 'Правила git' };
+const langOf = (f) => (f.k === 'env' ? LANG.env : LANG[extOf(f.p)] || 'Обычный текст');
+const timeFull = (t) => (/^\d\d:\d\d$/.test(t) ? `сегодня ${t}` : t || '—');
+
+/* ---------- дерево: папки сверху, цепочка из одной папки схлопывается (docTree.ts → buildTree) ---------- */
+function buildTree(files) {
+  const root = { dirs: new Map(), files: [] };
+  for (const f of files) {
+    const parts = f.p.split('/'); let cur = root;
+    for (const seg of parts.slice(0, -1)) { if (!cur.dirs.has(seg)) cur.dirs.set(seg, { dirs: new Map(), files: [] }); cur = cur.dirs.get(seg); }
+    cur.files.push(f);
+  }
+  const conv = (raw, prefix) => {
+    const dirs = [...raw.dirs.entries()].sort(([a], [b]) => byName(a, b)).map(([name, sub]) => {
+      let label = name, path = prefix + name, node = sub;
+      while (node.files.length === 0 && node.dirs.size === 1) { const [cn, c] = [...node.dirs.entries()][0]; label += '/' + cn; path += '/' + cn; node = c; }
+      const children = conv(node, path + '/');
+      const count = (T[S].mdOnly ? undefined : DIR_COUNT[path]) ?? children.reduce((n, c) => n + (c.kind === 'dir' ? c.count : 1), 0);
+      return { kind: 'dir', name: label, path, children, count };
+    });
+    const fl = raw.files.map((f) => ({ kind: 'file', name: nameOf(f.p), f })).sort((a, b) => byName(a.name, b.name));
+    return [...dirs, ...fl];
+  };
+  return conv(root, '');
+}
+const chainLabel = (n) => { const a = n.split('/'); return a.length > 3 ? `${a[0]}/${a[1]}/…/${a[a.length - 1]}` : n; };
+const ancestors = (p) => { const a = p.split('/').slice(0, -1); return a.map((_, i) => a.slice(0, i + 1).join('/')); };
+
+/* ---------- поиск по пути (docTree.ts → matchPath), упрощённо ---------- */
+function mergeR(r) { const s = [...r].sort((a, b) => a[0] - b[0]); const o = []; for (const x of s) { const l = o[o.length - 1]; if (l && x[0] <= l[1]) l[1] = Math.max(l[1], x[1]); else o.push([x[0], x[1]]); } return o; }
+function matchPath(path, q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean); if (!words.length) return null;
+  const low = path.toLowerCase(), ns = path.lastIndexOf('/') + 1; let score = 0; const rg = [];
+  for (const w of words) {
+    let i = low.indexOf(w, ns); if (i >= 0) { score += 3; rg.push([i, i + w.length]); continue; }
+    i = low.indexOf(w); if (i >= 0) { score += 2; rg.push([i, i + w.length]); continue; }
+    let p = ns; const rs = []; for (const ch of w) { const at = low.indexOf(ch, p); if (at < 0) return null; rs.push([at, at + 1]); p = at + 1; } score += 1; rg.push(...rs);
+  }
+  return { score, ranges: mergeR(rg) };
+}
+function marked(text, ranges, off = 0) {
+  let out = '', last = 0;
+  for (const [a, b] of ranges) { const s = Math.max(a - off, 0), e = Math.min(b - off, text.length); if (e <= s) continue; out += esc(text.slice(last, s)) + '<b>' + esc(text.slice(s, e)) + '</b>'; last = e; }
+  return out + esc(text.slice(last));
+}
+
+/* ---------- образцы содержимого ---------- */
+const CODE_TS = `import { open, stat } from 'node:fs/promises'
+import { DOC_SNIFF_BYTES, DOC_TEXT_MAX_BYTES, docKindOf } from '../shared/docs-view'
+import type { DocView } from '../shared/ipc'
+import { OrcaError } from './i18n'
+import { resolveProjectPath } from './project-files'
+
+/**
+ * Просмотр файла проекта. Заглушки (бинарный, слишком большой, не UTF-8) — это
+ * обычный результат, а не ошибка: человек выбрал файл и видит причину.
+ */
+export async function viewDoc(root: string, rel: string): Promise<DocView> {
+  // единственный резолвер путей: \`..\`, симлинки наружу и \`.git\` отсекаются здесь
+  const abs = await resolveProjectPath(root, rel)
+  const info = await stat(abs)
+  if (!info.isFile()) throw new OrcaError('files.notFile')
+
+  const { kind, mime } = docKindOf(rel)
+  const base = { size: info.size, mtime: info.mtimeMs, openable: isOpenable(rel, abs) }
+  if (kind === 'pdf') return { ...base, kind, stub: 'pdf' }
+  if (kind === 'image' || kind === 'html') return { ...base, kind, mime }
+  if (info.size > DOC_TEXT_MAX_BYTES) return { ...base, kind, stub: 'tooBig' }
+
+  const handle = await open(abs, 'r')
+  try {
+    // читаем не больше лимита + 1 байт: файл мог вырасти между stat и read
+    const buf = Buffer.alloc(Math.min(info.size, DOC_TEXT_MAX_BYTES) + 1)
+    const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+    const bytes = buf.subarray(0, bytesRead)
+    if (bytesRead > DOC_TEXT_MAX_BYTES) return { ...base, kind, stub: 'tooBig' }
+    if (bytes.subarray(0, DOC_SNIFF_BYTES).includes(0)) return { ...base, kind: 'binary', stub: 'binary' }
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+      return { ...base, kind, text: text.replace(/^\\uFEFF/, '') }
+    } catch {
+      return { ...base, kind, stub: 'notUtf8' }
+    }
+  } finally {
+    await handle.close()
+  }
+}
+
+function isOpenable(rel: string, abs: string): boolean {
+  // расширение проверяем и по пути, и по realpath: \`a.png → run.sh\` не должен открыться
+  return SHOWCASE_FILE_TYPES[extOf(rel)] !== undefined && SHOWCASE_FILE_TYPES[extOf(abs)] !== undefined
+}`;
+const SAMPLES = {
+  json: `{\n  "name": "@orca-board/desktop",\n  "version": "0.14.2",\n  "private": true,\n  "main": "out/main/index.js",\n  "scripts": {\n    "dev": "electron-vite dev",\n    "build": "electron-vite build",\n    "test": "node --test src/main/*.test.ts src/renderer/src/*.test.ts"\n  },\n  "dependencies": {\n    "dompurify": "^3.2.0",\n    "marked": "^15.0.0",\n    "react": "^19.0.0"\n  }\n}`,
+  yml: `name: ci\non:\n  pull_request:\n    branches: [develop, 'release/**', 'hotfix/**']\njobs:\n  quality:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: pnpm/action-setup@v4\n      - run: pnpm install --frozen-lockfile\n      - run: pnpm verify`,
+  env: `# локальные настройки, в git не попадают\nORCA_SOCKET=/tmp/orca-dev.sock\nORCA_USER_DATA=/tmp/orca-dev-data\nDEMO_API_TOKEN=xxxxxxxxxxxxxxxxxxxx`,
+  txt: `MIT License\n\nCopyright (c) 2026 orca-board contributors\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software…`,
+  css: `.docs-modal {\n  width: min(1480px, calc(100vw - 48px));\n  height: calc(100vh - 48px);\n  background: var(--page);\n  border-radius: 18px;\n  overflow: hidden;\n  container: docs / inline-size;\n}\n.docs-grid {\n  display: grid;\n  grid-template-columns: 290px minmax(0, 1fr);\n}`
+};
+const MD_SRC = `# Архитектура orca-board
+
+Все агенты — дочерние процессы приложения. Никакого API: агент логинится сам.
+CLI \`orca-board\` — тонкий клиент к сокету приложения.
+
+## Процессы
+
+![Схема процессов](assets/processes.png)
+
+- Сокет: \`$ORCA_SOCKET\`, иначе \`~/.orca-board/orca.sock\`.
+- Каждый воркер работает в своём **git worktree** на ветке \`orca/<task-id>\`.
+
+## Модель
+
+\`Task { id, title, spec, status, deps[], runId?, roleId, agent }\`
+
+### Роли и колонки
+
+| Колонка | kind | Кто двигает |
+|---|---|---|
+| Бэклог | \`backlog\` | человек, координатор |
+| В работе | \`progress\` | \`startDispatch\` |
+
+## IPC
+
+Типы — [shared/ipc.ts](../apps/desktop/src/shared/ipc.ts), глобальные
+задачи — [nested-kanban.md](nested-kanban.md), раньше было
+в [старом плане](old-plan.md).`;
+const HTML_SRC = `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>orca-board — сайт</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">
+  <style>
+    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #26302b; }
+    .hero { padding: 56px 32px; background: #e8efe9; }
+    .hero h1 { margin: 0 0 8px; font-size: 34px; }
+    .cta { display: inline-block; margin-top: 16px; padding: 10px 20px;
+           border-radius: 999px; background: #26302b; color: #fff; }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <h1>Доска для агентов</h1>
+    <p>Планируйте, запускайте и проверяйте работу Claude Code.</p>
+    <a class="cta" href="#start">Начать</a>
+  </section>
+</body>
+</html>`;
+const HTML_PREVIEW = HTML_SRC.replace(/<link[^>]*>\n?\s*/, '').replace('<head>', `<head>\n<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`);
+
+function processSVG() {
+  const box = (x, y, w, h, fill, t1, t2) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="18" fill="${fill}" stroke="#2b2a28" stroke-width="3"/><text x="${x + w / 2}" y="${y + h / 2 - (t2 ? 4 : -8)}" text-anchor="middle" font-weight="600">${t1}</text>${t2 ? `<text x="${x + w / 2}" y="${y + h / 2 + 28}" text-anchor="middle" font-size="19" fill="#5a5850">${t2}</text>` : ''}`;
+  const arrow = (x1, y1, x2, y2) => `<path d="M${x1} ${y1}L${x2} ${y2}" stroke="#2b2a28" stroke-width="3" fill="none" marker-end="url(#ah)"/>`;
+  return `<svg class="pic" viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Схема процессов orca-board: Electron main, PTY воркеров и renderer"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2b2a28"/></marker></defs><rect width="1280" height="800" fill="#f6f5f1"/><g font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="27" fill="#2b2a28"><text x="56" y="84" font-size="36" font-weight="700">Процессы orca-board</text>${box(470, 170, 340, 130, '#dfe9e2', 'Electron main', 'store · сокет · git')}${box(60, 170, 280, 130, '#e7e3f0', 'renderer', 'React · xterm.js')}${box(940, 170, 280, 130, '#f4e6d4', 'CLI orca-board', 'клиент сокета')}${arrow(340, 235, 470, 235)}${arrow(940, 235, 810, 235)}${arrow(640, 300, 640, 440)}${box(110, 470, 300, 130, '#e4ebf3', 'PTY: координатор', 'claude')}${box(490, 470, 300, 130, '#e4ebf3', 'PTY: воркер #12', 'worktree ../wt/task-12')}${box(870, 470, 300, 130, '#e4ebf3', 'PTY: воркер #13', 'worktree ../wt/task-13')}${arrow(560, 440, 260, 470)}${arrow(640, 440, 640, 470)}${arrow(720, 440, 1020, 470)}<text x="56" y="720" font-size="22" fill="#5a5850">Все агенты — дочерние процессы приложения. Приложение — единственный владелец состояния.</text></g></svg>`;
+}
+
+/* markdown-статья (образец «Документов»): относительная картинка, ссылка на .ts, ссылка на битый путь */
+const MD_HTML = () => `<h1>Архитектура orca-board</h1>
+<p>Все агенты — дочерние процессы приложения. Никакого API: агент логинится сам. CLI <code>orca-board</code> — тонкий клиент к сокету приложения; его вызывают агенты через свой Bash.</p>
+<h2 id="h-proc">Процессы</h2>
+<figure>${processSVG().replace('class="pic"', '')}<figcaption>${icS('img')} assets/processes.png — относительная картинка из проекта</figcaption></figure>
+<ul><li>Сокет: <code>$ORCA_SOCKET</code>, иначе <code>~/.orca-board/orca.sock</code>.</li><li>Каждый воркер работает в своём <strong>git worktree</strong> на ветке <code>orca/&lt;task-id&gt;</code>.</li></ul>
+<h2 id="h-model">Модель</h2>
+<p><code>Task { id, title, spec, status, deps[], runId?, roleId, agent }</code> — <code>status</code> это id колонки доски, не фиксированный enum.</p>
+<h3 id="h-cols">Роли и колонки</h3>
+<div class="doc-table"><table><thead><tr><th>Колонка</th><th>kind</th><th>Кто двигает</th></tr></thead><tbody><tr><td>Бэклог</td><td><code>backlog</code></td><td>человек, координатор</td></tr><tr><td>В работе</td><td><code>progress</code></td><td><code>startDispatch</code></td></tr><tr><td>Ревью</td><td><code>review</code></td><td>воркер: <code>orca-board done</code></td></tr></tbody></table></div>
+<blockquote><p><strong>Важно.</strong> Колонка с <code>kind=done</code> обязана быть ровно одна: по ней считается <code>doneAt</code>.</p></blockquote>
+<h2 id="h-runs">Прогоны</h2>
+<div class="doc-code"><div class="doc-code-head"><span>bash</span><button class="doc-copy" data-act="copy-code">Копировать</button></div><pre><code># координатор: завести подзадачу и дождаться результата
+orca-board task create --title "Фикс CSV-экспорта" --role worker
+orca-board check --wait --types done</code></pre></div>
+<h2 id="h-ipc">IPC</h2>
+<p>Типы — <a data-open="apps/desktop/src/shared/ipc.ts" class="code">shared/ipc.ts</a>, глобальные задачи — <a data-open="docs/nested-kanban.md">nested-kanban.md</a>. Раньше всё лежало в <a data-open="__missing">старом плане</a>. Документация Electron: <a class="ext">contextBridge</a>.</p>`;
+const TOC = [['h-proc', 'Процессы', 2], ['h-model', 'Модель', 2], ['h-cols', 'Роли и колонки', 3], ['h-runs', 'Прогоны', 2], ['h-ipc', 'IPC', 2]];
+const tocHTML = () => TOC.map(([id, t, l], i) => `<a href="#${id}" data-toc="${id}" class="${l === 3 ? 'l3' : ''} ${i === 1 ? 'on' : ''}">${t}</a>`).join('');
+
+/* подсветка — опция (решение 4): только для TS/JS, без внешних зависимостей в макете */
+function highlight(src) {
+  const re = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*)|('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)|\b(import|from|export|async|function|const|let|if|return|throw|await|new|type|try|catch|finally|void)\b|\b(\d+)\b|\b([A-Z][A-Za-z0-9]+)\b/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(src))) { out += esc(src.slice(last, m.index)); const c = m[1] ? 'c' : m[2] ? 's' : m[3] ? 'k' : m[4] ? 'n' : 't'; out += `<span class="tk-${c}">${esc(m[0])}</span>`; last = re.lastIndex; }
+  return out + esc(src.slice(last));
+}
+
+/* ---------- состояния ---------- */
+const CODEP = 'apps/desktop/src/main/docs-view.ts', MDP = 'docs/architecture.md';
+const T = {
+  entry: { g: 'Вход', l: 'Вход в окно', cur: null, note: 'Вкладки «Файлы» больше нет: в проекте остались Канбан, Терминалы, Статистика, О проекте. Единственный вход — кнопка «Документы» в левой панели (она уже была). Нажмите её — откроется окно.' },
+  tree: { g: 'Дерево', l: 'Дерево', cur: null, note: 'Дерево со смешанными типами: иконки по виду файла, <b>.env</b> и другие точечные файлы, симлинк <b>AGENTS.md</b> (значок цепочки) и симлинк наружу <b>notes.txt</b> (красный значок). Файл не выбран — стартовый экран. Клик по любому файлу открывает его просмотр. Содержимое в макете — образец для типа файла.' },
+  search: { g: 'Дерево', l: 'Поиск ⌘P', cur: CODEP, q: 'doc', note: 'Поиск по всему проекту. Выдача ограничена: в макете 8 строк, в приложении 100 — дальше «ещё N, уточните запрос». Ниже — совпадения в тексте открытого файла. Введите свой запрос — фильтр живой. ↑ ↓ Enter Esc работают.' },
+  recent: { g: 'Дерево', l: 'Недавние', cur: MDP, mode: 'recent', note: 'Недавние — плоский список по времени изменения, любые типы; в приложении не больше 200 строк.' },
+  truncated: { g: 'Дерево', l: 'Список обрезан', cur: null, trunc: true, note: 'В проекте больше 100 000 файлов: показаны первые 100 000, баннер объясняет, что делать. Поиск ⌘P работает по показанным.' },
+  code: { g: 'Просмотр', l: 'Код', cur: CODEP, note: 'Код: моноширинный текст без переноса, номера строк, ⌘F, строка статуса. Подсветка синтаксиса — опция (решение 4), включается переключателем «Подсветка» справа в панели макета.' },
+  find: { g: 'Просмотр', l: 'Код + ⌘F', cur: CODEP, find: true, fq: 'stub', note: 'Поиск ⌘F по тексту файла: счётчик «2 из 5», ↑ ↓ или Enter / Shift+Enter переходят по совпадениям.' },
+  md: { g: 'Просмотр', l: 'Markdown', cur: MDP, note: 'Markdown как сейчас: типографика для чтения, оглавление, относительная картинка из проекта. Ссылка <b>shared/ipc.ts</b> открывает код в том же окне, «старый план» ведёт на несуществующий файл (состояние «Файл не найден»). Переключатель «Документ ⇄ Исходник».' },
+  image: { g: 'Просмотр', l: 'Картинка', cur: 'docs/assets/processes.png', note: 'Картинка (png / svg): «Вписать» по умолчанию, «100 %» — с прокруткой. SVG показывается как картинка, скрипты в нём не исполняются.' },
+  html: { g: 'Просмотр', l: 'HTML', cur: 'site/index.html', note: 'HTML: по умолчанию «Код» (решение 2), «Превью» — изолированный фрейм без сети. Страница из шаблонов Vite/Next в песочнице будет пустой — поэтому не по умолчанию.' },
+  binary: { g: 'Заглушки', l: 'Бинарный', cur: 'apps/desktop/resources/icon.icns', stub: 'binary', note: 'Заглушка: бинарный файл (NUL в первых 8 КБ). «Открыть» нет: приложение не запускает чужие файлы из репозитория — только картинки, md, html, pdf.' },
+  big: { g: 'Заглушки', l: 'Текст > 1 МиБ', cur: 'docs/investigations/trace.log', stub: 'big', note: 'Заглушка: текстовый файл больше 1 МиБ (лимит — решение 5).' },
+  bigimg: { g: 'Заглушки', l: 'Картинка > 10 МиБ', cur: 'docs/assets/board-4k.png', stub: 'bigimg', note: 'Заглушка: картинка больше 10 МиБ. Системой открыть можно — это png.' },
+  pdf: { g: 'Заглушки', l: 'PDF', cur: 'docs/assets/spec.pdf', stub: 'pdf', note: 'PDF: встроенного просмотра нет (решение 3), только «Открыть» приложением системы.' },
+  notutf8: { g: 'Заглушки', l: 'Не UTF-8', cur: 'fixtures/export-1251.csv', stub: 'notutf8', note: 'Заглушка: кодировка не UTF-8 (cp1251, UTF-16). Другие кодировки не угадываем.' },
+  outside: { g: 'Заглушки', l: 'Симлинк наружу', cur: 'notes.txt', stub: 'outside', note: 'Заглушка: симлинк ведёт за пределы проекта — читать не будем. В дереве такой файл виден с красным значком цепочки.' },
+  secret: { g: 'Заглушки', l: '.env скрыт', cur: '.env', stub: 'secret', note: '<span class="dec">Решение 1.</span> По умолчанию .env открывается как любой файл (состояние «Код» → клик по .env). Здесь — альтернатива: содержимое скрыто, пока человек не нажмёт «Показать».' },
+  notfound: { g: 'Ошибки', l: 'Файл не найден', cur: MDP, err: 'notfound', note: 'Ошибка: файла нет (удалён после того, как построили список). Прежний документ остаётся на экране, как в приложении сейчас.' },
+  stale: { g: 'Ошибки', l: 'Приложение устарело', cur: null, err: 'stale', mdOnly: true, note: 'Renderer обновился по HMR, а main/preload — нет. Дерево и markdown работают на старом docs:list, просмотр остальных файлов говорит «перезапустите приложение» вместо падения.' }
+};
+const GROUPS = ['Вход', 'Дерево', 'Просмотр', 'Заглушки', 'Ошибки'];
+
+let S = 'tree', CURP = null;
+const UI = { q: '', kb: 0, mode: 'tree', html: 'code', img: 'fit', md: 'doc', findOpen: false, fq: '', fi: 0, hl: false, toc: true, tocPop: false, errHidden: false, menu: false, drawer: false, palette: false, width: 1480, toast: '' };
+const OPEN = new Set(['apps/desktop', 'docs', 'skills']);
+const HIST = { stack: [], i: -1 };
+let VAR = null;
+const curPath = () => CURP ?? T[S].cur;
+const histPush = () => { HIST.stack = HIST.stack.slice(0, HIST.i + 1); HIST.stack.push({ S, CURP }); HIST.i++; };
+
+function applyDefaults(id, soft = false) {
+  const t = T[id];
+  Object.assign(UI, { html: 'code', img: 'fit', md: 'doc', findOpen: !!t.find, fq: t.fq || '', fi: 0, q: t.q || '', kb: 0, errHidden: false, menu: false, tocPop: false, toast: '' });
+  if (!soft) UI.mode = t.mode || 'tree';
+  UI.palette = VAR.paletteFor ? VAR.paletteFor(id) : false;
+  const p = t.cur; if (p) ancestors(p).forEach((a) => OPEN.add(a));
+}
+function setState(id, push = true) {
+  S = id; CURP = null; applyDefaults(id); if (T[id].cur && VAR.afterOpen) VAR.afterOpen(T[id].cur); if (push) histPush(); sync(); render();
+}
+function openFile(p) {
+  const f = FILE_OF(p);
+  if (p === '__missing') { S = 'notfound'; CURP = null; applyDefaults('notfound', true); UI.errHidden = false; histPush(); VAR.afterOpen && VAR.afterOpen(MDP); sync(); render(); return; }
+  S = viewOf(f); CURP = p; applyDefaults(S, true); UI.q = ''; UI.palette = false; ancestors(p).forEach((a) => OPEN.add(a));
+  VAR.afterOpen && VAR.afterOpen(p); histPush(); sync(); render();
+}
+function nav(d) { const i = HIST.i + d; if (i < 0 || i >= HIST.stack.length) return; HIST.i = i; S = HIST.stack[i].S; CURP = HIST.stack[i].CURP; applyDefaults(S, true); VAR.afterNav && VAR.afterNav(); sync(); render(); }
+function sync() {
+  const w = UI.width === 1480 ? '' : `?w=${UI.width}`;
+  try { history.replaceState(null, '', `${location.pathname}${w}#${S}`); } catch (e) { /* в изолированном фрейме адресная строка недоступна */ }
+  $$('.mk-bar [data-state]').forEach((b) => b.classList.toggle('on', b.dataset.state === S));
+  $$('.mk-bar [data-w]').forEach((b) => b.classList.toggle('on', +b.dataset.w === UI.width));
+  $$('.mk-bar [data-hl]').forEach((b) => b.classList.toggle('on', (b.dataset.hl === '1') === UI.hl));
+  $('#dv').style.setProperty('--w', UI.width + 'px');
+  $('#note').innerHTML = T[S].note;
+}
+
+/* ---------- модель просмотра ---------- */
+function model() {
+  const t = T[S], p = curPath(), f = p ? FILE_OF(p) : null;
+  const m = { S, t, p, f, render: 'start', stub: t.stub || null, err: t.err || null };
+  if (t.err === 'stale') { m.render = 'stale'; return m; }
+  if (!f) return m;
+  if (t.stub) { m.render = 'stub'; m.kind = f.k; m.openable = t.stub === 'pdf' || t.stub === 'bigimg'; return m; }
+  m.kind = f.k; m.openable = OPENABLE(f);
+  if (f.k === 'img') m.render = 'image';
+  else if (f.k === 'md') m.render = UI.md === 'doc' ? 'md' : 'code';
+  else if (f.k === 'html') m.render = UI.html === 'code' ? 'code' : 'preview';
+  else m.render = 'code';
+  m.codeText = f.k === 'md' ? MD_SRC : f.k === 'html' ? HTML_SRC : f.k === 'cfg' && /\.json$/.test(f.p) ? SAMPLES.json : f.k === 'cfg' && /\.ya?ml$/.test(f.p) ? SAMPLES.yml : f.k === 'env' || f.p === '.env.example' ? SAMPLES.env : /\.css$/.test(f.p) ? SAMPLES.css : f.k === 'txt' ? SAMPLES.txt : CODE_TS;
+  m.lines = m.codeText.split('\n').length;
+  m.hlOK = /\.(tsx?|jsx?)$/.test(f.p) || (f.k === 'code' && !/\.css$/.test(f.p));
+  return m;
+}
+/* факты о файле — строка статуса, инспектор */
+function facts(m) {
+  const f = m.f; if (!f) return [];
+  const r = [['Тип', m.render === 'image' ? (extOf(f.p) === 'svg' ? 'SVG' : 'PNG') : langOf(f)]];
+  if (m.render === 'image') r.push(['Размеры', extOf(f.p) === 'svg' ? '240 × 240' : '1280 × 800']);
+  else if (m.render !== 'stub') r.push(['Кодировка', 'UTF-8']);
+  if (m.render === 'code' || m.render === 'preview') r.push(['Строк', m.lines]);
+  if (m.render === 'md') r.push(['Строк', 118], ['Чтение', '≈ 18 мин']);
+  r.push(['Размер', f.size]);
+  if (f.t) r.push(['Изменён', timeFull(f.t)]);
+  return r;
+}
+
+/* ---------- дерево ---------- */
+function fileIcon(f) {
+  const K = KIND[f.k];
+  if (VAR.iconStyle === 'ext') {
+    const e = f.k === 'env' || f.p.startsWith('.env') ? 'ENV' : /^\.git/.test(nameOf(f.p)) ? 'GIT' : { json: '{ }', icns: 'BIN', md: 'MD', yml: 'YML', yaml: 'YML', html: 'HTML', pdf: 'PDF', png: 'PNG', svg: 'SVG', css: 'CSS', csv: 'CSV', log: 'LOG', ts: 'TS', tsx: 'TSX', js: 'JS' }[extOf(f.p)] || 'TXT';
+    return `<span class="ext" style="--tint:${K.tint}" aria-hidden="true">${e}</span>`;
+  }
+  return `<span class="fi" style="--tint:${K.tint}">${icS(K.icon)}</span>`;
+}
+function badge(f) { return f.f.includes('n') ? '<span class="chip docs-chip new">новый</span>' : f.f.includes('m') ? '<span class="chip docs-chip mod">изменён</span>' : ''; }
+function linkGlyph(f) { return f.f.includes('l') ? `<span class="lnk ${f.f.includes('o') ? 'out' : ''}" title="${f.f.includes('o') ? 'Ссылка ведёт за пределы проекта' : 'Символическая ссылка'} → ${esc(f.link || '')}" role="img" aria-label="${f.f.includes('o') ? 'ссылка за пределы проекта' : 'символическая ссылка'}">${icS('link')}</span>` : ''; }
+function fileRow(f, depth, label, spacer = true, source = 'project') {
+  const active = curPath() === f.p && (source === 'project' ? true : true);
+  return `<button class="docs-row file ${active ? 'active' : ''} ${f.f.includes('o') ? 'dim' : ''}" role="treeitem" aria-selected="${active}" style="padding-left:${8 + depth * 16}px" title="${esc(f.p)}${f.link ? ' → ' + esc(f.link) : ''}" data-open="${esc(f.p)}">${spacer ? '<span class="docs-spacer"></span>' : ''}${fileIcon(f)}<span class="docs-nm">${label ?? esc(nameOf(f.p))}</span>${linkGlyph(f)}${badge(f)}<span class="docs-tm">${esc(f.t)}</span></button>`;
+}
+function nodesHTML(list, depth) {
+  return list.map((n) => {
+    if (n.kind === 'file') return fileRow(n.f, depth);
+    const open = OPEN.has(n.path);
+    return `<button class="docs-row dir ${open ? 'open' : ''}" role="treeitem" aria-expanded="${open}" style="padding-left:${8 + depth * 16}px" title="${esc(n.path)}" data-dir="${esc(n.path)}"><svg class="i s docs-chev" viewBox="0 0 24 24" aria-hidden="true">${P.chev}</svg><span class="fi">${icS('folder')}</span><span class="docs-nm">${esc(chainLabel(n.name))}</span><span class="docs-cnt">${n.count.toLocaleString('ru-RU')}</span></button>${open ? nodesHTML(n.children, depth + 1) : ''}`;
+  }).join('');
+}
+const visibleFiles = () => (T[S].mdOnly ? FILES.filter((f) => f.k === 'md') : FILES);
+const projectCount = () => (T[S].mdOnly ? visibleFiles().length : T[S].trunc ? '100 000+' : TOTAL);
+function tasksHTML(q = '') {
+  const items = TASKS.map((t) => ({ t, files: t.files.filter((f) => !q || matchPath(f.p, q)) })).filter((x) => x.files.length);
+  return `<div class="docs-grp">Задачи в работе<span class="n">${items.reduce((n, x) => n + x.files.length, 0)}</span></div>` + (items.length ? items.map(({ t, files }) => `<div class="docs-task-row" title="orca/${t.id}"><span class="docs-dot" style="background:${t.color}"></span><span class="t">${esc(t.title)}</span><span class="st">${t.st}</span></div>${files.map((f) => fileRow(f, 1, esc(f.p), false, t.id)).join('')}`).join('') : '<div class="docs-hint">Нет совпадений</div>');
+}
+const RECENT_LIMIT = 200;
+function recentHTML() {
+  const order = ['14:32', '14:41', '14:50', 'вчера', '21.09', '18.09', '17.09', '15.09', '10.09', '05.09', '03.09', '02.09', '01.07'];
+  const rank = (t) => { const i = order.indexOf(t); return i < 0 ? 99 : i; };
+  const list = [...visibleFiles()].sort((a, b) => rank(a.t) - rank(b.t));
+  return `<div class="docs-grp">Проект<span class="n">${list.length} из ${projectCount()}</span></div>` + list.map((f) => fileRow(f, 0, `${esc(nameOf(f.p))}${f.p.includes('/') ? `<span class="docs-row-dir">${esc(dirOf(f.p))}</span>` : ''}`)).join('') + `<div class="docs-more">Показаны последние <b>${RECENT_LIMIT}</b> файлов. Остальные — в дереве и по <kbd>⌘P</kbd>.</div>`;
+}
+const HIT_LIMIT = 8;
+function textHits(q) {
+  if (!q.trim()) return [];
+  const m = model(); const text = m.render === 'md' ? MD_SRC : m.codeText || CODE_TS; const out = [];
+  text.split('\n').forEach((line, i) => { const at = line.toLowerCase().indexOf(q.trim().toLowerCase()); if (at >= 0) out.push({ line: i + 1, before: line.slice(Math.max(0, at - 18), at), match: line.slice(at, at + q.trim().length), after: line.slice(at + q.trim().length, at + 40) }); });
+  return out;
+}
+function resultsList(q) {
+  const pool = [...visibleFiles(), ...TASKS.flatMap((t) => t.files.filter((f) => !FILES.some((x) => x.p === f.p)))];
+  return pool.flatMap((f) => { const mt = matchPath(f.p, q); return mt ? [{ f, mt }] : []; }).sort((a, b) => b.mt.score - a.mt.score);
+}
+function hitRow(h, i, cls = '') {
+  const ns = h.f.p.lastIndexOf('/') + 1, dir = dirOf(h.f.p);
+  return `<button class="docs-hit ${i === UI.kb ? 'kb' : ''} ${cls}" role="option" aria-selected="${i === UI.kb}" data-open="${esc(h.f.p)}" data-hit="${i}" title="${esc(h.f.p)}"><span class="docs-hit-l1">${fileIcon(h.f)}<span class="docs-nm">${marked(h.f.p.slice(ns), h.mt.ranges, ns)}</span>${linkGlyph(h.f)}${badge(h.f)}<span class="docs-tm">${esc(h.f.t)}</span></span><span class="docs-hit-l2"><span class="p">${dir ? marked(dir, h.mt.ranges) : '/ (корень)'}</span></span></button>`;
+}
+/* содержимое тела дерева: дерево / недавние / результаты поиска — для вариантов 1 и 2 */
+function treeBodyHTML() {
+  const q = UI.q.trim();
+  if (q) {
+    const all = resultsList(q), shown = all.slice(0, HIT_LIMIT), more = all.length - shown.length, th = textHits(q).slice(0, 8);
+    return `<div class="docs-grp">Проект<span class="n">${all.length} из ${projectCount()}</span></div>` + (shown.length ? `<div role="listbox" aria-label="Результаты поиска">${shown.map((h, i) => hitRow(h, i)).join('')}</div>` : '<div class="docs-hint">Нет совпадений</div>')
+      + (more > 0 ? `<div class="docs-more">Ещё <b>${more}</b> ${more % 10 === 1 && more !== 11 ? 'совпадение' : 'совпадений'} — уточните запрос. В приложении выдача ограничена 100 строками.</div>` : '')
+      + (curPath() ? `<div class="docs-grp">В тексте открытого файла${th.length ? `<span class="n">${th.length}</span>` : ''}</div>` + (th.length ? th.map((h) => `<button class="docs-hit" data-textfind="${esc(q)}"><span class="docs-hit-l1 text">${esc(h.before)}<b>${esc(h.match)}</b>${esc(h.after)}</span><span class="docs-hit-l2">${esc(nameOf(curPath()))} · строка ${h.line}</span></button>`).join('') : '<div class="docs-hint">Нет совпадений</div>') : '');
+  }
+  if (UI.mode === 'recent') return recentHTML() + tasksHTML();
+  return `<div class="docs-grp">Проект<span class="n">${projectCount().toLocaleString?.('ru-RU') ?? projectCount()}</span></div><div role="tree" aria-label="Файлы проекта">${nodesHTML(buildTree(visibleFiles()), 0)}</div>` + tasksHTML();
+}
+const truncHTML = () => `<div class="docs-trunc" role="status">${icS('warn')}<span><b>Список обрезан.</b> В проекте больше 100 000 файлов — показаны первые 100 000. Ищите по <kbd>⌘P</kbd> или откройте нужную папку в Finder.</span></div>`;
+/* левая колонка вариантов 1 и 2 */
+function treeColHTML() {
+  const empty = false, q = UI.q.trim();
+  return `<nav class="docs-tree" aria-label="Файлы проекта">
+    <div class="docs-tree-search">${icS('search')}<input data-in="search" value="${esc(UI.q)}" placeholder="Найти файл…  ⌘P" aria-label="Найти файл по пути" autocomplete="off" spellcheck="false">${UI.q ? `<button class="icon-btn sm" data-do="clearq" title="Очистить (Esc)" aria-label="Очистить поиск">${icS('close')}</button>` : ''}</div>
+    ${!q ? `<div class="docs-tree-tools"><span class="docs-seg" role="group" aria-label="Режим списка"><button class="${UI.mode === 'tree' ? 'on' : ''}" aria-pressed="${UI.mode === 'tree'}" data-mode="tree">Папки</button><button class="${UI.mode === 'recent' ? 'on' : ''}" aria-pressed="${UI.mode === 'recent'}" data-mode="recent">Недавние</button></span><span class="docs-grow"></span>${UI.mode === 'tree' ? `<button class="icon-btn sm" data-do="collapse" title="Свернуть всё" aria-label="Свернуть все папки">${icS('toc')}</button>` : ''}</div>` : ''}
+    ${T[S].trunc && !q ? truncHTML() : ''}
+    <div class="docs-tree-body" data-slot="results">${treeBodyHTML()}</div>
+    ${q ? '<div class="docs-tree-foot"><span><kbd>↑</kbd><kbd>↓</kbd> выбрать</span><span><kbd>↵</kbd> открыть</span><span><kbd>Esc</kbd> сбросить</span></div>' : ''}
+  </nav>`;
+}
+
+/* ---------- просмотрщики ---------- */
+function codeHTML(m) {
+  const lines = m.codeText.split('\n'), hl = UI.hl && m.hlOK;
+  return `<div class="docs-code ${hl ? 'hl' : ''}" tabindex="0" role="region" aria-label="Содержимое файла ${esc(nameOf(m.p))}, ${lines.length} строк" data-slot="code"><div class="docs-code-in"><pre class="gutter" aria-hidden="true">${lines.map((_, i) => i + 1).join('\n')}</pre><pre class="src"><code data-find-root>${hl ? highlight(m.codeText) : esc(m.codeText)}</code></pre></div></div>`;
+}
+function errHTML(m) {
+  if (m.err !== 'notfound' || UI.errHidden) return '';
+  return `<div class="docs-err" role="alert">${ic('close')}<div class="docs-grow"><b>Файл не найден: docs/old-plan.md</b><br><span class="muted">Ссылка из architecture.md ведёт на удалённый файл. Остались на странице, на которой были.</span></div><button class="btn-sm xs" data-do="refresh">Обновить список</button><button class="icon-btn" data-do="hideerr" title="Скрыть" aria-label="Скрыть ошибку">${icS('close')}</button></div>`;
+}
+function mdHTML(m) {
+  const others = m.p === MDP ? `<div class="docs-note"><span class="docs-dot" style="background:var(--col-progress)"></span><span class="docs-grow">Этот файл также изменён в задаче <b>«Уведомления о вопросах в трее»</b></span><button class="btn-sm xs" data-open="docs/notifications.md">Открыть версию задачи</button></div>` : '';
+  return `<div class="docs-body" data-slot="mdbody">${errHTML(m)}${others}<article class="docs-article doc-md" data-find-root>${MD_HTML()}</article></div>`;
+}
+function imageHTML(m) {
+  const svg = extOf(m.p) === 'svg';
+  const pic = svg ? `<svg class="pic" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Логотип orca"><rect width="240" height="240" fill="#f6f5f1"/><path d="M40 150c30-70 110-96 160-30-30-14-48 0-60 24-20-24-70-20-100 6z" fill="#2b2a28"/><circle cx="168" cy="108" r="6" fill="#f6f5f1"/></svg>` : processSVG();
+  return `<div class="docs-img ${UI.img}" tabindex="0" role="region" aria-label="Картинка ${esc(nameOf(m.p))}">${pic}</div>`;
+}
+function previewHTML(m) {
+  return `<div class="docs-html"><div class="banner" role="status">${ic('lock', 's')}<span class="grow"><b>Изолированная страница, сеть отключена.</b> Не загружено: <code>fonts.googleapis.com</code> — 1 запрос заблокирован. Файлы с точкой в пути (<code>.env</code>, <code>.git</code>) странице недоступны.</span></div><div class="frame-wrap"><iframe title="Превью ${esc(nameOf(m.p))}" sandbox="" srcdoc="${esc(HTML_PREVIEW)}"></iframe></div></div>`;
+}
+const OPEN_BTN = (primary) => `<button class="btn-sm ${primary ? 'primary' : ''}" data-act="open">${icS('external')}Открыть</button>`;
+function stubHTML(m) {
+  const id = m.stub, f = m.f, K = KIND[f.k];
+  const D = {
+    binary: { icon: 'bin', tint: 'var(--col-backlog)', title: 'Бинарный файл', text: 'Файл не текстовый, поэтому его содержимое не показывается.', open: false },
+    big: { icon: 'txt', tint: 'var(--col-input)', title: 'Файл слишком большой для просмотра', text: 'Текстовые файлы показываются до 1 МиБ, этот весит 3,4 МБ.', open: false },
+    bigimg: { icon: 'img', tint: 'var(--col-input)', title: 'Картинка слишком большая для просмотра', text: 'Картинки показываются до 10 МиБ, эта весит 14 МБ. Откройте её в приложении системы.', open: true },
+    pdf: { icon: 'pdf', tint: 'var(--danger)', title: 'PDF открывается в приложении системы', text: 'Встроенного просмотра PDF нет. Файл откроется программой по умолчанию.', open: true },
+    notutf8: { icon: 'txt', tint: 'var(--col-input)', title: 'Файл не в кодировке UTF-8', text: 'Похоже на Windows-1251. Другие кодировки мы не угадываем, чтобы не показать нечитаемые символы.', open: false },
+    outside: { icon: 'link', tint: 'var(--danger)', title: 'Ссылка ведёт за пределы проекта', text: `${esc(nameOf(m.p))} — символическая ссылка на <code>${esc(f.link)}</code>. Приложение читает только файлы внутри проекта.`, open: false },
+    secret: { icon: 'lock', tint: 'var(--col-input)', title: 'Файл может содержать секреты', text: '<code>.env</code> обычно хранит пароли и токены. Содержимое скрыто, пока вы сами не покажете его.', open: false, reveal: true }
+  }[id];
+  const meta = [`<span class="chip">${esc(id === 'outside' ? 'ссылка' : extOf(f.p).toUpperCase() || K.label)}</span>`, f.size !== '—' ? `<span class="chip">${esc(f.size)}</span>` : '', f.t ? `<span class="chip">изменён ${esc(timeFull(f.t))}</span>` : ''].join('');
+  return `<div class="docs-blank" role="status"><div class="box"><div class="ill" style="--tint:${D.tint}">${ic(D.icon)}</div><h2>${D.title}</h2><p>${D.text}</p><div class="meta">${meta}</div><div class="acts">${D.reveal ? '<button class="btn-sm primary" data-do="showsecret">Показать содержимое</button>' : D.open ? OPEN_BTN(true) : ''}<button class="btn-sm" data-act="reveal">${icS('reveal')}${id === 'outside' ? 'Показать ссылку в Finder' : 'Показать в Finder'}</button><button class="btn-sm" data-act="copy">${icS('copy')}Копировать путь</button></div>${D.open || D.reveal ? '' : '<p class="hint">«Открыть» недоступно: приложение не запускает чужие файлы из репозитория — только картинки, markdown, HTML и PDF.</p>'}</div></div>`;
+}
+function staleHTML() {
+  return `<div class="docs-blank" role="alert"><div class="box"><div class="ill" style="--tint:var(--col-input)">${ic('warn')}</div><h2>Нужно перезапустить приложение</h2><p>Приложение запущено со старой версией main/preload, где ещё нет просмотра файлов проекта. Перезапустите приложение.</p><p class="hint">Дерево и markdown-документы пока работают как раньше.</p></div></div>`;
+}
+function startHTML() {
+  const cards = [['architecture.md', 'docs/', 'Все агенты — дочерние процессы приложения. Никакого API: агент логинится сам…', '14:32 · 38 КБ', MDP], ['nested-kanban.md', 'docs/', 'Глобальные задачи: прогон, подзадачи, ветка фичи, проверки…', 'вчера · 12 КБ', 'docs/nested-kanban.md'], ['README.md', '/ (корень)', 'Доска для агентов Claude Code: планирование, запуск, проверка…', '18.09 · 4 КБ', 'README.md']];
+  return `<section class="docs-start"><h2>Документы orca-board</h2><p class="sub">${T[S].trunc ? 'Показаны первые 100 000 файлов — список обрезан.' : '585 файлов в проекте, 3 изменены задачами в работе.'} Выберите файл слева или нажмите <kbd>⌘P</kbd>.</p><h5>Недавние документы</h5><div class="docs-cards">${cards.map(([n, d, x, f, p]) => `<button class="docs-card" data-open="${p}"><span class="t">${fileIcon(FILE_OF(p))}${n}</span><span class="p">${d}</span><span class="x">${x}</span><span class="f">${icS('clock')}${f}</span></button>`).join('')}</div><p class="muted" style="font-size:12px;margin-top:18px">Здесь только markdown — иначе стартовый экран заполнят .ts. Файлы любых типов — в дереве и по ⌘P.</p></section>`;
+}
+function viewerBody(m) {
+  switch (m.render) {
+    case 'code': return codeHTML(m);
+    case 'md': return mdHTML(m);
+    case 'image': return imageHTML(m);
+    case 'preview': return previewHTML(m);
+    case 'stub': return stubHTML(m);
+    case 'stale': return staleHTML();
+    default: return startHTML();
+  }
+}
+
+/* ---------- кнопки управления просмотром ---------- */
+const seg2 = (ctl, items, val, label) => `<span class="seg2" role="group" aria-label="${label}">${items.map(([v, t, ico]) => `<button class="${val === v ? 'on' : ''}" aria-pressed="${val === v}" data-ctl="${ctl}" data-v="${v}">${ico ? icS(ico) : ''}${t}</button>`).join('')}</span>`;
+const ib = (act, ico, title, extra = '') => `<button class="icon-btn ${extra}" data-do="${act}" title="${title}" aria-label="${title}">${icS(ico)}</button>`;
+function viewCtl(m) {
+  let h = '';
+  if (m.render === 'start' || m.render === 'stale' || m.render === 'stub') return h;
+  if (m.kind === 'md') h += seg2('md', [['doc', 'Документ'], ['src', 'Исходник']], UI.md, 'Вид markdown');
+  if (m.kind === 'html') { h += seg2('html', [['code', 'Код'], ['preview', 'Превью', 'eye']], UI.html, 'Вид HTML'); if (UI.html === 'preview') h += ib('noop', 'refresh', 'Обновить превью'); }
+  if (m.kind === 'img') h += seg2('img', [['fit', 'Вписать', 'fit'], ['actual', '100 %']], UI.img, 'Масштаб картинки');
+  if (m.render === 'code' || m.render === 'md') h += ib('find', 'findin', 'Поиск в файле (⌘F)', UI.findOpen ? 'on' : '');
+  return h;
+}
+function findBarHTML(m) {
+  if (!UI.findOpen || !(m.render === 'code' || m.render === 'md')) return '';
+  return `<div class="docs-find" role="search">${icS('findin')}<input data-in="find" value="${esc(UI.fq)}" placeholder="Найти в файле" aria-label="Найти в тексте файла" autocomplete="off" spellcheck="false"><span class="docs-find-count" data-slot="fcount" aria-live="polite"></span>${ib('fprev', 'up', 'Предыдущее совпадение (⇧↵)')}${ib('fnext', 'down', 'Следующее совпадение (↵)')}${ib('fclose', 'close', 'Закрыть поиск (Esc)')}</div>`;
+}
+function applyFind() {
+  const root = $('[data-find-root]'); const cnt = $('[data-slot="fcount"]'); if (!root) return;
+  const q = UI.fq.trim(); if (!q) { if (cnt) cnt.textContent = ''; return; }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+  const ql = q.toLowerCase(), res = [];
+  for (const n of nodes) {
+    const t = n.nodeValue, tl = t.toLowerCase(); let i = tl.indexOf(ql); if (i < 0) continue;
+    const frag = document.createDocumentFragment(); let last = 0;
+    while (i >= 0) { frag.append(t.slice(last, i)); const mk = document.createElement('mark'); mk.textContent = t.slice(i, i + q.length); frag.append(mk); res.push(mk); last = i + q.length; i = tl.indexOf(ql, last); }
+    frag.append(t.slice(last)); n.replaceWith(frag);
+  }
+  if (res.length) { UI.fi = ((UI.fi % res.length) + res.length) % res.length; res[UI.fi].classList.add('cur'); res[UI.fi].scrollIntoView({ block: 'center', inline: 'nearest' }); }
+  if (cnt) cnt.textContent = res.length ? `${UI.fi + 1} из ${res.length}` : 'Нет совпадений';
+  UI.fcount = res.length;
+}
+function refindOnly() {
+  const m = model(), slot = $('[data-slot="code"]');
+  if (slot && m.render === 'code') slot.outerHTML = codeHTML(m); else if (m.render === 'md') { const a = $('[data-find-root]'); if (a) a.innerHTML = MD_HTML(); }
+  applyFind();
+}
+
+/* ---------- действия ---------- */
+function toast(msg) {
+  UI.toast = msg; clearTimeout(toast.t); const old = $('.toast'); old && old.remove();
+  const el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); el.innerHTML = ic('check', 's') + esc(msg); $('#dv').append(el);
+  toast.t = setTimeout(() => el.remove(), 1800);
+}
+function doAction(a) {
+  const m = model();
+  if (a === 'copy') toast('Путь скопирован: ' + (m.p || ''));
+  else if (a === 'copyabs') toast('Абсолютный путь скопирован');
+  else if (a === 'reveal') toast('Показываем в Finder…');
+  else if (a === 'open') toast('Открываем в приложении системы…');
+  else if (a === 'copy-code') toast('Код скопирован');
+}
+function onClick(e) {
+  const el = e.target.closest('[data-open],[data-dir],[data-ctl],[data-act],[data-do],[data-mode],[data-toc],[data-textfind],[data-tab],[data-closetab],[data-hl]'); if (!el) { if (UI.menu) { UI.menu = false; render(); } return; }
+  const d = el.dataset;
+  if (d.open) { e.preventDefault(); openFile(d.open); return; }
+  if (d.dir) { OPEN.has(d.dir) ? OPEN.delete(d.dir) : OPEN.add(d.dir); render(); $(`[data-dir="${CSS.escape(d.dir)}"]`)?.focus(); return; }
+  if (d.ctl) { UI[d.ctl] = d.v; render(); return; }
+  if (d.mode) { UI.mode = d.mode; render(); return; }
+  if (d.toc) { e.preventDefault(); const t = document.getElementById(d.toc); t && t.scrollIntoView({ block: 'start' }); $$('[data-toc]').forEach((a) => a.classList.toggle('on', a === el)); return; }
+  if (d.textfind) { UI.findOpen = true; UI.fq = d.textfind; UI.fi = 0; UI.q = ''; render(); return; }
+  if (d.act) { UI.menu = false; doAction(d.act); if (!$('.toast')) render(); else if (el.closest('.popup-menu')) $('.popup-menu')?.remove(); return; }
+  if (d.do) { doDo(d.do, el); return; }
+  if (VAR.onClick && VAR.onClick(el, d)) return;
+}
+function doDo(a, el) {
+  switch (a) {
+    case 'back': nav(-1); break;
+    case 'forward': nav(1); break;
+    case 'refresh': toast('Список обновлён'); break;
+    case 'close': setState('entry'); break;
+    case 'opendocs': setState('tree'); break;
+    case 'clearq': UI.q = ''; UI.kb = 0; render(); $('[data-in="search"]')?.focus(); break;
+    case 'collapse': OPEN.clear(); render(); break;
+    case 'find': UI.findOpen = !UI.findOpen; render(); UI.findOpen && $('[data-in="find"]')?.focus(); break;
+    case 'fclose': UI.findOpen = false; UI.fq = ''; render(); break;
+    case 'fnext': UI.fi++; refindOnly(); break;
+    case 'fprev': UI.fi--; refindOnly(); break;
+    case 'hideerr': UI.errHidden = true; render(); break;
+    case 'showsecret': openFile('.env'); break;
+    case 'menu': UI.menu = !UI.menu; render(); break;
+    case 'noop': toast('Превью обновлено'); break;
+    case 'revealdir': revealDir(el.dataset.dirp); break;
+    default: VAR.doDo && VAR.doDo(a, el);
+  }
+}
+function onInput(e) {
+  const i = e.target; if (!i.dataset.in) return;
+  if (i.dataset.in === 'search' || i.dataset.in === 'pal') { UI.q = i.value; UI.kb = 0; const r = $('[data-slot="results"]'); if (r) r.innerHTML = VAR.resultsHTML(); VAR.afterQuery && VAR.afterQuery(); }
+  else if (i.dataset.in === 'find') { UI.fq = i.value; UI.fi = 0; refindOnly(); }
+}
+function onKey(e) {
+  const mod = e.metaKey || e.ctrlKey, i = e.target.dataset ? e.target.dataset.in : null;
+  if (mod && e.key.toLowerCase() === 'p') { e.preventDefault(); VAR.focusSearch(); return; }
+  if (mod && e.key.toLowerCase() === 'f') { const m = model(); if (m.render === 'code' || m.render === 'md') { e.preventDefault(); UI.findOpen = true; render(); $('[data-in="find"]')?.select(); } return; }
+  if (i === 'search' || i === 'pal') {
+    const q = UI.q.trim(); const list = q ? resultsList(q).slice(0, HIT_LIMIT) : (VAR.palEmptyList ? VAR.palEmptyList() : []);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { if (!list.length) return; e.preventDefault(); UI.kb = (UI.kb + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length; const r = $('[data-slot="results"]'); r.innerHTML = VAR.resultsHTML(); r.querySelector('.kb')?.scrollIntoView({ block: 'nearest' }); }
+    else if (e.key === 'Enter') { const h = list[UI.kb]; if (h) { e.preventDefault(); openFile(h.f ? h.f.p : h.p); } }
+    else if (e.key === 'Escape') { e.preventDefault(); if (UI.q) { UI.q = ''; UI.kb = 0; render(); VAR.focusSearch && VAR.focusSearch(true); } else if (VAR.escape) VAR.escape(); }
+    return;
+  }
+  if (i === 'find') {
+    if (e.key === 'Enter') { e.preventDefault(); UI.fi += e.shiftKey ? -1 : 1; refindOnly(); }
+    else if (e.key === 'Escape') { e.preventDefault(); UI.findOpen = false; UI.fq = ''; render(); }
+    return;
+  }
+  if (e.key === 'Escape') { if (UI.menu) { UI.menu = false; render(); } else if (VAR.escape) VAR.escape(); }
+}
+
+/* ---------- отрисовка ---------- */
+function render(soft) {
+  const dv = $('#dv'); const scroll = {};
+  $$('.docs-tree-body, .docs-body, .docs-code, .docs-img, .v3-drawer .docs-tree-body, .docs-toc').forEach((n, i) => (scroll[n.className + i] = [n.scrollTop, n.scrollLeft]));
+  const had = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.in : null;
+  const toastEl = $('.toast'); const keep = toastEl ? toastEl.outerHTML : '';
+  dv.classList.toggle('entry', S === 'entry');
+  dv.innerHTML = S === 'entry' ? entryHTML() : VAR.render(model()) + keep;
+  $$('.docs-tree-body, .docs-body, .docs-code, .docs-img, .v3-drawer .docs-tree-body, .docs-toc').forEach((n, i) => { const s = scroll[n.className + i]; if (s) { n.scrollTop = s[0]; n.scrollLeft = s[1]; } });
+  applyFind();
+  if (had) { const n = $(`[data-in="${had}"]`); if (n) { n.focus(); const v = n.value.length; try { n.setSelectionRange(v, v); } catch (e) { /* не текстовое поле */ } } }
+  VAR.after && VAR.after();
+  const k = $('.docs-hit.kb'); if (k && !soft) k.scrollIntoView({ block: 'nearest' });
+}
+
+/* ---------- панель макета ---------- */
+function buildBar(title) {
+  const grp = GROUPS.map((g) => `<span class="mk-grp"><span class="lbl">${g}</span><span class="mk-seg">${Object.entries(T).filter(([, t]) => t.g === g).map(([id, t]) => `<button data-state="${id}">${t.l}</button>`).join('')}</span></span>`).join('');
+  return `<div class="mk-bar"><b>${title}</b>${grp}<span class="mk-grp"><span class="lbl">Окно</span><span class="mk-seg"><button data-w="1480">Широкое</button><button data-w="1040">Среднее</button><button data-w="812">Минимум 860</button></span></span><span class="mk-grp"><span class="lbl">Подсветка (опция)</span><span class="mk-seg"><button data-hl="0">Нет</button><button data-hl="1">Есть</button></span></span></div><div class="mk-note" id="note"></div>`;
+}
+function init(variant, title) {
+  VAR = variant;
+  document.body.insertAdjacentHTML('afterbegin', buildBar(title) + '<div class="stage"><div class="dv" id="dv" role="dialog" aria-label="Документы"></div></div>');
+  const q = new URLSearchParams(location.search), h = location.hash.slice(1);
+  if (q.get('w')) UI.width = +q.get('w'); if (q.get('hl') === '1') UI.hl = true;
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.mk-bar [data-state],.mk-bar [data-w],.mk-bar [data-hl]'); if (!b) return;
+    if (b.dataset.state) setState(b.dataset.state); if (b.dataset.w) { UI.width = +b.dataset.w; sync(); VAR.onWidth && VAR.onWidth(); render(); } if (b.dataset.hl) { UI.hl = b.dataset.hl === '1'; sync(); render(); }
+  });
+  const dv = $('#dv'); dv.addEventListener('click', onClick); dv.addEventListener('input', onInput); document.addEventListener('keydown', onKey);
+  const first = T[h] ? h : 'code'; S = first; sync(); VAR.onWidth && VAR.onWidth(); applyDefaults(first); if (T[first].cur && VAR.afterOpen) VAR.afterOpen(T[first].cur); for (const k of ['html', 'md', 'img']) if (q.get(k)) UI[k] = q.get(k); if (q.get('open')) { const p = q.get('open'); S = viewOf(FILE_OF(p)); CURP = p; applyDefaults(S, true); VAR.afterOpen && VAR.afterOpen(p); } if (q.get('menu')) UI.menu = true; if (q.get('tocpop')) UI.tocPop = true; if (q.get('drawer')) UI.drawer = q.get('drawer') === '1'; histPush(); sync(); render();
+}
+
+/* ===== Общие помощники для вариантов ===== */
+const dvWidth = () => { const d = $('#dv'); return d ? d.clientWidth : UI.width; };
+const docsHeadHTML = () => `<div class="docs-head"><h3>${ic('doc')}Документы <span class="proj">· orca-board</span></h3><span class="docs-grow"></span><span class="docs-keys"><kbd>⌘P</kbd> файл · <kbd>⌘F</kbd> в тексте</span><button class="icon-btn" data-do="refresh" title="Обновить список" aria-label="Обновить список">${icS('refresh')}</button><button class="icon-btn" data-do="close" title="Закрыть (Esc)" aria-label="Закрыть">${ic('close')}</button></div>`;
+const ibAct = (act, ico, title, cls = '') => `<button class="icon-btn ${cls}" data-act="${act}" title="${title}" aria-label="${title}">${icS(ico)}</button>`;
+const navBtns = () => `<button class="icon-btn" data-do="back" title="Назад (⌘[)" aria-label="Назад" ${HIST.i <= 0 ? 'disabled' : ''}>${icS('back')}</button><button class="icon-btn" data-do="forward" title="Вперёд (⌘])" aria-label="Вперёд" ${HIST.i >= HIST.stack.length - 1 ? 'disabled' : ''}>${icS('forward')}</button>`;
+function pathHTML(m, { dirs = true } = {}) {
+  const parts = m.p.split('/'), d = parts.slice(0, -1);
+  return `<div class="docs-path" title="${esc(m.p)}"><span class="src">Проект</span>${dirs ? d.map((s, i) => `<span class="sep">/</span><button class="seg" data-do="revealdir" data-dirp="${esc(d.slice(0, i + 1).join('/'))}" title="Показать папку в дереве">${esc(s)}</button>`).join('') : ''}<span class="sep">/</span><span class="cur">${esc(nameOf(m.p))}</span></div>`;
+}
+/* строка статуса: факты о файле слева, пометки справа */
+function statusHTML(m, { path = false, actions = false } = {}) {
+  if (!m.f || m.render === 'start' || m.render === 'stale' || m.render === 'stub') return '';
+  const fs = facts(m), f = m.f;
+  const it = ([k, v], i) => `<span class="it ${i >= 3 ? 'opt' : ''}">${k === 'Тип' ? `<b>${esc(v)}</b>` : k === 'Размеры' || k === 'Кодировка' ? esc(v) : k === 'Строк' ? `${v} ${v % 10 === 1 && v !== 11 ? 'строка' : [2, 3, 4].includes(v % 10) && ![12, 13, 14].includes(v % 100) ? 'строки' : 'строк'}` : k === 'Чтение' ? esc(v) : k === 'Изменён' ? `${icS('clock')}изменён ${esc(v)}` : esc(v)}</span>`;
+  const iso = m.render === 'preview' || (m.kind === 'html' && UI.html === 'preview') ? `<span class="it iso">${icS('lock')}изолировано, без сети</span>` : '';
+  const zoom = m.render === 'image' ? `<span class="it">${UI.img === 'fit' ? 'вписано · 62 %' : '100 %'}</span>` : '';
+  const wrap = m.render === 'code' ? '<span class="it opt">без переноса</span>' : '';
+  return `<div class="docs-status" role="status" aria-label="Сведения о файле">${path ? `<button class="btn-text it path" data-act="copy" title="Копировать путь">${esc(m.p)}</button>` : ''}${fs.map(it).join('')}${zoom}${iso}${wrap}<span class="docs-grow"></span>${VAR.statusExtra ? VAR.statusExtra(m) : ''}${actions ? `<button class="btn-text" data-act="copy" aria-label="Копировать путь">${icS('copy')}<span class="lbl">Копировать путь</span></button><button class="btn-text" data-act="reveal" aria-label="Показать в Finder">${icS('reveal')}<span class="lbl">Показать в Finder</span></button>${m.openable ? `<button class="btn-text" data-act="open" aria-label="Открыть в приложении системы">${icS('external')}<span class="lbl">Открыть</span></button>` : ''}` : ''}</div>`;
+}
+/* перерисовка по клику «показать папку в дереве» */
+function revealDir(p) { UI.mode = 'tree'; UI.q = ''; ancestors(p + '/x').forEach((a) => OPEN.add(a)); VAR.onReveal && VAR.onReveal(); render(); setTimeout(() => { const r = $(`[data-dir="${CSS.escape(p)}"]`) || $$('[data-dir]').reverse().find((n) => p.startsWith(n.dataset.dir)); r && r.scrollIntoView({ block: 'nearest' }); }, 0); }
+
+/* меню «⋯»: действия с файлом (узкое окно — вместо отдельных кнопок) */
+function menuHTML(m, top = 52) {
+  if (!UI.menu || !m.f || m.render === 'start' || m.render === 'stale') return '';
+  const it = (act, ico, t, hint = '') => `<button class="popup-menu-item" role="menuitem" data-act="${act}">${icS(ico)}<span>${t}</span>${hint ? `<span class="popup-menu-hint">${hint}</span>` : ''}</button>`;
+  return `<div class="popup-menu" role="menu" aria-label="Действия с файлом" style="right:12px;top:${top}px">${it('copy', 'copy', 'Копировать путь', '⌘⇧C')}${it('copyabs', 'copy', 'Копировать абсолютный путь')}<div class="popup-menu-sep"></div>${it('reveal', 'reveal', 'Показать в Finder')}${m.openable ? it('open', 'external', 'Открыть в приложении системы') : `<div class="popup-menu-item" role="menuitem" aria-disabled="true">${icS('external')}<span>Открыть — недоступно для этого типа</span></div>`}</div>`;
+}
+const moreBtn = (m, cls = '') => (!m.f || m.render === 'start' || m.render === 'stale' ? '' : `<button class="icon-btn ${cls}" data-do="menu" aria-haspopup="menu" aria-expanded="${UI.menu}" title="Действия с файлом" aria-label="Действия с файлом">${icS('more')}</button>`);
+
+/* состояние «Вход»: приложение без вкладки «Файлы»; окно открывается кнопкой «Документы» в левой панели */
+function entryHTML() {
+  const rail = (n, t, on = false, extra = '') => `<button class="en-icon ${on ? 'target' : ''}" ${on ? 'data-do="opendocs"' : ''} title="${t}" aria-label="${t}" ${on ? '' : 'tabindex="-1"'}>${ic(n)}${extra}</button>`;
+  const col = (c, t, n) => `<div class="en-col"><div class="en-col-h"><span class="docs-dot" style="background:${c}"></span>${t}<span class="n">${n}</span></div><div class="en-card"></div><div class="en-card s"></div></div>`;
+  return `<div class="en-app" aria-label="Главное окно приложения (макет)">
+    <nav class="en-rail" aria-label="Левая панель">${rail('folder', 'Проекты')}${rail('gear', 'Настройки')}${rail('doc', 'Документы', true, '<span class="en-n">1</span>')}</nav>
+    <aside class="en-side"><h2>Проекты</h2><div class="en-proj on"><div class="nm">orca-board</div><div class="sub">~/project/orca-board</div></div><div class="en-proj"><div class="nm">md-audit-backend</div><div class="sub">~/work/backend</div></div></aside>
+    <main class="en-main"><header><h1>orca-board</h1><div class="en-tabs" role="tablist" aria-label="Вкладки проекта"><span class="en-tab on">Канбан</span><span class="en-tab">Терминалы <i>2</i></span><span class="en-gone"><span class="en-tab gone" title="Вкладка убрана">Файлы</span><b class="en-n">2</b></span><span class="en-tab">Статистика</span><span class="en-tab">О проекте</span></div></header>
+      <div class="en-board">${col('var(--col-backlog)', 'Бэклог', 4)}${col('var(--col-progress)', 'В работе', 2)}${col('var(--col-input)', 'Нужен ввод', 1)}${col('var(--col-review)', 'Ревью', 3)}</div>
+      <div class="en-legend"><p><b class="en-n">1</b> Единственный вход — кнопка «Документы» в левой панели. Дерево, поиск и просмотр всех файлов проекта — в одном окне.</p><p><b class="en-n">2</b> Вкладки «Файлы» больше нет; сохранённая вкладка откроет «Канбан». Подсказка «Открыть в “Документах”» из неё тоже не нужна.</p><button class="btn-sm primary" data-do="opendocs">${icS('doc')}Открыть «Документы»</button></div>
+    </main></div>`;
+}
+
+/* ===== Вариант 1 — «Проводник»: дерево | одна панель | правая колонка только у markdown ===== */
+function tocColHTML(m) {
+  return `<aside class="docs-toc" aria-label="Оглавление"><h4>На странице</h4>${tocHTML()}<div class="docs-prog"><i></i></div><div class="docs-toc-meta"><div>${icS('clock')}изменён сегодня 14:32</div><div>${icS('file')}38 КБ · ≈ 18 мин</div><div>${icS('branch')}также правит задача «Уведомления…»</div></div></aside>`;
+}
+function centerV1(m) {
+  if (m.render === 'start' || m.render === 'stale') return `<section class="docs-pane">${m.render === 'start' ? viewerBody(m) : staleHTML()}</section>`;
+  const md = m.kind === 'md' && m.render !== 'stub';
+  const tocBtn = md ? `<button class="icon-btn ${UI.toc ? 'on' : ''}" data-do="toc" title="Оглавление" aria-label="Оглавление" aria-pressed="${UI.toc}">${icS('toc')}</button>` : '';
+  return `<section class="docs-pane">
+    <div class="docs-crumbs">${navBtns()}${pathHTML(m)}<span class="docs-grow"></span><span class="docs-ctl">${viewCtl(m)}${tocBtn}</span><span class="vsep acts"></span><span class="docs-ctl acts">${ibAct('copy', 'copy', 'Копировать путь')}${ibAct('reveal', 'reveal', 'Показать в Finder')}${m.openable ? ibAct('open', 'external', 'Открыть в приложении системы') : ''}</span>${moreBtn(m, 'v1-more')}</div>
+    ${menuHTML(m)}
+    ${findBarHTML(m)}
+    ${md && UI.tocPop ? `<div class="docs-toc-pop open" role="dialog" aria-label="Оглавление"><h4>На странице</h4>${tocHTML()}</div>` : ''}
+    ${m.render === 'md' ? viewerBody(m) : m.render === 'stub' ? stubHTML(m) : viewerBody(m)}
+    ${statusHTML(m)}
+  </section>`;
+}
+const V1 = {
+  iconStyle: 'tint',
+  resultsHTML: treeBodyHTML,
+  focusSearch() { const i = $('[data-in="search"]'); i && (i.focus(), i.select()); },
+  escape() {},
+  render(m) {
+    const withToc = m.render === 'md' && UI.toc;
+    return docsHeadHTML() + `<div class="docs-grid ${withToc ? 'with-toc' : ''}">${treeColHTML()}${centerV1(m)}${withToc ? tocColHTML(m) : ''}</div>`;
+  },
+  doDo(a) {
+    if (a === 'toc') { if (dvWidth() <= 1100) UI.tocPop = !UI.tocPop; else UI.toc = !UI.toc; render(); }
+  }
+};
+init(V1, 'Вариант 1 — «Проводник»');
+
+
+</script>
+</body>
+</html>
