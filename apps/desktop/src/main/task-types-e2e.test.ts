@@ -370,15 +370,17 @@ describe('сценарий 2: один проект, две глобальные
     assert.deepEqual(brief(h.lastLaunch(d1.id)), { roleId: 'writer', agent: 'claude', model: 'haiku' })
     assert.deepEqual(brief(h.lastLaunch(b1.id)), { roleId: 'developer', agent: 'claude' })
     assert.equal(pm.resolveRun(pid, runB).agentRules, backend.settings.agentRules, 'правила агентов — типа прогона')
-    assert.equal(pm.resolveRun(pid, runD).agentRules, '')
+    assert.equal(pm.resolveRun(pid, runD).agentRules, docs.settings.agentRules)
     h.commit(d1.id, 'api.md')
     h.commit(b1.id, 'users.ts')
     h.done(d1.id)
     h.done(b1.id)
 
-    // «Документация»: ревью человеком, без агентной проверки.
+    // «Документация»: техническая проверка, затем читатель; подготовку одиночная задача не проходит.
+    assert.equal(h.task(d1.id).stage?.nodeId, 'facts')
+    assert.deepEqual(h.gates(d1.id).map((g) => g.roleId), ['reviewer'])
+    reviewAccept(h.deps, d1.id)
     assert.equal(h.task(d1.id).stage?.nodeId, 'review')
-    assert.deepEqual(h.gates(d1.id), [])
     const approval = h.store.pendingRequests().find((r) => r.taskId === d1.id && r.kind === 'approval')
     assert.ok(approval, 'запрос человеку на ревью')
     resolveHumanRequest(h.store, repo, approval.id, { action: 'accept' }, h.deps.startWorker, (r) => approvalResolved(h.deps, r))

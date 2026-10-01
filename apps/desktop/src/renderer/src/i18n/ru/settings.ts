@@ -14,6 +14,10 @@ export default {
   'nav.defaultType': 'по умолч.',
   'nav.typeUsage': 'Тип по умолчанию в проектах: {count}',
   newTypeTitle: 'Новый тип',
+  'presets.aria': 'Создать тип задачи',
+  'presets.empty': 'Пустой тип',
+  'presets.current': 'Актуальные заготовки',
+  presetUnavailable: 'Заготовка недоступна. Откройте список заново.',
 
   'appearance.title': 'Внешний вид',
   'appearance.hint': 'Спокойные палитры для доски, настроек и рабочего пространства.',

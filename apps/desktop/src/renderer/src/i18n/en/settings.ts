@@ -14,6 +14,10 @@ export default {
   'nav.defaultType': 'default',
   'nav.typeUsage': 'Default type in projects: {count}',
   newTypeTitle: 'New type',
+  'presets.aria': 'Create task type',
+  'presets.empty': 'Empty type',
+  'presets.current': 'Current presets',
+  presetUnavailable: 'Preset is unavailable. Open the list again.',
 
   'appearance.title': 'Appearance',
   'appearance.hint': 'Quiet palettes for your board, settings, and workspace.',

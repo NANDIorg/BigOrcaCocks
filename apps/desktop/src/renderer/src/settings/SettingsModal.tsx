@@ -1,12 +1,12 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
-import { DEFAULT_ROLES, type AgentInfo, type AssistantSettings, type Role, type TaskType } from '@orca-board/core'
+import { useEffect, useRef, useState } from 'react'
+import { DEFAULT_ROLES, presetTaskTypes, type AgentInfo, type AssistantSettings, type Role, type TaskType } from '@orca-board/core'
 import type { AppSettings, AppSettingsPatch, Project } from '../../../shared/ipc'
 import { Icon } from '../icons'
 import { ipcErrorMessage } from '../useAutoSave'
 import { NavItem, storeSection, type NavEntry } from '../about/parts'
 import {
-  SETTINGS_SECTION_KEY, TASK_TYPE_TABS, libraryRoles, settingsTypeSection, pickTaskTypeId, taskTypeUsage, type TaskTypeTab
+  SETTINGS_SECTION_KEY, TASK_TYPE_TABS, libraryRoles, settingsTypeSection, pickTaskTypeId, taskTypeUsage, presetTaskTypeInput, type TaskTypeTab
 } from '../taskTypeEdit'
 import { GeneralSection } from './GeneralSection'
 import { AppearanceSection } from './AppearanceSection'
@@ -24,6 +24,7 @@ import { extraArgsSupported } from '../extraArgsHints'
 import { builtinText } from '../defaultTitles'
 import { versionLabel } from '../updateState'
 import type { UpdatesController } from '../useUpdates'
+import { PopupMenu, type PopupItem } from '../PopupMenu'
 
 /** Раздел меню: общие настройки, внешний вид, уведомления, обновления, ассистент, свои ноды или тип задачи (`type:<id>`). */
 type Section = 'general' | 'appearance' | 'notifications' | 'updates' | 'assistant' | 'nodes' | `type:${string}`
@@ -88,6 +89,17 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [presetMenu, setPresetMenu] = useState<{ x: number; y: number } | null>(null)
+  const createButton = useRef<HTMLButtonElement>(null)
+  const creating = useRef(false)
+  const wasCreating = useRef(false)
+
+  useEffect(() => {
+    // После async-создания кнопка снова доступна; не уводим фокус, если человек уже перешёл к другому полю.
+    if (wasCreating.current && !createBusy && document.activeElement === document.body) createButton.current?.focus({ preventScroll: true })
+    wasCreating.current = createBusy
+  }, [createBusy])
 
   useEffect(() => {
     if (sectionRequest) go(sectionRequest.section)
@@ -154,15 +166,37 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
     if (res.error) throw new Error(res.error)
   }
 
-  async function createType(): Promise<void> {
+  async function createType(presetId?: string): Promise<void> {
+    if (!types.state || creating.current) return
+    creating.current = true
+    setCreateBusy(true)
     try {
-      const created = await types.create({ title: t('settings.newTypeTitle'), settings: {} })
+      const input = presetId
+        ? presetTaskTypeInput(presetId, types.state.taskTypes)
+        : { title: t('settings.newTypeTitle'), settings: {} }
+      const created = await types.create(input)
       setCreateError(null)
       selectType(created.id)
     } catch (e) {
       setCreateError(ipcErrorMessage(e))
+    } finally {
+      creating.current = false
+      setCreateBusy(false)
     }
   }
+
+  function closePresetMenu(restoreFocus: boolean): void {
+    setPresetMenu(null)
+    if (restoreFocus) createButton.current?.focus({ preventScroll: true })
+  }
+
+  const presetItems: PopupItem[] = [
+    { id: 'empty', label: t('settings.presets.empty') },
+    ...presetTaskTypes().map((preset, index) => ({
+      id: preset.id, label: builtinText(preset.title),
+      ...(index === 0 ? { separatorBefore: true, heading: t('settings.presets.current') } : {})
+    }))
+  ]
 
   // ---------- типы ----------
 
@@ -250,11 +284,18 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
               ) : (
                 <div className="tpl-nav">
                   {state?.taskTypes.map(typeItem)}
-                  <button type="button" className="about-nav-item tpl-nav-add" disabled={!state} onClick={() => void createType()}>
+                  <button
+                    ref={createButton} type="button" className="about-nav-item tpl-nav-add" disabled={!state || createBusy}
+                    aria-haspopup="menu" aria-expanded={!!presetMenu} aria-busy={createBusy || undefined}
+                    onClick={() => {
+                      const rect = createButton.current?.getBoundingClientRect()
+                      if (rect) setPresetMenu({ x: rect.left, y: rect.bottom + 4 })
+                    }}
+                  >
                     <Icon.plus />
                     <span className="about-nav-label">{t('settings.nav.newType')}</span>
                   </button>
-                  {createError && <div className="editor-error tpl-nav-error">{createError}</div>}
+                  {createError && <div className="editor-error tpl-nav-error" role="alert">{createError}</div>}
                 </div>
               )}
               <NavItem item={nodesNav} current={section} showCount={nodeTemplates.templates !== null} onGo={go} />
@@ -286,6 +327,13 @@ export function SettingsModal({ sectionRequest, agents, updates, onProjectsChang
           </div>
         </div>
       </div>
+      {presetMenu && (
+        <PopupMenu
+          {...presetMenu} ariaLabel={t('settings.presets.aria')} items={presetItems}
+          onPick={(id) => { closePresetMenu(true); void createType(id === 'empty' ? undefined : id) }}
+          onClose={closePresetMenu}
+        />
+      )}
     </div>
   )
 }

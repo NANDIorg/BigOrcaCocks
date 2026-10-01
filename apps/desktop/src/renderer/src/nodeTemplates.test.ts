@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { validateNodeTemplate, validateWorkflow, type WfNode, type WfNodeTemplate, type Workflow } from '@orca-board/core'
+import { DEFAULT_ROLES, pipelineWorkflow, presetTaskType, validateNodeTemplate, validateWorkflow, type WfNode, type WfNodeTemplate, type Workflow } from '@orca-board/core'
 import type { OrcaApi } from '../../shared/ipc'
 import {
   applyTemplate, insertTemplate, linkTemplate, nodeTemplatesApi, nodeTemplatesError, nodeTemplatesStaleMessage,
@@ -11,6 +11,21 @@ import { WF_TYPE_TITLES } from './workflowForm'
 
 const root = graphWithMerge([{ id: 'reviewer' }])
 const node = (w: Workflow, id: string): WfNode => w.nodes.find((n) => n.id === id)!
+
+test('подготовка из заготовки сохраняется как своя нода и вставляется с признаком пропуска; в путь подзадачи нельзя', () => {
+  const prep = presetTaskType('frontend')!.settings.workflow!.nodes.find((n) => n.type === 'work' && n.runOnly)!
+  const input = templateInput(prep, 'Подготовка')
+  const template: WfNodeTemplate = JSON.parse(JSON.stringify({ ...input, id: 'tpl_prep', updatedAt: 1 }))
+  assert.deepEqual(validateNodeTemplate(template), { errors: [], warnings: [] })
+  assert.equal(templateMisfit(template, 'run'), null)
+  assert.match(templateMisfit(template, 'subtask')!, /глобальной задачи/)
+  const inserted = insertTemplate(pipelineWorkflow([]), template, 0, 0)
+  const copy = node(inserted.workflow, inserted.nodeId)
+  assert.ok(copy.type === 'work' && copy.runOnly)
+  inserted.workflow.edges.find((e) => e.from === 'start')!.to = copy.id
+  inserted.workflow.edges.push({ id: 'prep_next', from: copy.id, outcome: 'next', to: 'work' })
+  assert.deepEqual(validateWorkflow(inserted.workflow, { roles: DEFAULT_ROLES }).errors, [])
+})
 
 const reviewerTemplate = (over: Partial<WfNodeTemplate> = {}): WfNodeTemplate => ({
   id: 'tpl_1', title: 'Ревьюер', updatedAt: 1000,

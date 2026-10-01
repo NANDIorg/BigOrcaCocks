@@ -69,6 +69,12 @@ export function MainFields({ node, workflow, onChange, scope, columns }: NodePro
           </select>
         </label>
       )}
+      {node.type === 'work' && (scope === 'run' || node.runOnly) && (
+        <label className="wf-check" title={t('config.wf.insp.runOnlyHint')}>
+          <input type="checkbox" checked={node.runOnly ?? false} onChange={(e) => patch({ runOnly: e.target.checked })} />
+          <span>{t('config.wf.insp.runOnly')}</span>
+        </label>
+      )}
       {node.type === 'end' && (
         <label className="wf-check">
           <input type="checkbox" checked={node.merged ?? false} onChange={(e) => patch({ merged: e.target.checked })} />

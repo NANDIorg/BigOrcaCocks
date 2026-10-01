@@ -10,7 +10,7 @@ import path from 'node:path'
 import {
   DEFAULT_COLUMNS, DEFAULT_ROLES, GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes, defaultWorkflow, defaultSubflow,
   resolveTaskType, taskTypeFileName, TASK_TYPE_FILE_FORMAT, TASK_TYPE_FILE_VERSION,
-  type BoardColumn, type Role, type TaskTypeFile, type TaskTypeFileMeta, type WfNode, type Workflow
+  type BoardColumn, type Role, type TaskType, type TaskTypeFile, type TaskTypeFileMeta, type WfNode, type Workflow
 } from '@orca-board/core'
 import { ProjectManager } from './projects'
 import { OrcaError } from './i18n'
@@ -47,6 +47,37 @@ beforeEach(() => { tmp = mkdtempSync(path.join(tmpdir(), 'orca-types-')) })
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 describe('библиотека типов', () => {
+  it('новая заготовка не перезаписывает засеянный тип, проекты и активный прогон, в том числе после рестарта', () => {
+    const old: TaskType = {
+      id: 'frontend', title: 'Мой фронтенд',
+      settings: {
+        roles: DEFAULT_ROLES.map((r) => ({ ...r, model: 'custom' })),
+        workflow: defaultWorkflow(DEFAULT_ROLES), agentRules: 'мои правила'
+      }
+    }
+    writeConfig({ taskTypesSeeded: true, taskTypes: [old], defaultTaskTypeId: old.id }, { taskTypeIds: [old.id], defaultTaskTypeId: old.id })
+    const pm = new ProjectManager(tmp)
+    const store = pm.store(PID)
+    const run = store.createGlobalTask({ title: 'Уже в работе', type: pm.runType(PID, old.id) })
+    store.enterRunStage(run.id)
+    const before = structuredClone(store.getRun(run.id))
+    const preset = presetTaskType('frontend')!
+    const created = pm.saveTaskType({ title: preset.title, description: preset.description, settings: preset.settings })
+    assert.notEqual(created.id, old.id)
+    assert.deepEqual(pm.taskType(old.id), old)
+    assert.equal(pm.defaultTaskTypeId(), old.id)
+    assert.equal(pm.runType(PID).typeId, old.id)
+    assert.deepEqual(store.getRun(run.id), before)
+    assert.deepEqual(pm.resolveRun(PID, run.id).roles, old.settings.roles)
+    const again = new ProjectManager(tmp)
+    assert.deepEqual(again.taskType(old.id), old)
+    assert.deepEqual(again.taskType(created.id), created)
+    // JSON удаляет поля со значением undefined; сравниваем все сохраняемые данные, включая позицию графа.
+    assert.deepEqual(JSON.parse(JSON.stringify(again.store(PID).getRun(run.id))), JSON.parse(JSON.stringify(before)))
+    assert.deepEqual(again.resolveRun(PID, run.id).roles, old.settings.roles)
+    assert.throws(() => again.runType(PID, created.id), /недоступен в проекте/, 'выбор доступных типов проекта не меняется')
+  })
+
   it('заготовки в библиотеке, затем свои; засев записывается в файл с первым сохранением', () => {
     writeConfig()
     const pm = new ProjectManager(tmp)

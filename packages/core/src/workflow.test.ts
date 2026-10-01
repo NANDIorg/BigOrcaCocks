@@ -29,6 +29,53 @@ const node = (wf: Workflow, id: string): WfNode => wf.nodes.find((n) => n.id ===
 /** Роли ноды «Работа» как в графе (без нормализации `wfWorkRoleIds`). */
 const workRoles = (wf: Workflow, id = 'work'): string[] | undefined => (node(wf, id) as { roleIds?: string[] }).roleIds
 const edge = (wf: Workflow, id: string): WfEdge => wf.edges.find((e) => e.id === id)!
+
+describe('этапы только глобальной задачи при проекции во «Входящие»', () => {
+  const twoWorks = (): Workflow => pipelineWorkflow([], { work: [{ id: 'prep' }, { id: 'work' }] })
+  it('пропускает только явно отмеченные этапы, включая цепочку; исходный граф сохраняется', () => {
+    const wf = pipelineWorkflow([], { work: [{ id: 'prep', runOnly: true }, { id: 'api', runOnly: true }, { id: 'work' }] })
+    const before = structuredClone(wf)
+    const projected = toTaskScopeWorkflow(wf)
+    assert.deepEqual(projected.nodes.filter((n) => n.type === 'work').map((n) => n.id), ['work'])
+    assert.equal(projected.edges.find((e) => e.from === 'start')!.to, 'work')
+    assert.deepEqual(validateWorkflow(projected, ctx).errors.map((e) => e.code), ['versionOld'])
+    assert.deepEqual(wf, before)
+  })
+  it('не схлопывает пользовательские многоэтапные графы и не меняет сохранённую v1', () => {
+    const wf = twoWorks()
+    assert.deepEqual(toTaskScopeWorkflow(wf).nodes.filter((n) => n.type === 'work').map((n) => n.id), ['prep', 'work'])
+    const legacy = legacyDefaultWorkflow(DEFAULT_ROLES)
+    assert.equal(toTaskScopeWorkflow(legacy), legacy)
+  })
+  it('не допускает пропуск последней работы, цикл пропусков, неверный тип и признак вне глобальной работы', () => {
+    const last = twoWorks()
+    Object.assign(node(last, 'work'), { runOnly: true })
+    hasError(last, /пропускаемый этап должен вести/, { nodeId: 'work' })
+    const cycle = twoWorks()
+    Object.assign(node(cycle, 'prep'), { runOnly: true })
+    cycle.edges.find((e) => e.from === 'prep')!.to = 'prep'
+    hasError(cycle, /пропускаемый этап должен вести/, { nodeId: 'prep' })
+    const wrong = twoWorks()
+    Object.assign(node(wrong, 'prep'), { runOnly: 'yes' })
+    hasError(wrong, /булевым полем/, { nodeId: 'prep' })
+    const legacy = legacyDefaultWorkflow(DEFAULT_ROLES)
+    Object.assign(node(legacy, 'work'), { runOnly: true })
+    hasError(legacy, /только в графе глобальной задачи/, { nodeId: 'work' })
+    const nonWork = twoWorks()
+    Object.assign(node(nonWork, 'start'), { runOnly: true })
+    hasError(nonWork, /булевым полем/, { nodeId: 'start' })
+  })
+  it('не позволяет считать пропускаемый этап: во «Входящих» его счётчик мог бы обойти ревью', () => {
+    const wf = pipelineWorkflow([{ type: 'gate', id: 'review', roleId: 'reviewer' }], { work: [{ id: 'prep', runOnly: true }, { id: 'work' }] })
+    wf.nodes.push({ id: 'limit', type: 'condition', test: { kind: 'attempts', node: 'prep', atLeast: 1 }, x: 0, y: 0 })
+    wf.edges.find((e) => e.from === 'work')!.to = 'limit'
+    wf.edges.push(
+      { id: 'yes', from: 'limit', outcome: 'yes', to: 'review' },
+      { id: 'no', from: 'limit', outcome: 'no', to: 'check' }
+    )
+    hasError(wf, /условие считает пропускаемый/, { nodeId: 'limit' })
+  })
+})
 const messages = (list: WfValidation['errors']): string => list.map((i) => i.message).join('\n')
 
 /** Есть ошибка с таким фрагментом (и, если задано, с этим nodeId/edgeId). */
