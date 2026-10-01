@@ -870,6 +870,7 @@ export default {
   'files.err.hidden': 'Not shown in this tab: {path}',
   'files.err.notFound': 'No longer exists on disk: {path}',
   'files.err.notDir': 'Not a folder: {path}',
+  'files.err.notFile': 'Not a file: {path}',
   'files.err.rootMissing': 'Project folder not found: {path}',
   'files.err.readFailed': 'Could not read: {path}'
 } satisfies AreaTranslation<typeof ru>
