@@ -1,9 +1,9 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  absolutePath, alsoIn, buildTree, chainLabel, dayTime, dirAncestors, excerpt, findAll, focusRefreshDue, highlight, longTime,
+  absolutePath, alsoIn, buildTree, isTreeKey, navigate, treeRows, chainLabel, dayTime, dirAncestors, excerpt, findAll, focusRefreshDue, highlight, longTime,
   markdownFiles, matchPath, OPEN_DIRS_LIMIT, openDirsOrder, readingMinutes, readOpenDirs, recentFiles, searchFiles, shortTime,
-  writeOpenDirs, type TreeNode
+  writeOpenDirs, type TreeNode, type TreeRow
 } from './docTree'
 import { setLocale, translate } from './i18n'
 import type { DocFile, DocGroup } from '../../shared/ipc'
@@ -228,4 +228,61 @@ test('readOpenDirs / writeOpenDirs — per-project, битые данные и �
   assert.deepEqual(readOpenDirs(broken, 'p1'), [])
   assert.doesNotThrow(() => writeOpenDirs(broken, 'p1', ['a']))
   assert.equal(readOpenDirs(undefined, 'p1'), null)
+})
+
+const keyOf = (n: TreeNode): string => (n.kind === 'dir' ? `d:${n.path}` : `f:${n.file.path}`)
+
+test('treeRows — дети только у раскрытых папок, у каждой строки родитель', () => {
+  const tree = buildTree([file('a/x.md'), file('a/b/y.md'), file('a/b/z.md'), file('c/w.md'), file('top.md')])
+  const rows = treeRows(tree, new Set(['d:a', 'd:a/b']), keyOf)
+  assert.deepEqual(rows, [
+    { key: 'd:a', dir: true, open: true, parent: null },
+    { key: 'd:a/b', dir: true, open: true, parent: 'd:a' },
+    { key: 'f:a/b/y.md', dir: false, parent: 'd:a/b' },
+    { key: 'f:a/b/z.md', dir: false, parent: 'd:a/b' },
+    { key: 'f:a/x.md', dir: false, parent: 'd:a' },
+    { key: 'd:c', dir: true, open: false, parent: null },
+    { key: 'f:top.md', dir: false, parent: null }
+  ])
+})
+
+test('navigate — ↑/↓, Home/End и фокус по умолчанию', () => {
+  const rows: TreeRow[] = [
+    { key: 'a', dir: true, open: true, parent: null },
+    { key: 'a1', dir: false, parent: 'a' },
+    { key: 'b', dir: false, parent: null }
+  ]
+  assert.deepEqual(navigate(rows, null, 'ArrowDown'), { focus: 'a' })
+  assert.deepEqual(navigate(rows, 'пропал', 'ArrowUp'), { focus: 'a' })
+  assert.deepEqual(navigate(rows, 'a', 'ArrowDown'), { focus: 'a1' })
+  assert.deepEqual(navigate(rows, 'b', 'ArrowDown'), { focus: 'b' })
+  assert.deepEqual(navigate(rows, 'a', 'ArrowUp'), { focus: 'a' })
+  assert.deepEqual(navigate(rows, 'b', 'ArrowUp'), { focus: 'a1' })
+  assert.deepEqual(navigate(rows, 'a1', 'Home'), { focus: 'a' })
+  assert.deepEqual(navigate(rows, 'a', 'End'), { focus: 'b' })
+  assert.deepEqual(navigate([], null, 'ArrowDown'), {})
+})
+
+test('navigate — → раскрывает или ведёт к первому ребёнку, ← сворачивает или ведёт к родителю', () => {
+  const rows: TreeRow[] = [
+    { key: 'a', dir: true, open: true, parent: null },
+    { key: 'a1', dir: false, parent: 'a' },
+    { key: 'c', dir: true, open: false, parent: null },
+    { key: 'e', dir: true, open: true, parent: null },
+    { key: 'f', dir: false, parent: null }
+  ]
+  assert.deepEqual(navigate(rows, 'c', 'ArrowRight'), { toggle: 'c' })
+  assert.deepEqual(navigate(rows, 'a', 'ArrowRight'), { focus: 'a1' })
+  // раскрытая пустая папка: дальше идти некуда
+  assert.deepEqual(navigate(rows, 'e', 'ArrowRight'), {})
+  assert.deepEqual(navigate(rows, 'a1', 'ArrowRight'), {})
+  assert.deepEqual(navigate(rows, 'a', 'ArrowLeft'), { toggle: 'a' })
+  assert.deepEqual(navigate(rows, 'a1', 'ArrowLeft'), { focus: 'a' })
+  assert.deepEqual(navigate(rows, 'c', 'ArrowLeft'), {})
+  assert.deepEqual(navigate(rows, 'f', 'ArrowLeft'), {})
+})
+
+test('isTreeKey — только клавиши перемещения', () => {
+  for (const k of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End']) assert.equal(isTreeKey(k), true)
+  for (const k of ['Enter', ' ', 'Tab', 'a', 'PageDown']) assert.equal(isTreeKey(k), false)
 })

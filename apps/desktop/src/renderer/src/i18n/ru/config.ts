@@ -872,7 +872,7 @@ export default {
   'docs.view.loading': 'Загрузка {name}…',
   'docs.view.frameTitle': 'Превью {name}',
   'docs.view.isolatedBanner': 'Изолированная страница, сеть отключена.',
-  'docs.view.isolatedHint': 'Файлы с точкой в пути (.env, .git) странице недоступны, скрипты из node_modules и сборки — тоже.',
+  'docs.view.isolatedHint': 'Файлы с точкой в пути (.env, .git) странице недоступны; исходники .ts/.tsx не загружаются — страница сайта на Vite или Next может быть пустой.',
   'docs.view.isolated': 'изолировано, без сети',
   'docs.view.statusAria': 'Сведения о файле',
   'docs.view.lines': { one: '{count} строка', few: '{count} строки', many: '{count} строк' },

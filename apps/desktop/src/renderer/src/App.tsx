@@ -59,7 +59,6 @@ import { pickAssistant } from './assistantPty'
 import { assistantAgentOf } from './assistantSettings'
 import { availableTypes, globalTypeTitle, loadTaskTypes, projectDefaultTypeId, rolesForRun, workflowForRun } from './taskTypes'
 
-
 interface OpenTerminal {
   ptyId: string
   label: string
