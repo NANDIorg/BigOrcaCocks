@@ -51,6 +51,12 @@ describe('статистика: цены', () => {
     assert.equal(findModelPrice('claude-opus-5-20260101')?.input, 5)
     assert.equal(findModelPrice('claude-fable-5-1')?.cacheRead, 0.25)
     assert.equal(findModelPrice('claude-fable-5')?.cacheRead, 1)
+    // Mythos 5.1 — цена Fable 5.1 (кэш 0,025×), а не Mythos 5 по префиксу `claude-mythos-5`.
+    assert.equal(findModelPrice('claude-mythos-5-1')?.cacheRead, 0.25)
+    assert.equal(findModelPrice('claude-mythos-5')?.cacheRead, 1)
+    // Sonnet 5.5 — своя строка, а не строка Sonnet 5 по префиксу.
+    assert.deepEqual(findModelPrice('claude-sonnet-5-5')?.match, ['claude-sonnet-5-5'])
+    assert.equal(findModelPrice('claude-sonnet-5-5')?.output, 10)
     assert.equal(findModelPrice('gpt-6'), undefined)
     assert.equal(tokensCost('gpt-6', rec(0, 'gpt-6', 1, 1)), undefined)
   })
