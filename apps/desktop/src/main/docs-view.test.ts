@@ -40,7 +40,8 @@ async function rejectsWith(p: Promise<unknown>, code: string, echo = false): Pro
 }
 
 beforeEach(() => {
-  tmp = realpathSync(mkdtempSync(path.join(tmpdir(), 'orca-docs-view-')))
+  // `.native`: на Windows обычный realpathSync оставляет короткое 8.3-имя (`RUNNER~1`), а код отдаёт полный путь.
+  tmp = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'orca-docs-view-')))
   repo = path.join(tmp, 'repo')
   execFileSync('git', ['init', '-q', '-b', 'master', repo])
   write(repo, 'README.md', '# readme\n')
