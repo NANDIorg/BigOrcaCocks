@@ -429,7 +429,8 @@ CLI этой команды нет: координатор тип не меня�
   Откат на версию без файлов: её `runImageFile` не знает `kind: 'file'` и запуск координатора у такой задачи упадёт с «недопустимое расширение».
 - **Миграция**: не нужна — поле опциональное, старые снапшоты читаются как «картинок нет» (тест «после рестарта картинки на месте»).
 - **Renderer**: байты для превью — `globalTasks.image` (`blob:` URL); старый preload/main без метода — «перезапустите приложение».
-  Вставка и проверка картинок — общий хук `useImageAttachments` + чистая логика `imagePaste.ts` (её же использует `CoordinatorModal`),
+  Вставка и проверка вложений — общий хук `useAttachmentDrafts` из `attachmentDrafts.ts` (тот же, что у `CoordinatorModal` и полей замечаний;
+  сохранённые вложения задачи входят в лимиты через `saved`),
   миниатюры — `ImageAttachments`. `GlobalTaskModal`: вставка из буфера в описание и кнопка «Добавить изображение»; при создании картинки
   уходят вторым аргументом `create`, при правке (пока `imagesEditable` = `canChangeRunType`) — `removeImage`, затем `addImages` при сохранении
   (отмена ничего не меняет); после начала работы сохранённые картинки только показываются. Просмотр сохранённых — `RunImageGallery` во вкладке «Цель и детали»,
@@ -437,8 +438,9 @@ CLI этой команды нет: координатор тип не меня�
   со встроенным `ImageLightbox`, общий для `CoordinatorModal`, `GlobalTaskModal`, `RunImageGallery` и `ImageAttachField` (поля замечаний):
   клик по миниатюре открывает картинку на весь экран, закрытие — Esc, клик по фону, «×», ←/→ — между картинками, счётчик «n из N».
   Лайтбокс рисуется порталом в `body` и, пока открыт, забирает клавиатуру; модалки со своим Esc проверяют `lightboxOpen()`
-  (логика — `imageViewer.ts`). Обёртка `runImagesApi` переводит отсутствие методов и «No handler registered»
-  в `global.stale.images`; старый main, молча потерявший картинки при `create`, определяется по ответу (`imagesLost`).
+  (логика — `imageViewer.ts`). Обёртка `runImagesApi` (`addImages`/`removeImage`/`image`/`revealAttachment`) переводит отсутствие методов
+  и «No handler registered» в `global.stale.images`; без `revealAttachment` (preload старше) остальные методы работают, ошибка — только
+  при «Показать в папке». Старый main, молча потерявший вложения при `create`, определяется по ответу (`imagesLost`).
 
 ### IPC — `window.orca.globalTasks` (активный проект; типы — `apps/desktop/src/shared/ipc.ts`)
 

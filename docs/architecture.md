@@ -1000,8 +1000,17 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 - **Resume координатора не сносит `returns/`**: `startCoordinator` при повторном запуске с вложениями цели чистит только `image-N.*` и `file-N-*` в корне
   папки прогона (`clearStartImages`), а не всю папку — пути возвратов лежат в `Run.stageInput.images` и `Run.returns[].images`, нужны перезапущенному
   координатору. Папка закрытого прогона с мёртвым координатором удаляется целиком (`pruneAttachments`).
-- **Рукопожатие**: `attachments:ping` → `true`. Новый preload с уже запущенным старым main молча отбросил бы лишний аргумент, поэтому
-  renderer перед показом «Приложить» зовёт `window.orca.attachments.ping()` и при отсутствии метода/хендлера просит перезапустить приложение.
+- **Рукопожатие**: `attachments:capabilities` → `{files, limits}`, до него — `attachments:ping` → `true`. Новый preload с уже запущенным
+  старым main молча отбросил бы лишний аргумент, поэтому renderer один раз на запуск спрашивает main (`probeAttachments` в
+  `renderer/src/attachmentDrafts.ts`): `files: true` — `ok`, любые файлы с `ATTACHMENT_LIMITS`; `files: false` или ответил только `ping` —
+  `imagesOnly`: выбор файла ограничен картинками, лимиты прежние `IMAGE_ATTACHMENT_LIMITS`, подсказка «другие файлы появятся после перезапуска»;
+  нет ни метода, ни хендлера — `stale`, «перезапустите приложение» (у цели координатора и глобальной задачи, где картинки были и раньше, — `imagesOnly`).
+- **Renderer**: одна логика вложений на все формы — `renderer/src/attachmentDrafts.ts` (бывшие `imageDrafts.ts`, `imagePaste.ts`,
+  `useImageAttachments.ts`): отбор файлов из буфера (`filesFromClipboard` — любые файловые элементы; `text/plain`, совпадающий с именами
+  файлов, как у файла из Finder/Проводника, в поле не вставляется) и перетаскивания (`filesFromDrop`: папка — отказ по `webkitGetAsEntry`),
+  проверки до и после чтения (ошибка — с именем файла, лимиты считаются вместе с сохранёнными у задачи), хук `useAttachmentDrafts` (в IPC
+  уходит `{mime, data, name}`). Модель чипа — `attachmentChip.ts` (бейдж расширения, обрезка имени посередине, размер через `formatBytes`,
+  `openable` — белый список показа без HTML).
 - **Агенту**: `attachmentsSection(paths, 'worker' | 'coordinator')` (`packages/core/src/attachments.ts`, без node-импортов; прежнее
   `returnImagesSection` — только для старых вызовов) — блок «К замечаниям приложены файлы (N)» с абсолютными путями и текстом `READ_FILES`:
   как открыть (Read, не cat; PDF — с `pages`; изображения — просмотром; архивы и офисные форматы — во временную папку вне репозитория),
@@ -3244,7 +3253,8 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 - Два параллельных PR добавили в `renderer/src/` файлы, различающиеся только регистром: компонент `ImageAttachments.tsx`
   и модуль `imageAttachments.ts`. На macOS и Windows файловая система регистр не различает: `import './ImageAttachments'`
   нашёл `.ts` вместо `.tsx`, typecheck упал с TS1149/TS1261, а сборка у пользователей подхватила бы не тот файл. Модуль
-  переименован в `imageDrafts.ts`. Не заводи файлы, чьи имена совпадают без учёта регистра, — даже с разным расширением.
+  переименован в `imageDrafts.ts` (позже вместе с `imagePaste.ts`/`useImageAttachments.ts` сведён в `attachmentDrafts.ts`). Не заводи
+  файлы, чьи имена совпадают без учёта регистра, — даже с разным расширением.
 
 - Те же два PR разошлись и в `styles.css`: один переименовал `.coord-image*` в `.attach-*` и удалил старые правила, другой
   рендерил в `ImageAttachments.tsx` классы `coord-image*`, считая их базовые правила существующими. После merge у классов

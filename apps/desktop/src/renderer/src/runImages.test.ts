@@ -47,6 +47,34 @@ test('runImagesApi: «No handler registered» от старого main — то 
   await assert.rejects(api.removeImage('g', 'i'), { message: 'другая ошибка' })
 })
 
+test('runImagesApi: revealAttachment — вызывается; нет метода или хендлера — «перезапустите», остальное работает', async () => {
+  const calls: string[] = []
+  const base = {
+    async addImages() { return {} as GlobalTask },
+    async removeImage() { return {} as GlobalTask },
+    async image() { return { mime: 'image/png', data: new Uint8Array(1) } }
+  }
+  const api = runImagesApi({ globalTasks: { ...base, async revealAttachment(id: string, imageId: string) { calls.push(`${id} ${imageId}`) } } })
+  await api.revealAttachment('g1', 'i1')
+  assert.deepEqual(calls, ['g1 i1'])
+
+  // Старый preload: метода нет, но картинки работают.
+  const old = runImagesApi({ globalTasks: base })
+  assert.deepEqual(await old.image('g', 'i'), { mime: 'image/png', data: new Uint8Array(1) })
+  await assert.rejects(old.revealAttachment('g', 'i'), { message: staleImagesMessage() })
+
+  // Новый preload, старый main.
+  const noHandler = runImagesApi({
+    globalTasks: {
+      ...base,
+      revealAttachment: async () => {
+        throw new Error("Error invoking remote method 'globalTasks:revealAttachment': Error: No handler registered for 'globalTasks:revealAttachment'")
+      }
+    }
+  })
+  await assert.rejects(noHandler.revealAttachment('g', 'i'), { message: staleImagesMessage() })
+})
+
 test('staleImagesMessage: на языке интерфейса', () => {
   setLocale('en')
   try {
@@ -56,7 +84,10 @@ test('staleImagesMessage: на языке интерфейса', () => {
   }
 })
 
-test('imagesLost: старый main проглотил картинки при создании', () => {
+test('imagesLost: старый main проглотил вложения при создании (файлы считаются наравне с картинками)', () => {
+  const file: RunImage = { id: 'f', kind: 'file', name: 'log.txt', mime: 'text/plain', ext: 'txt', bytes: 3, addedAt: 1 }
+  assert.equal(imagesLost({ images: [img('a'), file] }, 2), false)
+  assert.equal(imagesLost({ images: [img('a')] }, 2), true)
   assert.equal(imagesLost({}, 0), false)
   assert.equal(imagesLost({}, 2), true)
   assert.equal(imagesLost({ images: [img('a')] }, 2), true)
@@ -69,16 +100,16 @@ test('idsToRemove: уже удалённые прошлой попыткой п�
 })
 
 test('canSaveGlobal: создание — название или описание; с названием описание может быть пустым', () => {
-  const base = { busy: false, reading: 0, editing: false, title: '', description: '' }
+  const base = { busy: false, reading: false, editing: false, title: '', description: '' }
   assert.equal(canSaveGlobal(base), false)
   assert.equal(canSaveGlobal({ ...base, title: ' Экспорт ' }), true)
   assert.equal(canSaveGlobal({ ...base, description: 'цель' }), true)
 })
 
 test('canSaveGlobal: правка требует название; busy и чтение файлов блокируют', () => {
-  const base = { busy: false, reading: 0, editing: true, title: '', description: 'цель' }
+  const base = { busy: false, reading: false, editing: true, title: '', description: 'цель' }
   assert.equal(canSaveGlobal(base), false)
   assert.equal(canSaveGlobal({ ...base, title: 'Т' }), true)
   assert.equal(canSaveGlobal({ ...base, title: 'Т', busy: true }), false)
-  assert.equal(canSaveGlobal({ ...base, title: 'Т', reading: 1 }), false)
+  assert.equal(canSaveGlobal({ ...base, title: 'Т', reading: true }), false)
 })

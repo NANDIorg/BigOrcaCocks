@@ -10,7 +10,7 @@ import { useNow } from './useNow'
 import { isTypingTarget } from './hotkeys'
 import { useT } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageDrafts'
+import { useAttachmentDrafts } from './attachmentDrafts'
 import { onFocusFeed, onRevealInFeed, revealOnBoard, scrollBehavior } from './feedLink'
 import {
   ATTENTION_COLOR, ATTENTION_GLYPH, attentionCountTitle, attentionLabel, attentionSummary, defaultCollapsed, feedItemOfTask, questionAnswerText, questionAsRequest,
@@ -231,7 +231,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
   const [hint, setHint] = useState<string | null>(null)
   const [clarifying, setClarifying] = useState(false)
   const [text, setText] = useState('')
-  const attachments = useImageAttachments()
+  const attachments = useAttachmentDrafts()
   const t = useT()
   const taskTitle = task?.title ?? item.taskId
   const label = attentionLabel(item)

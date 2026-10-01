@@ -1,18 +1,17 @@
 import type React from 'react'
 import { useRef, useState } from 'react'
-import { DEFAULT_IMAGE_OBJECTIVE, type ImageAttachmentInput } from '@orca-board/core'
+import { DEFAULT_IMAGE_OBJECTIVE, type AttachmentInput } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
 import { builtinText } from './defaultTitles'
 import { ImageAttachments } from './ImageAttachments'
-import { pasteKeys } from './imagePaste'
-import { useImageAttachments } from './useImageAttachments'
+import { pasteKeys, useAttachmentDrafts } from './attachmentDrafts'
 import { isNoCommitsError } from './initialCommit'
 
 interface Props {
   onClose(): void
-  /** Пустая цель приходит только вместе с изображениями — main подставит стандартную. */
-  onStart(objective: string, images: ImageAttachmentInput[]): Promise<void>
+  /** Пустая цель приходит только вместе с вложениями — main подставит стандартную. */
+  onStart(objective: string, images: AttachmentInput[] | undefined): Promise<void>
   /** Репозиторий без коммитов (`git.noCommits`): окно начального коммита; после коммита оно вызовет `retry`. */
   onNoCommits(retry: () => void): void
 }
@@ -24,8 +23,8 @@ export function CoordinatorModal({ onClose, onStart, onNoCommits }: Props): Reac
   const [startError, setStartError] = useState<string | null>(null)
   // Синхронная защита от двойного запуска (до перерисовки с busy).
   const busyRef = useRef(false)
-  const pasted = useImageAttachments({ locked: busy })
-  const { images, reading } = pasted
+  const pasted = useAttachmentDrafts({ locked: busy, legacyImages: true })
+  const { items, reading } = pasted
   const error = pasted.error ?? startError
 
   const start = async (): Promise<void> => {
@@ -47,7 +46,7 @@ export function CoordinatorModal({ onClose, onStart, onNoCommits }: Props): Reac
     }
   }
 
-  const canStart = (objective.trim() !== '' || images.length > 0) && !busy && !reading
+  const canStart = (objective.trim() !== '' || items.length > 0) && !busy && !reading
   const close = (): void => {
     if (!busyRef.current) onClose()
   }
@@ -71,8 +70,8 @@ export function CoordinatorModal({ onClose, onStart, onNoCommits }: Props): Reac
         <span className="muted coord-hint">
           {t('shell.coordModal.pasteHint', { keys: pasteKeys(navigator.platform), goal: builtinText(DEFAULT_IMAGE_OBJECTIVE) })}
         </span>
-        <ImageAttachments items={images.map((img) => ({ key: String(img.id), url: img.url }))} reading={reading} disabled={busy} onRemove={(key) => pasted.remove(Number(key))} />
-        {error && <span className="error-text">{error}</span>}
+        <ImageAttachments items={items.map((it) => ({ key: String(it.id), url: it.url }))} reading={reading ? 1 : 0} disabled={busy} onRemove={(key) => pasted.remove(Number(key))} />
+        {error && <span className="error-text" style={{ whiteSpace: 'pre-line' }}>{error}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>{t('shell.cancel')}</button>
           <button className="btn-primary" disabled={!canStart} onClick={() => void start()}>

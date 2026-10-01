@@ -5,7 +5,7 @@ import { ipcErrorMessage } from './useAutoSave'
 import { isRunWorkflow, returnHint, reviewErrorMessage } from './globalReview'
 import { useT } from './i18n'
 import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageDrafts'
+import { useAttachmentDrafts } from './attachmentDrafts'
 import { lightboxOpen } from './imageViewer'
 
 interface Props {
@@ -31,7 +31,7 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, approvals
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busyRef = useRef(false)
-  const attachments = useImageAttachments()
+  const attachments = useAttachmentDrafts()
   const many = approvals > 1 && isRunWorkflow(global)
   const canSubmit = !busy && text.trim() !== '' && !attachments.reading && !many
   const title = lane !== undefined && !many ? t('global.return.titleLane', { lane }) : t('global.return.title')

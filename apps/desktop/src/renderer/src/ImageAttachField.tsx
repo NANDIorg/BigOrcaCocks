@@ -1,55 +1,36 @@
 import type React from 'react'
 import { useRef, useState } from 'react'
-import { IMAGE_ATTACHMENT_TYPES } from '@orca-board/core'
 import { useT } from './i18n'
-// Компонент ряда миниатюр; имя `ImageAttachments` здесь занято типом состояния из imageDrafts.
-import { ImageAttachments as ImageThumbs } from './ImageAttachments'
-import {
-  dragHasFiles,
-  imageFilesFromClipboard,
-  imageFilesFromDrop,
-  useAttachmentsSupport,
-  type ImageAttachments
-} from './imageDrafts'
+import { ImageAttachments } from './ImageAttachments'
+import { acceptFor, dragHasFiles, filesFromDrop, limitsFor, pasteKeys, type AttachmentDrafts } from './attachmentDrafts'
 
 interface Props {
-  attachments: ImageAttachments
+  attachments: AttachmentDrafts
   /** Идёт отправка: вставка, drop и удаление выключены. */
   disabled?: boolean
   /** Тесное место (карточка на доске, лента): мелкие миниатюры, без подсказки. */
   compact?: boolean
-  /**
-   * Спросить main через `attachments.ping()`, что он умеет принимать картинки. Нужно всем формам возврата:
-   * старый main молча отбросил бы лишний аргумент. Форма, у которой картинки были и раньше (цель координатора), — false.
-   */
-  checkApp?: boolean
   /** Своя подсказка вместо стандартной (у цели координатора она ещё говорит про цель по умолчанию). */
   hint?: string
   /** Поле ввода, к которому приложены картинки (`<textarea>`): вставка из буфера ловится всплытием. */
   children: React.ReactNode
 }
 
-const ACCEPT = Object.keys(IMAGE_ATTACHMENT_TYPES).join(',')
-
 /**
  * Обёртка над полем текста: «Приложить» (выбор файла), вставка из буфера (⌘V/Ctrl+V), перетаскивание файла,
- * миниатюры с «×» и ошибки под полем. Состояние — в `useImageAttachments()` у формы: ей же нужны байты
- * при отправке. Текст в поле не трогаем — введённое не теряется ни при какой ошибке картинки.
+ * миниатюры с «×» и ошибки под полем. Состояние и рукопожатие с main — в `useAttachmentDrafts()` у формы: ей же
+ * нужны байты при отправке. Текст в поле не трогаем — введённое не теряется ни при какой ошибке вложения.
  */
-export function ImageAttachField({ attachments, disabled = false, compact = false, checkApp = true, hint, children }: Props): React.JSX.Element {
+export function ImageAttachField({ attachments, disabled = false, compact = false, hint, children }: Props): React.JSX.Element {
   const t = useT()
-  const support = useAttachmentsSupport(checkApp)
   const [dragging, setDragging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  const { images, reading, error } = attachments
-  const active = support === 'ok' && !disabled
+  const { items, reading, error, support, mode } = attachments
+  const active = (support === 'ok' || support === 'imagesOnly') && !disabled
+  const limits = limitsFor(mode)
 
   const onPaste = (e: React.ClipboardEvent): void => {
-    const files = imageFilesFromClipboard(e.clipboardData.items)
-    if (files.length === 0) return // обычный текст — стандартная вставка
-    // Текст вставляем как обычно, если он есть рядом с картинкой; иначе браузеру вставлять нечего.
-    if (!e.clipboardData.getData('text/plain')) e.preventDefault()
-    if (active) attachments.add(files)
+    if (active) attachments.onPaste(e)
   }
 
   const onDragOver = (e: React.DragEvent): void => {
@@ -69,11 +50,13 @@ export function ImageAttachField({ attachments, disabled = false, compact = fals
     e.preventDefault()
     e.stopPropagation()
     setDragging(false)
-    if (active) attachments.add(imageFilesFromDrop(e.dataTransfer.files))
+    if (!active) return
+    const { files, folders } = filesFromDrop(e.dataTransfer)
+    attachments.add(files, folders)
   }
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    attachments.add(imageFilesFromDrop(e.target.files))
+    attachments.add(filesFromDrop({ files: e.target.files }).files)
     e.target.value = '' // тот же файл можно выбрать повторно после «×»
   }
 
@@ -94,27 +77,28 @@ export function ImageAttachField({ attachments, disabled = false, compact = fals
             type="button"
             className="btn-sm attach-add"
             disabled={!active}
-            title={t('common.attach.addTitle')}
+            title={mode === 'files' ? t('common.attach.addTitle', { count: limits.maxCount, mb: limits.maxBytes / (1024 * 1024) }) : t('common.attach.addTitleImages')}
             onClick={() => fileRef.current?.click()}
           >
             📎 {t('common.attach.add')}
           </button>
-          <input ref={fileRef} type="file" accept={ACCEPT} multiple hidden tabIndex={-1} onChange={onPick} />
+          <input ref={fileRef} type="file" accept={acceptFor(mode)} multiple hidden tabIndex={-1} onChange={onPick} />
           {!compact && (
             <span className="muted attach-hint">
-              {hint ?? t('common.attach.hint', { keys: navigator.platform.startsWith('Mac') ? '⌘V' : 'Ctrl+V' })}
+              {hint ?? t(mode === 'files' ? 'common.attach.hint' : 'common.attach.hintImages', { keys: pasteKeys(navigator.platform) })}
             </span>
           )}
         </div>
       )}
-      <ImageThumbs
-        items={images.map((img) => ({ key: String(img.id), url: img.url }))}
+      <ImageAttachments
+        items={items.map((it) => ({ key: String(it.id), url: it.url }))}
         reading={reading ? 1 : 0}
         compact={compact}
         disabled={disabled}
         onRemove={(key) => attachments.remove(Number(key))}
       />
-      {error && <span className="error-text">{error}</span>}
+      {/* По строке на отвергнутый файл. */}
+      {error && <span className="error-text" style={{ whiteSpace: 'pre-line' }}>{error}</span>}
     </div>
   )
 }
