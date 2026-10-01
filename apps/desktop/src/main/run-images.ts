@@ -17,6 +17,7 @@ import {
   IMAGE_ATTACHMENT_TYPES, assertAttachmentBudget, newId,
   type Attachment, type GlobalTask, type Run, type RunImage, type TaskStore
 } from '@orca-board/core'
+import { attachmentOpenable } from '../shared/showcase'
 import { OrcaError } from './i18n'
 
 const ROOT_DIR = 'run-images'
@@ -225,5 +226,17 @@ export function loadTaskImage(store: TaskStore, root: string, projectId: string,
  * задачи (`imageId` из IPC путь не задаёт), идентификаторы проверены `safe`. Файл не открывается и не запускается.
  */
 export function revealTaskAttachment(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): string {
+  return existingFile(store, root, projectId, runId, imageId).file
+}
+
+/**
+ * Абсолютный путь вложения для «Открыть» (`shell.openPath`) — только расширение из белого списка
+ * (`attachmentOpenable`: картинки, Markdown, PDF; без HTML). Остальное приложение не открывает и не запускает —
+ * `global.attachmentNotOpenable`, его можно только показать в папке. Как и `revealTaskAttachment`, путь строится из
+ * метаданных этой задачи.
+ */
+export function openTaskAttachment(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): string {
+  const meta = findImage(store, runId, imageId)
+  if (!attachmentOpenable(meta.ext)) throw new OrcaError('global.attachmentNotOpenable', { imageId: meta.id })
   return existingFile(store, root, projectId, runId, imageId).file
 }

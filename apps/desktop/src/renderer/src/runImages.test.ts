@@ -75,6 +75,31 @@ test('runImagesApi: revealAttachment — вызывается; нет метод
   await assert.rejects(noHandler.revealAttachment('g', 'i'), { message: staleImagesMessage() })
 })
 
+test('runImagesApi: openAttachment — как revealAttachment: есть — вызывается, нет метода или хендлера — «перезапустите»', async () => {
+  const calls: string[] = []
+  const base = {
+    async addImages() { return {} as GlobalTask },
+    async removeImage() { return {} as GlobalTask },
+    async image() { return { mime: 'image/png', data: new Uint8Array(1) } },
+    async revealAttachment() {}
+  }
+  await runImagesApi({ globalTasks: { ...base, async openAttachment(id: string, imageId: string) { calls.push(`${id} ${imageId}`) } } }).openAttachment('g1', 'i1')
+  assert.deepEqual(calls, ['g1 i1'])
+  // preload с revealAttachment, но без openAttachment: показать в папке можно, открыть — «перезапустите».
+  const older = runImagesApi({ globalTasks: base })
+  await older.revealAttachment('g', 'i')
+  await assert.rejects(older.openAttachment('g', 'i'), { message: staleImagesMessage() })
+  const noHandler = runImagesApi({
+    globalTasks: {
+      ...base,
+      openAttachment: async () => {
+        throw new Error("Error invoking remote method 'globalTasks:openAttachment': Error: No handler registered for 'globalTasks:openAttachment'")
+      }
+    }
+  })
+  await assert.rejects(noHandler.openAttachment('g', 'i'), { message: staleImagesMessage() })
+})
+
 test('staleImagesMessage: на языке интерфейса', () => {
   setLocale('en')
   try {

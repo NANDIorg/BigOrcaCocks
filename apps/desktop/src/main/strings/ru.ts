@@ -196,6 +196,7 @@ export default {
   'global.imageNotFound': 'у глобальной задачи нет вложения {imageId}',
   'global.imageFileMissing': 'файл вложения {imageId} не найден на диске — удалите вложение и приложите файл заново',
   'global.notAnImage': 'вложение {imageId} — не изображение: превью нет, его можно показать в папке',
+  'global.attachmentNotOpenable': 'вложение {imageId} не открывается приложением — его можно показать в папке',
   'global.imagesEmpty': 'нет вложений для добавления',
   'global.imagesSaveFailed': 'не удалось сохранить вложения задачи: {reason}',
   'global.approvalAmbiguous': {

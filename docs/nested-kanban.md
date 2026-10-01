@@ -431,16 +431,21 @@ CLI этой команды нет: координатор тип не меня�
 - **Renderer**: байты для превью — `globalTasks.image` (`blob:` URL); старый preload/main без метода — «перезапустите приложение».
   Вставка и проверка вложений — общий хук `useAttachmentDrafts` из `attachmentDrafts.ts` (тот же, что у `CoordinatorModal` и полей замечаний;
   сохранённые вложения задачи входят в лимиты через `saved`),
-  миниатюры — `ImageAttachments`. `GlobalTaskModal`: вставка из буфера в описание и кнопка «Добавить изображение»; при создании картинки
-  уходят вторым аргументом `create`, при правке (пока `imagesEditable` = `canChangeRunType`) — `removeImage`, затем `addImages` при сохранении
-  (отмена ничего не меняет); после начала работы сохранённые картинки только показываются. Просмотр сохранённых — `RunImageGallery` во вкладке «Цель и детали»,
-  на карточке доски — значок-счётчик. Миниатюры (72 px, в тесных местах 48 px) и просмотр — один компонент `ImageAttachments`
-  со встроенным `ImageLightbox`, общий для `CoordinatorModal`, `GlobalTaskModal`, `RunImageGallery` и `ImageAttachField` (поля замечаний):
+  ряд вложений — `AttachmentList`. `GlobalTaskModal`: описание обёрнуто в общее поле `AttachmentField` (кнопка «Приложить», вставка, перетаскивание);
+  при создании вложения уходят вторым аргументом `create`, при правке (пока `imagesEditable` = `canChangeRunType`) — `removeImage`, затем `addImages`
+  при сохранении (отмена ничего не меняет); после начала работы вместо кнопки — «вложения не меняются», сохранённые только показываются.
+  Просмотр сохранённых — `RunImageGallery` во вкладке «Цель и детали», на карточке доски — значок-счётчик «Вложений: N» (значок картинки,
+  если все вложения — картинки, иначе документа). `AttachmentList` — один ряд для всех мест (`AttachmentField` в `CoordinatorModal`,
+  `GlobalTaskModal` и полях замечаний, `RunImageGallery`): картинка — миниатюра 72 px (в тесных местах 48 px) со встроенным `ImageLightbox`,
+  файл — карточка той же высоты: бейдж расширения, имя с обрезкой посередине и размер (`attachmentChip.ts`; в тесном виде — одна строка без размера).
+  У сохранённых файлов — «Показать в папке» (`revealAttachment`) и «Открыть» (`openAttachment`, только `attachmentOpenable` из `shared/showcase.ts`:
+  картинки, Markdown, PDF, без HTML); у черновика формы файла на диске ещё нет — только «×». Превью (`globalTasks.image`) берётся только у картинок.
+  Миниатюра картинки:
   клик по миниатюре открывает картинку на весь экран, закрытие — Esc, клик по фону, «×», ←/→ — между картинками, счётчик «n из N».
   Лайтбокс рисуется порталом в `body` и, пока открыт, забирает клавиатуру; модалки со своим Esc проверяют `lightboxOpen()`
-  (логика — `imageViewer.ts`). Обёртка `runImagesApi` (`addImages`/`removeImage`/`image`/`revealAttachment`) переводит отсутствие методов
-  и «No handler registered» в `global.stale.images`; без `revealAttachment` (preload старше) остальные методы работают, ошибка — только
-  при «Показать в папке». Старый main, молча потерявший вложения при `create`, определяется по ответу (`imagesLost`).
+  (логика — `imageViewer.ts`). Обёртка `runImagesApi` (`addImages`/`removeImage`/`image`/`revealAttachment`/`openAttachment`) переводит отсутствие методов
+  и «No handler registered» в `global.stale.images`; без `revealAttachment`/`openAttachment` (preload старше) остальные методы работают,
+  ошибка — только при «Показать в папке» / «Открыть». Старый main, молча потерявший вложения при `create`, определяется по ответу (`imagesLost`).
 
 ### IPC — `window.orca.globalTasks` (активный проект; типы — `apps/desktop/src/shared/ipc.ts`)
 
@@ -455,6 +460,7 @@ CLI этой команды нет: координатор тип не меня�
 | `removeImage(id, imageId)` | `globalTasks:removeImage` | `GlobalTask` | нет задачи или картинки; задачу править нельзя |
 | `image(id, imageId)` | `globalTasks:image` | `{mime, data: Uint8Array}` | нет задачи, картинки или файла; вложение — не картинка (`global.notAnImage`) |
 | `revealAttachment(id, imageId)` | `globalTasks:revealAttachment` | — (показывает файл в папке системы) | нет задачи, вложения или файла (`global.imageFileMissing`) |
+| `openAttachment(id, imageId)` | `globalTasks:openAttachment` | — (открывает файл приложением системы, `shell.openPath`) | расширение не из белого списка `attachmentOpenable` — картинки, Markdown, PDF, без HTML (`global.attachmentNotOpenable`); нет задачи, вложения или файла |
 | `changeType(id, typeId)` | `globalTasks:changeType` | `GlobalTask` | тип не найден или недоступен проекту; тип сменить нельзя (`runTypeLockReason`, см. «Смена типа») |
 | `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |

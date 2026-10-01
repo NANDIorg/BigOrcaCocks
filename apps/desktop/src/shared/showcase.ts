@@ -62,6 +62,20 @@ export const SHOWCASE_ASSET_TYPES: Readonly<Record<string, string>> = {
   '.wav': 'audio/wav'
 }
 
+/** HTML из вложения открылся бы в браузере со скриптами — его только показываем в папке. */
+const ATTACHMENT_NOT_OPENABLE = new Set(['.html', '.htm'])
+
+/**
+ * Можно ли открыть вложение глобальной задачи приложением системы («Открыть»): расширение (без точки, любой регистр)
+ * из белого списка показа без HTML. Запускать произвольный файл (`.sh`, `.app`) нельзя — остальным только
+ * «Показать в папке». Один список для main (`globalTasks:openAttachment`) и renderer (кнопка в карточке файла).
+ */
+export function attachmentOpenable(ext: string): boolean {
+  if (!/^[a-z0-9]{1,10}$/i.test(ext)) return false
+  const key = `.${ext.toLowerCase()}`
+  return Object.hasOwn(SHOWCASE_FILE_TYPES, key) && !ATTACHMENT_NOT_OPENABLE.has(key)
+}
+
 /** Больше не читаем в renderer (превью): макеты и скриншоты, не видео. Открыть кнопкой можно и больше. */
 export const SHOWCASE_READ_MAX_BYTES = 10 * 1024 * 1024
 

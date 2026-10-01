@@ -1,10 +1,10 @@
 import type React from 'react'
 import { useRef, useState } from 'react'
-import { DEFAULT_IMAGE_OBJECTIVE, type AttachmentInput } from '@orca-board/core'
+import { DEFAULT_ATTACHMENT_OBJECTIVE, type AttachmentInput } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { useT } from './i18n'
 import { builtinText } from './defaultTitles'
-import { ImageAttachments } from './ImageAttachments'
+import { AttachmentField } from './AttachmentField'
 import { pasteKeys, useAttachmentDrafts } from './attachmentDrafts'
 import { isNoCommitsError } from './initialCommit'
 
@@ -25,7 +25,6 @@ export function CoordinatorModal({ onClose, onStart, onNoCommits }: Props): Reac
   const busyRef = useRef(false)
   const pasted = useAttachmentDrafts({ locked: busy, legacyImages: true })
   const { items, reading } = pasted
-  const error = pasted.error ?? startError
 
   const start = async (): Promise<void> => {
     if (busyRef.current) return
@@ -56,22 +55,23 @@ export function CoordinatorModal({ onClose, onStart, onNoCommits }: Props): Reac
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{t('shell.coordModal.title')}</h3>
         <p className="muted" style={{ margin: 0 }}>{t('shell.coordModal.intro')}</p>
-        <label>
-          {t('shell.coordModal.goal')}
-          <textarea
-            autoFocus
-            value={objective}
-            readOnly={busy}
-            onChange={(e) => setObjective(e.target.value)}
-            onPaste={pasted.onPaste}
-            placeholder={t('shell.coordModal.goalPlaceholder')}
-          />
-        </label>
-        <span className="muted coord-hint">
-          {t('shell.coordModal.pasteHint', { keys: pasteKeys(navigator.platform), goal: builtinText(DEFAULT_IMAGE_OBJECTIVE) })}
-        </span>
-        <ImageAttachments items={items.map((it) => ({ key: String(it.id), url: it.url }))} reading={reading ? 1 : 0} disabled={busy} onRemove={(key) => pasted.remove(Number(key))} />
-        {error && <span className="error-text" style={{ whiteSpace: 'pre-line' }}>{error}</span>}
+        <AttachmentField
+          attachments={pasted}
+          disabled={busy}
+          hint={t('shell.coordModal.pasteHint', { keys: pasteKeys(navigator.platform), goal: builtinText(DEFAULT_ATTACHMENT_OBJECTIVE) })}
+        >
+          <label>
+            {t('shell.coordModal.goal')}
+            <textarea
+              autoFocus
+              value={objective}
+              readOnly={busy}
+              onChange={(e) => setObjective(e.target.value)}
+              placeholder={t('shell.coordModal.goalPlaceholder')}
+            />
+          </label>
+        </AttachmentField>
+        {startError && <span className="error-text attach-error">{startError}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>{t('shell.cancel')}</button>
           <button className="btn-primary" disabled={!canStart} onClick={() => void start()}>

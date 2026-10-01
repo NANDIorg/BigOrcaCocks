@@ -32,7 +32,7 @@ import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
-import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir, revealTaskAttachment } from './run-images'
+import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir, revealTaskAttachment, openTaskAttachment } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { exportTaskTypeToFile } from './task-type-export'
@@ -969,10 +969,16 @@ function registerIpc(): void {
     const p = resolveProject()
     return loadTaskImage(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId)
   })
-  // Показать в папке — любое вложение задачи (только из её метаданных); открыть файл приложением отсюда нельзя.
+  // Показать в папке — любое вложение задачи (только из её метаданных).
   handle('globalTasks:revealAttachment', (_e, id: string, imageId: string) => {
     const p = resolveProject()
     shell.showItemInFolder(revealTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
+  })
+  // Открыть приложением системы — только белый список (`attachmentOpenable`: картинки, Markdown, PDF), не HTML и не программы.
+  handle('globalTasks:openAttachment', async (_e, id: string, imageId: string) => {
+    const p = resolveProject()
+    const err = await shell.openPath(openTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
+    if (err) throw new Error(err)
   })
   handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
   handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>

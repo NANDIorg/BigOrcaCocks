@@ -192,6 +192,7 @@ export default {
   'global.imageNotFound': 'the global task has no attachment {imageId}',
   'global.imageFileMissing': 'the file of attachment {imageId} was not found on disk — remove the attachment and attach the file again',
   'global.notAnImage': 'attachment {imageId} is not an image: it has no preview, but it can be shown in its folder',
+  'global.attachmentNotOpenable': 'attachment {imageId} cannot be opened from the app — it can be shown in its folder',
   'global.imagesEmpty': 'no attachments to add',
   'global.imagesSaveFailed': 'could not save the task attachments: {reason}',
   'global.approvalAmbiguous': {

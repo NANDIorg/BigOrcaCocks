@@ -28,15 +28,15 @@ export function imagesEditable(
 }
 
 type GlobalTasksApi = OrcaApi['globalTasks']
-type ImagesApi = Pick<GlobalTasksApi, 'addImages' | 'removeImage' | 'image' | 'revealAttachment'>
+type ImagesApi = Pick<GlobalTasksApi, 'addImages' | 'removeImage' | 'image' | 'revealAttachment' | 'openAttachment'>
 
 const NO_HANDLER = (name: string): RegExp => new RegExp(`No handler registered for 'globalTasks:${name}'`)
 
 /**
- * `globalTasks.addImages/removeImage/image/revealAttachment` или ошибка «перезапустите приложение». Новый preload
- * со старым main падает на invoke «No handler registered for 'globalTasks:…'» — её тоже переводим в понятное
- * сообщение. `revealAttachment` появился позже остальных: его отсутствие не мешает работать с картинками,
- * ошибка — только при вызове.
+ * `globalTasks.addImages/removeImage/image/revealAttachment/openAttachment` или ошибка «перезапустите приложение».
+ * Новый preload со старым main падает на invoke «No handler registered for 'globalTasks:…'» — её тоже переводим
+ * в понятное сообщение. `revealAttachment` и `openAttachment` появились позже остальных: их отсутствие не мешает
+ * работать с картинками, ошибка — только при вызове.
  */
 export function runImagesApi(api: { globalTasks?: Partial<GlobalTasksApi> } | undefined): ImagesApi {
   const gt = api?.globalTasks
@@ -52,17 +52,20 @@ export function runImagesApi(api: { globalTasks?: Partial<GlobalTasksApi> } | un
         throw e
       }
     }
-  const reveal = gt.revealAttachment
+  const later = (name: 'revealAttachment' | 'openAttachment'): ((id: string, imageId: string) => Promise<void>) => {
+    const fn = gt[name]
+    return typeof fn === 'function'
+      ? wrap(name, fn)
+      : async () => {
+        throw new Error(staleImagesMessage())
+      }
+  }
   return {
     addImages: wrap('addImages', gt.addImages),
     removeImage: wrap('removeImage', gt.removeImage),
     image: wrap('image', gt.image),
-    revealAttachment:
-      typeof reveal === 'function'
-        ? wrap('revealAttachment', reveal)
-        : async () => {
-          throw new Error(staleImagesMessage())
-        }
+    revealAttachment: later('revealAttachment'),
+    openAttachment: later('openAttachment')
   }
 }
 

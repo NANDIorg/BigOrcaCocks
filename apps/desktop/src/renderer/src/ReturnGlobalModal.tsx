@@ -1,10 +1,10 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { GlobalTask, ImageAttachmentInput } from '@orca-board/core'
+import type { GlobalTask, AttachmentInput } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { isRunWorkflow, returnHint, reviewErrorMessage } from './globalReview'
 import { useT } from './i18n'
-import { ImageAttachField } from './ImageAttachField'
+import { AttachmentField } from './AttachmentField'
 import { useAttachmentDrafts } from './attachmentDrafts'
 import { lightboxOpen } from './imageViewer'
 
@@ -21,7 +21,7 @@ interface Props {
   lane?: string
   onClose(): void
   /** Возврат с уточнением: задача уходит в работу, запускается координатор. Ошибка остаётся в модалке. */
-  onSubmit(text: string, images?: ImageAttachmentInput[]): Promise<void>
+  onSubmit(text: string, images?: AttachmentInput[]): Promise<void>
 }
 
 /** «Вернуть в работу…» с «Проверки»: что доделать — обязательно, это уточнение попадёт в цель координатора. */
@@ -72,7 +72,7 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, approvals
       <div className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
         <p className="muted modal-sub" title={global.title}>{global.title}</p>
-        <ImageAttachField attachments={attachments} disabled={busy}>
+        <AttachmentField attachments={attachments} disabled={busy}>
           <label>
             {t('global.return.what')}
             <textarea
@@ -85,7 +85,7 @@ export function ReturnGlobalModal({ global, closesCoordinator = false, approvals
               placeholder={t('global.return.placeholder')}
             />
           </label>
-        </ImageAttachField>
+        </AttachmentField>
         {many
           ? <span className="muted g-return-hint">{t('global.action.manyApprovals', { count: approvals })}. {t('global.action.manyApprovalsTitle')}</span>
           : <span className="muted g-return-hint">{returnHint(closesCoordinator, isRunWorkflow(global), lane)} {t('global.return.send')}</span>}
