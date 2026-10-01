@@ -4,8 +4,8 @@ import type { DocFile, DocGroup } from '../../shared/ipc'
 import { DOCS_LIST_LIMIT } from '../../shared/docs-view'
 import { isRecent } from './docLinks'
 import {
-  buildTree, chainLabel, highlight, recentFiles, RECENT_LIMIT, sameDoc, searchFiles, shortTime,
-  type DocRef, type FileHit, type PathMatch, type TaskMark, type TreeNode
+  buildTree, chainLabel, highlight, isTreeKey, navigate, recentFiles, RECENT_LIMIT, sameDoc, searchFiles, shortTime, treeRows,
+  type DocRef, type FileHit, type PathMatch, type TaskMark, type TreeNode, type TreeRow
 } from './docTree'
 import { docIconOf } from './docView'
 import type { TextMatch } from './docFind'
@@ -29,6 +29,9 @@ export function TaskDot({ mark }: { mark?: TaskMark }): React.JSX.Element {
 
 const dirOf = (path: string): string => path.slice(0, path.lastIndexOf('/') + 1)
 export const dirKey = (source: string, path: string): string => `${source}:${path}`
+/** Ключ строки файла в дереве; папка и файл с одним путём на диске не встречаются, так что с `dirKey` не путается. */
+const fileKey = (source: string, path: string): string => `${source}:${path}`
+const projectKeyOf = (n: TreeNode): string => (n.kind === 'dir' ? dirKey('project', n.path) : fileKey('project', n.file.path))
 
 interface SourceHit extends FileHit {
   source: string
@@ -88,6 +91,9 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
   const [focus, setFocus] = useState(false)
   const [kb, setKb] = useState(0)
   const kbRef = useRef<HTMLButtonElement>(null)
+  /** Строка дерева с фокусом (roving tabindex): единственная, до которой доходит Tab. */
+  const [focusKey, setFocusKey] = useState<string | null>(null)
+  const treeRef = useRef<HTMLDivElement>(null)
 
   const project = groups?.find((g) => g.source === 'project')
   const tasks = useMemo(() => (groups ?? []).filter((g) => g.source !== 'project'), [groups])
@@ -99,6 +105,14 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
 
   const tree = useMemo(() => buildTree(project?.files ?? []), [project])
   const recent = useMemo(() => (p.mode === 'recent' ? recentFiles(project?.files ?? []) : []), [project, p.mode])
+  /** Видимые строки в порядке показа — для стрелок; файлы задач — плоский список после проекта. */
+  const rows = useMemo((): TreeRow[] => {
+    const own = p.mode === 'tree' ? treeRows(tree, p.openDirs, projectKeyOf) : recent.map((f) => ({ key: fileKey('project', f.path), dir: false, parent: null }))
+    const taskRows = tasks.flatMap((g) => g.files.map((f) => ({ key: fileKey(g.source, f.path), dir: false, parent: null })))
+    return [...own, ...taskRows]
+  }, [p.mode, tree, p.openDirs, recent, tasks])
+  const currentKey = current ? fileKey(current.source, current.path) : null
+  const tabStop = [focusKey, currentKey].find((k) => k !== null && rows.some((r) => r.key === k)) ?? rows[0]?.key ?? null
 
   const projectSearch = useMemo(() => (searching ? searchGroup(project, searchQuery) : { hits: [], more: 0 }), [searching, project, searchQuery])
   const projectHits = projectSearch.hits
@@ -112,6 +126,10 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
   useEffect(() => {
     kbRef.current?.scrollIntoView({ block: 'nearest' })
   }, [kb])
+  // Открыли документ из поиска или по ссылке — Tab в дерево ведёт к нему, а не к прошлой строке.
+  useEffect(() => {
+    setFocusKey(null)
+  }, [currentKey])
 
   function activate(i: number): void {
     const file = [...projectHits, ...taskHits][i]
@@ -135,18 +153,51 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
     }
   }
 
+  function focusRow(key: string): void {
+    setFocusKey(key)
+    const el = [...(treeRef.current?.querySelectorAll<HTMLElement>('[data-row-key]') ?? [])].find((r) => r.dataset.rowKey === key)
+    el?.focus()
+    el?.scrollIntoView({ block: 'nearest' })
+  }
+
+  /** Клавиатура дерева: стрелки, Home/End — `navigate`; Enter и пробел — открыть файл или переключить папку. */
+  function onTreeKeyDown(e: React.KeyboardEvent<HTMLDivElement>): void {
+    if (e.altKey || e.metaKey || e.ctrlKey) return
+    if (isTreeKey(e.key)) {
+      e.preventDefault()
+      const move = navigate(rows, tabStop, e.key)
+      if (move.toggle) p.onToggleDir(move.toggle)
+      if (move.focus) focusRow(move.focus)
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      const row = (e.target as HTMLElement).closest<HTMLElement>('[data-row-key]')
+      if (!row) return
+      e.preventDefault()
+      row.click()
+    }
+  }
+
+  /** Общие атрибуты строки дерева: роль, уровень, место в обходе Tab. */
+  const itemProps = (key: string, depth: number): React.HTMLAttributes<HTMLDivElement> & { 'data-row-key': string } => ({
+    role: 'treeitem',
+    'aria-level': depth + 1,
+    tabIndex: key === tabStop ? 0 : -1,
+    'data-row-key': key,
+    onFocus: () => setFocusKey(key)
+  })
+
   const fileRow = (source: string, f: DocFile, depth: number, label?: React.ReactNode, spacer = true): React.JSX.Element => {
     const doc = { source, path: f.path }
     const active = sameDoc(current, doc)
+    const key = fileKey(source, f.path)
     return (
-      <button key={`${source}:${f.path}`} className={`docs-row file ${active ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={f.path} aria-current={active ? 'true' : undefined} onClick={() => p.onOpen(doc)}>
+      <div key={key} {...itemProps(key, depth)} className={`docs-row file ${active ? 'active' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={f.path} aria-selected={active} onClick={() => p.onOpen(doc)}>
         {spacer && <span className="docs-spacer" />}
         <FileKindIcon path={f.path} />
         <span className="docs-nm">{label ?? f.path.slice(f.path.lastIndexOf('/') + 1)}</span>
         {f.link && <LinkMark />}
         <DocBadge file={f} now={now} />
         <span className="docs-tm">{shortTime(f.mtime, now)}</span>
-      </button>
+      </div>
     )
   }
 
@@ -156,12 +207,12 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
       const key = dirKey('project', n.path)
       const open = p.openDirs.has(key)
       return [
-        <button key={key} data-dir-key={key} className={`docs-row dir ${open ? 'open' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={n.path} aria-expanded={open} onClick={() => p.onToggleDir(key)}>
+        <div key={key} {...itemProps(key, depth)} data-dir-key={key} className={`docs-row dir ${open ? 'open' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} title={n.path} aria-expanded={open} onClick={() => p.onToggleDir(key)}>
           <DocIcon.chev />
           {open ? <DocIcon.folderOpen /> : <DocIcon.folder />}
           <span className="docs-nm">{chainLabel(n.name)}</span>
           <span className="docs-cnt">{formatInteger(n.count)}</span>
-        </button>,
+        </div>,
         ...(open ? nodes(n.children, depth + 1) : [])
       ]
     })
@@ -270,17 +321,17 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
           </>
         )}
         {groups !== null && !searching && (
-          <>
-            <div className="docs-grp">{t('config.docs.tree.project')}<span className="n">{projectCountLabel}</span></div>
+          <div role="tree" aria-label={t('config.docs.tree.aria')} ref={treeRef} onKeyDown={onTreeKeyDown}>
+            <div className="docs-grp" role="none">{t('config.docs.tree.project')}<span className="n">{projectCountLabel}</span></div>
             {p.mode === 'tree' ? nodes(tree, 0) : recent.map((f) => fileRow('project', f, 0, <>{f.path.slice(f.path.lastIndexOf('/') + 1)}{f.path.includes('/') && <span className="docs-row-dir">{dirOf(f.path)}</span>}</>))}
-            {p.mode === 'recent' && projectCount > RECENT_LIMIT && <div className="docs-more">{t('config.docs.tree.recentMore', { limit: formatInteger(RECENT_LIMIT) })}</div>}
-            <div className="docs-grp">{t('config.docs.tree.tasks')}<span className="n">{taskFiles}</span></div>
-            {!empty && taskFiles === 0 && <div className="muted docs-hint">{t('config.docs.tree.noTaskFiles')}</div>}
+            {p.mode === 'recent' && projectCount > RECENT_LIMIT && <div className="docs-more" role="none">{t('config.docs.tree.recentMore', { limit: formatInteger(RECENT_LIMIT) })}</div>}
+            <div className="docs-grp" role="none">{t('config.docs.tree.tasks')}<span className="n">{taskFiles}</span></div>
+            {!empty && taskFiles === 0 && <div className="muted docs-hint" role="none">{t('config.docs.tree.noTaskFiles')}</div>}
             {tasks
               .filter((g) => g.files.length > 0)
               .map((g) => (
-                <div key={g.source} className="docs-task">
-                  <div className="docs-task-row" title={g.branch}>
+                <div key={g.source} className="docs-task" role="none">
+                  <div className="docs-task-row" role="none" title={g.branch}>
                     <TaskDot mark={marks.get(g.source)} />
                     <span className="t">{g.title}</span>
                     {marks.get(g.source) && <span className="st">{marks.get(g.source)?.status}</span>}
@@ -288,7 +339,7 @@ export function DocsTree(p: DocsTreeProps): React.JSX.Element {
                   {g.files.map((f) => fileRow(g.source, f, 1, f.path, false))}
                 </div>
               ))}
-          </>
+          </div>
         )}
       </div>
       {searching && (

@@ -855,7 +855,7 @@ export default {
   'docs.view.loading': 'Loading {name}…',
   'docs.view.frameTitle': 'Preview of {name}',
   'docs.view.isolatedBanner': 'Isolated page, network is off.',
-  'docs.view.isolatedHint': 'Files with a dot in the path (.env, .git) are not available to the page, and neither are scripts from node_modules or a build.',
+  'docs.view.isolatedHint': 'Files with a dot in the path (.env, .git) are not available to the page; .ts/.tsx sources are not loaded, so a Vite or Next site may render blank.',
   'docs.view.isolated': 'isolated, offline',
   'docs.view.statusAria': 'File details',
   'docs.view.lines': { one: '{count} line', other: '{count} lines' },

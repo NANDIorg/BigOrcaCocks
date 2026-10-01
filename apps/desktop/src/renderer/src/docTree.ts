@@ -353,3 +353,56 @@ export function writeOpenDirs(storage: Pick<Storage, 'setItem'> | undefined, pro
     // localStorage недоступен или переполнен — раскрытые папки просто не переживут перезапуск
   }
 }
+
+/** Видимая строка дерева «Документов» для клавиатуры: ключ, папка или файл, родитель (null — верхний уровень). */
+export interface TreeRow {
+  key: string
+  dir: boolean
+  /** Только у папок: раскрыта ли. */
+  open?: boolean
+  parent: string | null
+}
+
+/** Видимые строки дерева проекта в порядке показа: дети — только у раскрытых папок. `keyOf` строит ключи как компонент. */
+export function treeRows(nodes: readonly TreeNode[], openDirs: ReadonlySet<string>, keyOf: (node: TreeNode) => string, parent: string | null = null): TreeRow[] {
+  return nodes.flatMap((n) => {
+    const key = keyOf(n)
+    if (n.kind === 'file') return [{ key, dir: false, parent }]
+    const open = openDirs.has(key)
+    return [{ key, dir: true, open, parent }, ...(open ? treeRows(n.children, openDirs, keyOf, key) : [])]
+  })
+}
+
+export type TreeKey = 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End'
+
+export function isTreeKey(key: string): key is TreeKey {
+  return key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home' || key === 'End'
+}
+
+/** Что сделать по клавише: перевести фокус на строку `focus` и/или раскрыть-свернуть папку `toggle`. */
+export interface TreeMove {
+  focus?: string
+  toggle?: string
+}
+
+/**
+ * Клавиатура дерева (WAI-ARIA tree): ↑/↓ — соседняя видимая строка, → — раскрыть папку или шаг к первому ребёнку,
+ * ← — свернуть или шаг к родителю, Home/End — первая/последняя. Фокуса нет или он на пропавшей строке — первая.
+ */
+export function navigate(rows: readonly TreeRow[], focused: string | null, key: TreeKey): TreeMove {
+  if (rows.length === 0) return {}
+  const i = focused === null ? -1 : rows.findIndex((r) => r.key === focused)
+  if (i < 0 || key === 'Home') return { focus: rows[0]!.key }
+  if (key === 'End') return { focus: rows[rows.length - 1]!.key }
+  if (key === 'ArrowUp') return { focus: rows[Math.max(i - 1, 0)]!.key }
+  if (key === 'ArrowDown') return { focus: rows[Math.min(i + 1, rows.length - 1)]!.key }
+  const row = rows[i]!
+  if (key === 'ArrowRight') {
+    if (!row.dir) return {}
+    if (!row.open) return { toggle: row.key }
+    const next = rows[i + 1]
+    return next && next.parent === row.key ? { focus: next.key } : {}
+  }
+  if (row.dir && row.open) return { toggle: row.key }
+  return row.parent === null ? {} : { focus: row.parent }
+}
