@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter } from 'node:path'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { app } from 'electron'
 import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentInvocation, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type Attachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
@@ -54,12 +54,45 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
+/** Временные файлы запуска агентов на Windows (system prompt claude, `win32Launch`): в userData, не в репозитории. */
+function launchTempDir(): string {
+  return join(app.getPath('userData'), 'tmp', 'system-prompts')
+}
+
 /**
  * Запуск агента на Windows (`win32Launch`, сборка командной строки — `win32-launch.ts`): Node для JS-точки входа
- * npm-шима в собранном приложении — Node из Electron.
+ * npm-шима в собранном приложении — Node из Electron. Длинный system prompt claude уходит в файл `launchTempDir()`
+ * с уникальным именем — его удаляет `withTempCleanup` после выхода агента.
  */
 function launchOnWin32(inv: AgentInvocation): Win32Launch {
-  return win32Launch(inv.command, inv.args, { electronNode: app.isPackaged ? process.execPath : undefined })
+  return win32Launch(inv.command, inv.args, {
+    electronNode: app.isPackaged ? process.execPath : undefined,
+    systemPromptFile: () => {
+      mkdirSync(launchTempDir(), { recursive: true })
+      return join(launchTempDir(), `${randomUUID()}.md`)
+    }
+  })
+}
+
+function removeTempFiles(files: readonly string[] | undefined): void {
+  for (const f of files ?? []) rmSync(f, { force: true })
+}
+
+/** onExit PTY, который сначала удаляет временные файлы запуска: агент их уже прочитал и больше не откроет. */
+function withTempCleanup(files: readonly string[] | undefined, onExit?: (id: string, code: number) => void): ((id: string, code: number) => void) | undefined {
+  if (!files?.length) return onExit
+  return (id, code) => {
+    removeTempFiles(files)
+    onExit?.(id, code)
+  }
+}
+
+/**
+ * Хвосты временных файлов запуска от прошлой сессии приложения (выход по сбою, kill): при старте агентов этого
+ * экземпляра ещё нет, а агенты прошлого умерли вместе с его PTY — папку можно очистить целиком.
+ */
+export function pruneLaunchTempFiles(): void {
+  if (process.platform === 'win32') rmSync(launchTempDir(), { recursive: true, force: true })
 }
 
 /**
@@ -164,19 +197,25 @@ export function startWorker(
         }
       : { command: inv.command, args: inv.args }
 
-  const ptyId = spawnPty(
-    {
-      meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
-      cwd: worktree,
-      command,
-      args,
-      ...(win32 && setup ? { before: win32Setup(setup) } : {}),
-      cols,
-      rows,
-      env: { ...baseEnv(ctx), ...win32?.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
-    },
-    (id, code) => store.ptyExited(id, code)
-  )
+  let ptyId: string
+  try {
+    ptyId = spawnPty(
+      {
+        meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
+        cwd: worktree,
+        command,
+        args,
+        ...(win32 && setup ? { before: win32Setup(setup) } : {}),
+        cols,
+        rows,
+        env: { ...baseEnv(ctx), ...win32?.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
+      },
+      withTempCleanup(win32?.tempFiles, (id, code) => store.ptyExited(id, code))
+    )
+  } catch (e) {
+    removeTempFiles(win32?.tempFiles)
+    throw e
+  }
   store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, dispatchId, worktree, branch }
 }
@@ -232,6 +271,7 @@ export function startCoordinator(
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
   let root: string | undefined
+  let launch: Win32Launch | undefined
   const sessionId = agentSessionId(spec)
   try {
     // Ветка фичи заводится до координатора: он декомпозирует по коду этой ветки, воркеры ответвятся от неё.
@@ -250,7 +290,7 @@ export function startCoordinator(
       sessionId,
       extraArgs
     })
-    const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
+    launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
     ptyId = spawnPty({
       meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
       cwd,
@@ -267,11 +307,12 @@ export function startCoordinator(
         BASH_DEFAULT_TIMEOUT_MS: '1800000',
         BASH_MAX_TIMEOUT_MS: '3600000'
       }
-    }, (id) => {
+    }, withTempCleanup(launch.tempFiles, (id) => {
       store.coordinatorExited(run.id, id)
       escalateAfterCoordinator(store, run.id)
-    })
+    }))
   } catch (e) {
+    removeTempFiles(launch?.tempFiles)
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
     if (!resume) store.closeRun(run.id)
@@ -339,21 +380,26 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onE
   })
   const cwd = assistantCwd(app.getPath('userData'))
   mkdirSync(cwd, { recursive: true })
-  const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
-  const ptyId = spawnPty(
-    {
-      meta: { role: 'assistant', label: 'ассистент' },
-      cwd,
-      command: launch.command,
-      args: launch.args,
-      cols,
-      rows,
-      env: {
-        ...assistantEnv({ socketPath: ctx.socketPath, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
-        ...launch.env
-      }
-    },
-    onExit
-  )
-  return { ptyId, sessionId }
+  const launch: Win32Launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
+  try {
+    const ptyId = spawnPty(
+      {
+        meta: { role: 'assistant', label: 'ассистент' },
+        cwd,
+        command: launch.command,
+        args: launch.args,
+        cols,
+        rows,
+        env: {
+          ...assistantEnv({ socketPath: ctx.socketPath, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
+          ...launch.env
+        }
+      },
+      withTempCleanup(launch.tempFiles, onExit)
+    )
+    return { ptyId, sessionId }
+  } catch (e) {
+    removeTempFiles(launch.tempFiles)
+    throw e
+  }
 }

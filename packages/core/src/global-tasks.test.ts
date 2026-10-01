@@ -921,7 +921,7 @@ describe('глобальные задачи: картинки (только ме
   it('addRunImages: пустой список и повторный id — ошибка', () => {
     const store = newStore()
     const g = store.createGlobalTask({ title: 'G', images: [img('a')] })
-    assert.throws(() => store.addRunImages(g.id, []), /нет изображений/)
+    assert.throws(() => store.addRunImages(g.id, []), /нет вложений для добавления/)
     assert.throws(() => store.addRunImages(g.id, [img('a')]), /уже есть/)
     assert.throws(() => store.addRunImages(g.id, [img('n'), img('n')]), /уже есть/)
     assert.throws(() => store.addRunImages('run_нет', [img('n')]), /не найд|not found/)
@@ -930,7 +930,7 @@ describe('глобальные задачи: картинки (только ме
   it('removeRunImage: убирает; последняя — поле исчезает; чужой id — ошибка', () => {
     const store = newStore()
     const g = store.createGlobalTask({ title: 'G', images: [img('a'), img('b')] })
-    assert.throws(() => store.removeRunImage(g.id, 'zzz'), /нет изображения zzz/)
+    assert.throws(() => store.removeRunImage(g.id, 'zzz'), /нет вложения zzz/)
     assert.deepEqual(store.removeRunImage(g.id, 'a').images?.map((i) => i.id), ['b'])
     assert.equal(store.removeRunImage(g.id, 'b').images, undefined)
     assert.equal('images' in store.getGlobalTask(g.id), false)
@@ -940,7 +940,7 @@ describe('глобальные задачи: картинки (только ме
     const store = newStore()
     const started = store.createGlobalTask({ title: 'S', images: [img('a')] })
     store.moveGlobalTask(started.id, 'wip')
-    assert.throws(() => store.addRunImages(started.id, [img('b')]), /нельзя менять: задача уже была «В работе»/)
+    assert.throws(() => store.addRunImages(started.id, [img('b')]), /вложения глобальной задачи .* нельзя менять: задача уже была «В работе»/)
     assert.throws(() => store.removeRunImage(started.id, 'a'), /нельзя менять/)
     store.moveGlobalTask(started.id, 'plan')
     assert.throws(() => store.addRunImages(started.id, [img('b')]), /уже была «В работе»/)

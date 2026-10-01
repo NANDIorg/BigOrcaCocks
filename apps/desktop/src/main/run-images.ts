@@ -231,7 +231,7 @@ export function revealTaskAttachment(store: TaskStore, root: string, projectId: 
 
 /**
  * Абсолютный путь вложения для «Открыть» (`shell.openPath`) — только расширение из белого списка
- * (`attachmentOpenable`: картинки, Markdown, PDF; без HTML). Остальное приложение не открывает и не запускает —
+ * (`attachmentOpenable`: картинки, Markdown, PDF; без HTML и SVG). Остальное приложение не открывает и не запускает —
  * `global.attachmentNotOpenable`, его можно только показать в папке. Как и `revealTaskAttachment`, путь строится из
  * метаданных этой задачи.
  */

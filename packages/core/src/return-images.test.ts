@@ -183,6 +183,9 @@ describe('промпты агентам', () => {
     const answer = workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'глубже', feedbackImages: IMG, answerFor: 'human' }, 'старый ответ')
     const clar = answer.slice(answer.indexOf('# Уточнение к прошлому ответу'))
     assert.ok(clar.includes(`\`${IMG[0]}\``))
+    assert.match(clar, /К уточнению приложены файлы \(\d+\) — материал к нему/)
+    assert.ok(!answer.includes('К замечаниям приложены'), 'под уточнением — заголовок уточнения, а не замечаний')
+    assert.match(review, /К замечаниям приложены файлы \(\d+\) — материал к ним/)
     assert.ok(clar.indexOf(IMG[0]) < clar.indexOf('Дай новый полный ответ'), 'картинки — до итоговой просьбы')
     assert.equal(
       workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'глубже', answerFor: 'human' }, 'старый ответ').includes('приложены'), false
@@ -213,12 +216,13 @@ describe('промпты агентам: файлы, а не только кар
   const RUN_FILES = ['/repo/.orca-attachments/run_1/returns/ret_d4/file-1-error.log']
 
   it('воркер: PDF и PNG в замечаниях — пути, как читать (Read с `pages`, архивы вне репозитория), данные, не запускать', () => {
-    for (const prompt of [
-      workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'см. спеку', feedbackImages: FILES }),
-      workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'см. спеку', feedbackImages: FILES, answerFor: 'human' }, 'старый ответ')
+    // Заголовок — по контексту: под замечаниями ревью «К замечаниям», под уточнением ответа «К уточнению».
+    for (const [prompt, heading] of [
+      [workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'см. спеку', feedbackImages: FILES }), 'К замечаниям приложены файлы (2)'],
+      [workerTaskPrompt({ title: 'T', spec: 'S', feedback: 'см. спеку', feedbackImages: FILES, answerFor: 'human' }, 'старый ответ'), 'К уточнению приложены файлы (2)']
     ]) {
-      const block = prompt.slice(prompt.indexOf('К замечаниям приложены файлы (2)'))
-      assert.ok(prompt.includes('К замечаниям приложены файлы (2)'))
+      const block = prompt.slice(prompt.indexOf(heading))
+      assert.ok(prompt.includes(heading), heading)
       for (const p of FILES) assert.ok(block.includes(`- \`${p}\``), p)
       assert.match(block, /Read, не cat; PDF — Read с `pages`/)
       assert.match(block, /временную папку вне репозитория/)

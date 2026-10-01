@@ -48,9 +48,9 @@ test('truncateMiddle: по символам, короткое не трогае�
   assert.equal(truncateMiddle('abcdef', 1), '…')
 })
 
-test('openable: только белый список показа без HTML — исполняемое и архивы не открываются', () => {
-  for (const ext of ['pdf', 'md', 'png', 'JPG', 'svg']) assert.equal(isOpenableExt(ext), true, ext)
-  for (const ext of ['html', 'htm', 'sh', 'app', 'exe', 'zip', 'docx', 'txt', 'log', '']) assert.equal(isOpenableExt(ext), false, ext)
+test('openable: только белый список показа без HTML и SVG — исполняемое и архивы не открываются', () => {
+  for (const ext of ['pdf', 'md', 'png', 'JPG']) assert.equal(isOpenableExt(ext), true, ext)
+  for (const ext of ['html', 'htm', 'svg', 'SVG', 'sh', 'app', 'exe', 'zip', 'docx', 'txt', 'log', '']) assert.equal(isOpenableExt(ext), false, ext)
   assert.equal(attachmentChip({ kind: 'file', name: 'run.sh', bytes: 1 }).openable, false)
   assert.equal(attachmentChip({ kind: 'file', name: 'page.html', bytes: 1 }).openable, false)
   assert.equal(attachmentChip({ kind: 'file', name: 'noext', bytes: 1 }).openable, false)
