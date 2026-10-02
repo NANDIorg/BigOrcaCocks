@@ -95,10 +95,37 @@
 - [x] Run: `pnpm verify`.
   Expected: PASS всех пакетов, guards, typecheck и build.
 - [x] Commit: `test: проверить общие воркеры без окна Electron`.
-- [ ] Одно итоговое независимое ревью диапазона этого плана, исправления Important/Critical через RED→GREEN, pnpm verify после исправлений.
-- [ ] Записать результат и оставшиеся рубежи в план/docs; сохранить ledger и проверки вне scratch, удалить только workspace этого плана.
-- [ ] Собрать и открыть Desktop; проверить упакованный runtime, push/update PR #59 и CI точного HEAD. Не сливать PR и не выпускать релиз.
+- [x] Одно итоговое независимое ревью диапазона этого плана, исправления Important/Critical через RED→GREEN, pnpm verify после исправлений.
+- [x] Записать результат и оставшиеся рубежи в план/docs; сохранить ledger и проверки вне scratch, удалить только workspace этого плана.
+- [x] Собрать и открыть Desktop; проверить упакованный runtime.
+
+Перед сдачей: push/update PR #59 и CI точного HEAD; результат подтверждается checks
+последнего коммита в PR. Не сливать PR и не выпускать релиз.
 
 ## Самопроверка плана
 
 Этот план реализует часть рубежа 3 и необходимые для неё файловые зависимости рубежа 6. Все пять Review Focus закреплены Task 1/2/3. Сигнатуры factories согласованы: сообщения/ресурсы Task 1 потребляются сервисом Task 2 и Node/native hosts Task 3. Остальные требования общей спецификации сохранены как следующие этапы, завершение всей базы этим переносом не объявляется.
+
+## Результат исполнения
+
+Общие ExecutionResources/WorkerServices подключены к Desktop через совместимые
+facades; Node entrypoint и native сценарий без окна работают. Одно независимое
+ревью диапазона `8f05546..9e9ee04` нашло один Important: возврат в работу менял
+store и закрывал прежний PTY до проверки роли. В `082d775` добавлен общий preflight
+роли/агента/extraArgs; два регрессионных теста показали RED→GREEN и сохранение
+снимка/живого процесса. Critical/Minor в этом ревью нет; второго ревью не требовалось.
+
+После исправления `pnpm verify` прошёл: **3280/3280**, ноль failures/skips/cancellations,
+runtime 178, Desktop 2034; typecheck, package boundaries и build проходят. Отдельные
+core-проверки документации: 934/934. Ledger, review package и логи сохранены в
+`/private/tmp/orca-runtime-workers-*`; удалён только scratch этого плана.
+Local mac x64 pack проверен через codesign и настоящий app.asar: общие пакеты
+встроены, WorkerServices/ExecutionResources присутствуют. Новый main и renderer
+запущены из `apps/desktop/release/local/mac/orca-board.app`.
+
+Далее: workflow/review executors и полный wiring main, discovery версий/моделей,
+диалоги и защита поздних ответов; затем owner lock/reconciliation, leases,
+client context/auth/replay/backpressure и async Git/commonDir/EffectToken. Проверка
+установленного Linux host вне workspace с отдельным Node install root и cleanup
+ConPTY долгоживущего owner остаются обязательными. UI проверяет пользователь
+в локальном Desktop. Версия продукта остаётся 1.1.3; merge/release не выполняются.
