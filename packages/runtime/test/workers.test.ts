@@ -140,8 +140,10 @@ it('host profiles, язык, PATH и сессии разных экземпля�
   const second = b.services.startAssistant({ socketPath: '/two/socket', settings: { agent: 'claude' } })
   assert.equal(a.processes[0].options.cwd, join(dir, 'one', 'assistant'))
   assert.equal(b.processes[0].options.cwd, join(dir, 'two', 'assistant'))
-  assert.equal(a.processes[0].options.env.PATH, '/one/cli:/one/bin:/agents')
-  assert.equal(b.processes[0].options.env.PATH, '/two/cli:/two/bin:/agents')
+  // Реестр сохраняет регистр ключа окружения host: Windows обычно передаёт Path.
+  const path = (env: Record<string, string>) => Object.entries(env).find(([key]) => key.toUpperCase() === 'PATH')?.[1]
+  assert.equal(path(a.processes[0].options.env), '/one/cli:/one/bin:/agents')
+  assert.equal(path(b.processes[0].options.env), '/two/cli:/two/bin:/agents')
   assert.equal('ORCA_NODE' in b.processes[0].options.env, false)
   assert.ok(argsOf(a.processes[0]).every(arg => !arg.includes('The person uses the app in English')))
   assert.ok(argsOf(b.processes[0]).some(arg => arg.includes('English')))
