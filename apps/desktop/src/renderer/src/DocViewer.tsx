@@ -8,11 +8,10 @@ import { DocImage } from './DocImage'
 import { DocLoading, DocStub } from './DocStub'
 import { Markdown } from './Markdown'
 import { PopupMenu, POPUP_MENU_WIDTH, type PopupItem } from './PopupMenu'
-import { DocIcon } from './docsIcons'
+import { DocFileIcon, DocIcon } from './docsIcons'
 import {
   codeText,
   docFindable,
-  docIconOf,
   docModes,
   docStatusFacts,
   docStubOf,
@@ -125,8 +124,7 @@ function MarkdownDoc({ source, path, text, name, reload, textRef, scrollRef, onS
 
 /** Значок файла по виду — дерево, выдача поиска, крошки. `kind` — уточнённый вид из `docs:view`, если он есть. */
 export function DocKindIcon({ path, kind }: { path: string; kind?: DocViewKind }): React.JSX.Element {
-  const Icon = DocIcon[docIconOf(path, kind)]
-  return <Icon />
+  return <DocFileIcon path={path} kind={kind} />
 }
 
 interface ControlsProps {

@@ -1224,8 +1224,12 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-hit b { color: var(--col-input); font-weight: 600; }
 .docs-tree-foot { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .docs-tree-foot kbd + kbd { margin-left: 2px; }
-/* Значок вида файла: цвет — по виду (docView.ts → DocIconName), как в макете. */
-.docs-fi { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+/* Категории — по docView.ts; языки и служебные имена — docFileIcons.ts и локальные SVG Devicon. */
+.docs-fi { display: inline-grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; color: var(--muted); }
+.docs-fi .docs-i { width: 16px; height: 16px; }
+.docs-file-logo { display: block; object-fit: contain; }
+.docs-file-logo[data-mono='true'] { filter: brightness(0) invert(.9); }
+:root[data-theme='paper'] .docs-file-logo[data-mono='true'] { filter: brightness(0); }
 .docs-fi[data-kind='doc'] { color: var(--accent); }
 .docs-fi[data-kind='code'] { color: var(--col-ready); }
 .docs-fi[data-kind='config'], .docs-fi[data-kind='env'] { color: var(--col-input); }
@@ -1233,6 +1237,12 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-fi[data-kind='image'] { color: var(--col-done); }
 .docs-fi[data-kind='pdf'] { color: var(--danger); }
 .docs-fi[data-kind='binary'] { color: var(--col-backlog); }
+.docs-fi[data-glyph='archive'] { color: var(--syntax-number); }
+.docs-fi[data-glyph='audio'], .docs-fi[data-glyph='video'] { color: var(--syntax-keyword); }
+.docs-fi[data-glyph='font'] { color: var(--syntax-tag); }
+.docs-fi[data-glyph='database'], .docs-fi[data-glyph='table'] { color: var(--syntax-function); }
+.docs-fi[data-glyph='terminal'] { color: var(--syntax-string); }
+.docs-fi[data-glyph='diff'] { color: var(--syntax-property); }
 .docs-row.file .docs-fi .docs-i, .docs-hit-l1 .docs-fi .docs-i { color: inherit; }
 .docs-lnk { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
 .docs-lnk .docs-i { width: 12px; height: 12px; }
@@ -1265,6 +1275,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-path button.seg:hover { background: var(--side-2); color: var(--text); }
 .docs-path .cur { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
 .docs-path .cur .docs-i { margin-right: 6px; vertical-align: -2px; color: var(--muted); }
+.docs-path .cur .docs-fi { margin-right: 6px; vertical-align: -2px; }
+.docs-path .cur .docs-fi .docs-i { margin-right: 0; vertical-align: 0; color: inherit; }
 .docs-path .sep { color: var(--chip); }
 .docs-find { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 16px; border-bottom: 1px solid var(--line); background: var(--frame); color: var(--muted); }
 .docs-find input { flex: 0 1 320px; min-width: 0; height: 28px; border-radius: 8px; border: 1px solid var(--accent); background: var(--side-2); color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; outline: none; }

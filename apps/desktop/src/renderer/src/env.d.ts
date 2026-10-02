@@ -10,6 +10,12 @@ declare module '*.svg' {
   export default url
 }
 
+/** Значки файлов загружаются отдельными ресурсами: CSP не разрешает data: URL. */
+declare module '*.svg?no-inline' {
+  const url: string
+  export default url
+}
+
 /** Vite очищает подписку на геометрию окна при замене модуля в dev. */
 interface ImportMeta {
   readonly hot?: import('vite/types/hot').ViteHotContext

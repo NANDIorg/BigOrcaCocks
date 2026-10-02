@@ -1170,7 +1170,11 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   а тип, кодировка, строки, размер и время — в строке статуса (`DocStatus`).
   - **Дерево** строится из `docs:list` (группа `project` — все файлы, группы задач — только `.md`) функцией `buildTree`: папки
     сверху, цепочка из одной папки схлопывается. Значок — по виду файла `docIconOf(path)` (`shared/docs-view.ts`, без IPC), цвет —
-    `data-kind` в `styles.css`; симлинк (`DocFile.link`) — значок цепочки, куда он ведёт, выясняет `docs:view`. `DocGroup.truncated` —
+    `data-kind` в `styles.css`. `DocFileIcon` (`docsIcons.tsx`) общий для дерева, поиска и крошек: `docFileIcons.ts`
+    уточняет категорию логотипом языка (локальные SVG Devicon), React у JSX/TSX, именем служебного файла (package.json,
+    lock-файлы, Git/Compose) либо контурным значком архива, медиа, шрифта, таблицы, базы, shell или diff. Уточнённый main
+    вид важнее расширения; неизвестные файлы сохраняют общий значок. SVG и лицензия MIT вшиты в сборку, сети не требуют;
+    монохромные значки адаптируются к теме. Симлинк (`DocFile.link`) — значок цепочки, куда он ведёт, выясняет `docs:view`. `DocGroup.truncated` —
     баннер `docs-trunc` и счётчик «100 000+». «Недавние» — не больше `RECENT_LIMIT` = 200 строк, выдача поиска по пути в группе —
     не больше `HIT_LIMIT` = 100 и строка «ещё N» (`searchFiles`); ввод поиска — с задержкой 120 мс (`useDebounced` в `DocsModal`),
     сброс — сразу. Раскрытые папки — `localStorage` `orca.docs.open.<projectId>` (`readOpenDirs`/`writeOpenDirs`, до
@@ -3164,6 +3168,11 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 снимка. Тесты — `assistant-settings.test.ts`.
 
 ## Грабли разработки
+
+- **Небольшой SVG при обычном импорте становится `data:` URL.** Vite делает это автоматически,
+  а `img-src` renderer не разрешает `data:`: значок работает в dev, но пропадает в рабочей сборке.
+  Логотипы файлов импортируются с `?no-inline` (`fileLogoAssets.ts`, декларация в `env.d.ts`),
+  и проверка production build должна подтверждать отдельные SVG-ресурсы, включая Swift.
 
 - **Приход пути в `join` — не заход.** `nextRunStage` поднимает `visits` на каждый вход в ноду, и без поправки после одного
   слияния двух путей у `join` было «×2», после второго прохода через `fork` — «×4», а записи приходов выглядели заходами.
