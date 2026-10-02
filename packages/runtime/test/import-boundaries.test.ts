@@ -86,11 +86,16 @@ it('package entrypoint сохраняет данные в обычном Node б
   const runtime = fileURLToPath(new URL('../', import.meta.url))
   const file = join(dir, 'plain-node.json')
   execFileSync(process.execPath, ['--input-type=module', '-e', `
-    import { writeFileAtomic, readJsonFile, createGitOperations } from '@orca-board/runtime'
+    import { writeFileAtomic, readJsonFile, createGitOperations, createRuntimeSettings, createProjectServices } from '@orca-board/runtime'
     writeFileAtomic(process.argv[1], '{"headless":true}')
     if (readJsonFile(process.argv[1], 'test').status !== 'ok') process.exit(2)
     const git = createGitOperations({ error: key => new Error(key), untrackedLabel: () => 'Untracked:' })
     if (git.projectBranchInfo(process.argv[2]).isGitRepo) process.exit(3)
+    const messages = { Error, text: key => key }
+    const { ProjectManager } = createProjectServices({ messages, settings: createRuntimeSettings(messages) })
+    const manager = new ProjectManager(process.argv[2] + '/profile')
+    manager.setSettings({ language: 'en' })
+    if (new ProjectManager(process.argv[2] + '/profile').settings().language !== 'en') process.exit(4)
   `, file, dir], { cwd: runtime, stdio: 'pipe', env: { ...process.env, NODE_OPTIONS: '' } })
   assert.equal(readFileSync(file, 'utf8'), '{"headless":true}')
 })

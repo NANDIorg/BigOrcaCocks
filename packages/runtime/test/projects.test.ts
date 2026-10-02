@@ -49,7 +49,7 @@ it('общий менеджер сохраняет проект и доску м
   assert.equal(restored.active()?.id, project.id)
 })
 
-it('профили с одним репозиторием не смешивают настройки и события досок', () => {
+it('профили с одним репозиторием не смешивают настройки и доски', () => {
   const { ProjectManager } = services()
   const first = new ProjectManager(join(dir, 'first'))
   const second = new ProjectManager(join(dir, 'second'))
@@ -90,4 +90,83 @@ it('удаление проекта очищает его вложения и с
     assert.equal(readFileSync(join(data, root, second.id, 'run', 'file'), 'utf8'), second.id)
   }
   assert.deepEqual(new ProjectManager(data).list().map(p => p.id), [second.id])
+})
+
+it('общие настройки после сохранения и reload сохраняют непрозрачные поля хоста', () => {
+  const { ProjectManager } = services()
+  writeFileSync(join(dir, 'projects.json'), JSON.stringify({ version: 2, projects: [], activeId: null,
+    settings: { keepInBackground: false, updates: { autoDownload: false }, futureHost: { enabled: true }, language: 'ru' } }))
+  const manager = new ProjectManager(dir)
+  manager.setSettings({ language: 'en', assistant: { model: 'new' } })
+  const stored = JSON.parse(readFileSync(join(dir, 'projects.json'), 'utf8')) as runtime.ProjectsFile
+  assert.deepEqual(stored.settings?.updates, { autoDownload: false })
+  assert.equal(stored.settings?.keepInBackground, false)
+  assert.deepEqual(stored.settings?.futureHost, { enabled: true })
+  assert.equal(new ProjectManager(dir).settings().assistant.model, 'new')
+})
+
+it('неудачная запись настроек сохраняет подтверждённое состояние и не публикует событие', () => {
+  const { ProjectManager } = services()
+  const manager = new ProjectManager(dir)
+  manager.setSettings({ language: 'ru' })
+  const before = readFileSync(join(dir, 'projects.json'), 'utf8')
+  let changes = 0
+  manager.onDataChange(() => { changes++ })
+  mkdirSync(join(dir, 'projects.json.tmp'))
+  assert.throws(() => manager.setSettings({ language: 'en' }))
+  assert.equal(manager.settings().language, 'ru')
+  assert.equal(readFileSync(join(dir, 'projects.json'), 'utf8'), before)
+  assert.equal(changes, 0)
+})
+
+it('запись графа со старой ревизией не перезаписывает новый граф', () => {
+  const { ProjectManager } = services()
+  const manager = new ProjectManager(dir)
+  const context = manager.workflowGet('general')
+  manager.workflowSet('general', context.revision, graph())
+  const saved = manager.workflowGet('general')
+  const disk = readFileSync(join(dir, 'projects.json'), 'utf8')
+  assert.notEqual(saved.revision, context.revision)
+  assert.throws(() => manager.workflowSet('general', context.revision, { ...graph(), edges: [] }), e => e instanceof HostError && e.key === 'workflow.conflict')
+  assert.equal(manager.workflowGet('general').revision, saved.revision)
+  assert.equal(readFileSync(join(dir, 'projects.json'), 'utf8'), disk)
+})
+
+it('ошибка записи библиотеки откатывает граф и не сообщает о сохранении', () => {
+  const { ProjectManager } = services()
+  const manager = new ProjectManager(dir)
+  manager.setSettings({ language: 'ru' })
+  const context = manager.workflowGet('general')
+  const disk = readFileSync(join(dir, 'projects.json'), 'utf8')
+  let saved = 0
+  manager.onWorkflowSaved(() => { saved++ })
+  mkdirSync(join(dir, 'projects.json.tmp'))
+  assert.throws(() => manager.workflowSet('general', context.revision, graph()))
+  assert.equal(manager.workflowGet('general').revision, context.revision)
+  assert.equal(readFileSync(join(dir, 'projects.json'), 'utf8'), disk)
+  assert.equal(saved, 0)
+})
+
+it('ленивая загрузка доски публикует store-open один раз, повторные изменения публикуют новые события', () => {
+  const { ProjectManager } = services()
+  const manager = new ProjectManager(join(dir, 'profile'))
+  const project = manager.add(repo())
+  const opened: string[] = []
+  const off = manager.onStoreOpened(id => { opened.push(id) })
+  const events: string[] = []
+  manager.onEvents((_id, batch) => { events.push(...batch.map(e => e.id)) })
+  assert.equal(manager.loadedStores().length, 0)
+  const store = manager.store(project.id)
+  assert.equal(manager.store(project.id), store)
+  store.createTask({ title: 'Первая', spec: '' })
+  const count = events.length
+  store.createTask({ title: 'Вторая', spec: '' })
+  assert.ok(count > 0)
+  assert.ok(events.length > count)
+  assert.equal(new Set(events).size, events.length)
+  assert.deepEqual(opened, [project.id])
+  off()
+  const second = manager.add(repo('second'))
+  manager.store(second.id)
+  assert.deepEqual(opened, [project.id])
 })

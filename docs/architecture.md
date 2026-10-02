@@ -8,7 +8,7 @@
 
 `packages/contracts` (`@orca-board/contracts`) содержит общие DTO проектов, задач,
 файлов, правил, терминальных сессий и диалогов; настройки языка/onboarding, appearance,
-чистые фильтры уведомлений, классификацию файлов и preview policy. Browser-safe типы
+общие RuntimeSettings/RuntimeSettingsPatch, чистые фильтры уведомлений, классификацию файлов и preview policy. Browser-safe типы
 берутся из core; package entrypoint не экспортирует store, provider driver или Desktop API.
 
 `apps/desktop/src/shared/ipc.ts` — совместимый путь импортов: общие definitions приходят
@@ -39,7 +39,7 @@ JSON persistence и версионные резервные копии. Host п�
 Desktop использует совместимые `main/persistence.ts` и `main/backup.ts`; флаг для
 тоста «приложение обновилось» остаётся в Desktop. Runtime — private TS-пакет,
 встраиваемый в main bundle; его тесты запускаются обычным Node 24 без Electron.
-Это начало этапа 2: ProjectManager, application services и single-owner lifecycle
+Это часть этапа 2: application services с явным клиентским контекстом и single-owner lifecycle
 пока остаются следующими переносами. Нельзя запускать несколько writers одного
 каталога данных; owner lock здесь ещё не реализован.
 
@@ -59,6 +59,29 @@ production modules и транзитивные общие зависимости
 imports; canonical paths не позволяют скрыть Desktop за symlink. Compiler использует
 только Node types/ES2022 lib. Отдельная проверка запускает package entrypoint обычным
 Node 24 без Electron loader. Все runtime suites входят в корневой `pnpm test`/CI.
+
+### Проекты, типы задач и настройки хоста
+
+`createProjectServices({ messages, settings })` создаёт общий ProjectManager и класс
+WorkflowValidationError. Runtime хранит список проектов, группы, типы задач, шаблоны
+нод, onboarding и лениво открывает TaskStore досок. Миграции проектов/воркфлоу/
+ассистента и детектор типа проекта находятся там же. JSON schemas, бэкапы до миграций,
+revision checks графов и rollback не изменены. Общие пути и удаление каталогов
+`run-images`/`showcase` используются как runtime, так и оставшимися файловыми модулями Desktop.
+
+Хост передаёт класс ошибок и перевод сообщений: Desktop использует OrcaError/mt,
+поэтому IPC по-прежнему локализует ошибку, а сокет получает её validation. Отдельный
+codec читает и объединяет настройки. Runtime знает язык, appearance, уведомления и
+ассистента; Desktop добавляет keepInBackground и updates через `main/project-settings.ts`.
+Непрозрачные поля другого хоста сохраняются на диске при записи общих настроек.
+Проверка флагов ассистента/ролей и очистка extraArgs в ответах также общие; запуск
+процессов пока остаётся в Desktop.
+
+`main/projects.ts`, `main/task-types-migration.ts` и `main/task-type-detect.ts` —
+совместимые входы в runtime. Классы Desktop создаются один раз, сохраняя instanceof
+для сокета. Core экспортирует модули с `.ts`, поэтому package entrypoints работают
+в обычном Node 24 без сборщика Electron. Сохранённый activeId пока служит legacy API
+Desktop; Web-клиенты получат свой контекст выбора проекта на следующем этапе.
 
 ## Процессы
 

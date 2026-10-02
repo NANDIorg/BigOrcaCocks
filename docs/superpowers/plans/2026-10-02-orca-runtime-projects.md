@@ -89,13 +89,13 @@
 - Consumes: реальный @orca-board/runtime entrypoint и Desktop адаптеры из Task 1/2.
 - Produces: проверенные гарантии plain Node, rollback, непрозрачных настроек, workflow revision/validation, границ импорта; документация действительного состояния.
 
-- [ ] Закрепить общие гарантии реальными дисковыми сценариями: settings rollback при препятствии rename, workflow conflict без потери новой ревизии, детали WorkflowValidationError, store-open события один раз, сохранение opaque полей при повторной загрузке. Existing Desktop regression tests покрывают миграции и unopened/future boards; их оставить на месте.
-- [ ] Run: `pnpm --filter @orca-board/runtime test`.
+- [x] Закрепить общие гарантии реальными дисковыми сценариями: settings rollback при препятствии rename, workflow conflict без потери новой ревизии, детали WorkflowValidationError, store-open события один раз, сохранение opaque полей при повторной загрузке. Existing Desktop regression tests покрывают миграции и unopened/future boards; их оставить на месте.
+- [x] Run: `pnpm --filter @orca-board/runtime test`.
   Expected: PASS; для каждого нового поведения отсутствующей реализации сначала RED, для закрепления перенесённого поведения допускается GREEN characterization.
-- [ ] Описать runtime проектов, host settings/messages и оставшиеся зависимости Desktop в docs/architecture.md; отметить выполненные шаги.
-- [ ] Финальная проверка задачи через task-done: `pnpm verify`.
+- [x] Описать runtime проектов, host settings/messages и оставшиеся зависимости Desktop в docs/architecture.md; отметить выполненные шаги.
+- [x] Финальная проверка задачи через task-done: `pnpm verify`.
   Expected: PASS — git-flow, strict typecheck, все тесты и production build.
-- [ ] Commit: `test: закрепить совместимость общего менеджера проектов`.
+- [x] Commit: `test: закрепить совместимость общего менеджера проектов`.
 - [ ] Выполнить одно итоговое fresh-context ревью диапазона c103ca9..HEAD, исправить Critical/Important через RED→GREEN, minor записать.
 - [ ] Run: `pnpm --filter @orca-board/desktop run pack`, проверить подпись и реальный app.asar, открыть актуальный `apps/desktop/release/local/mac/orca-board.app`.
   Expected: локальный рабочий билд 1.1.3 с новым runtime, без bare workspace imports.
