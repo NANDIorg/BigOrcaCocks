@@ -5,8 +5,9 @@ import { syncBuiltinESMExports } from 'node:module'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS } from '@orca-board/core'
-import { jsonPersistence, writeFileAtomic, writeFilesAtomic, readJsonFile, type StateWarning } from './persistence'
+import { TaskStore } from '../../core/src/store.ts'
+import { DEFAULT_COLUMNS } from '../../core/src/types.ts'
+import { jsonPersistence, writeFileAtomic, writeFilesAtomic, readJsonFile, type StateWarning } from '../src/persistence.ts'
 
 let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'orca-persist-')) })

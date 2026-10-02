@@ -2,6 +2,7 @@
 
 Монорепо pnpm: `apps/desktop` (Electron: main / preload / renderer / shared), `packages/core`
 (модель, store, промпты — TypeScript без сборки), `packages/contracts` (общие DTO и чистые функции),
+`packages/runtime` (Node: запись состояния, резервные копии; private bundle без Electron),
 `packages/cli` (голый JS, `bin/orca-board.js`),
 `skills/` (инструкции координатора и воркера, вшиваются в сборку), `docs/` (архитектура и решения).
 Полная картина — `docs/architecture.md`. Комментарии в коде, документация и коммиты — на русском;
@@ -29,6 +30,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
   Разрешены browser-safe типы core. Production import graph и type-only exports проверяются в
   `packages/contracts/test/`; тестовый AST-страж использует Node, но не входит в поставку пакета.
   Private TS-пакет встраивается в Desktop bundles, а не загружается с диска пользователя.
+- **Runtime не импортирует Electron/Desktop.** Host передаёт пути и metadata; private пакет встраивается
+  в main bundle. Production code использует Node и общие пакеты, не Desktop shared/API.
 - **Не класть в `skills/*.md` ничего, что относится только к этому репозиторию** (pnpm, пути, стиль).
   Skills получают агенты **любого** проекта пользователя (`apps/desktop/src/main/prompts.ts` →
   `withRoleInstructions` в `apps/desktop/src/main/worker.ts`).

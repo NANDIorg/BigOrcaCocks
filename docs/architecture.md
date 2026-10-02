@@ -29,6 +29,20 @@ API здесь нет. Application services/runtime с явным project/client
 headless owner и product-aware релизные инструменты выполняются следующими этапами.
 Web и самостоятельный терминальный чат CLI строятся после готовности этой базы.
 
+## Общий Node runtime: хранение и резервные копии
+
+`packages/runtime` (`@orca-board/runtime`) содержит существующие atomic file writes,
+JSON persistence и версионные резервные копии. Host передаёт путь файла/каталога и
+версию продукта. Имена файлов, schema, quarantine повреждённого JSON, rollback
+нескольких записей и порядок backup до миграций сохраняются.
+
+Desktop использует совместимые `main/persistence.ts` и `main/backup.ts`; флаг для
+тоста «приложение обновилось» остаётся в Desktop. Runtime — private TS-пакет,
+встраиваемый в main bundle; его тесты запускаются обычным Node 24 без Electron.
+Это начало этапа 2: ProjectManager, application services и single-owner lifecycle
+пока остаются следующими переносами. Нельзя запускать несколько writers одного
+каталога данных; owner lock здесь ещё не реализован.
+
 ## Процессы
 
 ```

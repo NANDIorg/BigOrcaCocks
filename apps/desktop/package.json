@@ -26,7 +26,8 @@
     "node-pty": "^1.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "refractor": "^5.0.0"
+    "refractor": "^5.0.0",
+    "@orca-board/runtime": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
