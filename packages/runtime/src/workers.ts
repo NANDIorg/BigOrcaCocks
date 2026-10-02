@@ -112,6 +112,15 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     return spec.acceptsSessionId ? randomUUID() : undefined
   }
 
+  /** Проверки запуска роли выполняются до правки стора, Git и остановки прежнего процесса. */
+  function roleLaunch(ctx: WorkerEnvContext, roleId: string, cannotStart: 'worker.cannotStart' | 'coordinator.cannotStart') {
+    const role = ctx.roles.find((r) => r.id === roleId)
+    if (!role) throw messages.error(cannotStart, { reason: missingRoleText(roleId, { title: ctx.typeTitle, roles: ctx.roles }) })
+    const spec = getAgent(role.agent)
+    if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
+    return { role, spec, extraArgs: roleLaunchExtraArgs(role, cannotStart) }
+  }
+
   /**
    * Старт воркера: git worktree на ветке задачи → подготовка → PTY с агентом → dispatch.
    * Worktree создаётся рядом с репозиторием: <repo>/../.orca-worktrees/<taskId>. Ветка `orca/<taskId>` ответвляется
@@ -135,12 +144,8 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     if (store.columnKind(task.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
     // Роль этапа «Вопрос человеку» — только на этот запуск: задача сохраняет свою роль (`store.updateTask` ниже).
     const runRoleId = roleId ?? task.roleId
-    const role = ctx.roles.find((r) => r.id === runRoleId)
-    if (!role) throw messages.error('worker.cannotStart', { reason: missingRoleText(runRoleId, { title: ctx.typeTitle, roles: ctx.roles }) })
-    const spec = getAgent(role.agent)
-    if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
     // Флаги запуска роли разбираются до worktree и dispatch: с негодной строкой задача не должна уйти «в работу».
-    const extraArgs = roleLaunchExtraArgs(role, 'worker.cannotStart')
+    const { role, spec, extraArgs } = roleLaunch(ctx, runRoleId, 'worker.cannotStart')
 
     // Ветку и worktree могла уже назначить нода воркфлоу «Git» (`create_branch`/`checkout`): работаем на них, а не
     // заводим `orca/<id>`. Нет worktree на диске (конец без мержа, удалили руками) — ставим на ту же ветку.
@@ -227,12 +232,8 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     runId?: string
   ): { ptyId: string; runId: string } {
     // Роль coordinator можно удалить из типа задачи («Настройки» → «Типы задач»); молча запускать claude вместо неё нельзя — человек её убрал.
-    const role = ctx.roles.find((r) => r.id === 'coordinator')
-    if (!role) throw messages.error('coordinator.cannotStart', { reason: missingRoleText('coordinator', { title: ctx.typeTitle, roles: ctx.roles }) })
-    const spec = getAgent(role.agent)
-    if (!spec) throw new Error(`неизвестный агент: ${role.agent}`)
     // Флаги запуска роли — до `createRun`: с негодной строкой карточка создалась бы и тут же закрылась пустой.
-    const extraArgs = roleLaunchExtraArgs(role, 'coordinator.cannotStart')
+    const { role, spec, extraArgs } = roleLaunch(ctx, 'coordinator', 'coordinator.cannotStart')
     const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
     if (resume) objective = resume.objective
     // Вложения, сохранённые у задачи, идут координатору при каждом запуске (первом, повторном и «Вернуть в работу»):
@@ -316,6 +317,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     rows = 30,
     images: string[] = []
   ): { ptyId: string; runId: string } {
+    roleLaunch(ctx, 'coordinator', 'coordinator.cannotStart')
     returnGlobalTaskToWork(store, runId, text, isAlive, killPty, images)
     return startCoordinator(store, repoRoot, ctx, '', cols, rows, [], runId)
   }

@@ -243,6 +243,23 @@ it('отказ повторного запуска сохраняет сущес
   assert.equal(existsSync(join(f.store.getRun(run.id)!.git!.worktree!, '.orca-attachments', run.id, 'file-1-start.txt')), false)
 })
 
+for (const invalidRole of ['missing', 'extraArgs'] as const) {
+  it(`возврат в работу при ${invalidRole} сохраняет состояние и живого координатора`, () => {
+    const f = fixture(); const first = f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
+    f.store.moveGlobalTask(first.runId, 'review')
+    const before = structuredClone(f.store.snapshot())
+    const roles = invalidRole === 'missing'
+      ? f.ctx.roles.filter(role => role.id !== 'coordinator')
+      : f.ctx.roles.map(role => role.id === 'coordinator' ? { ...role, extraArgs: '--name "unfinished' } : role)
+    assert.throws(() => f.services.returnToWork(f.store, repo, { ...f.ctx, roles }, first.runId, 'FIX_THIS'),
+      e => e instanceof HostError && e.key === 'coordinator.cannotStart')
+    assert.deepEqual(f.store.snapshot(), before)
+    assert.equal(f.sessions.isAlive(first.ptyId), true)
+    assert.equal(f.processes[0].proc.killed, false)
+    assert.equal(f.processes.length, 1)
+  })
+}
+
 it('возврат в работу останавливает старый терминал и продолжает тот же прогон', () => {
   const f = fixture(); const first = f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
   f.store.moveGlobalTask(first.runId, 'review')
