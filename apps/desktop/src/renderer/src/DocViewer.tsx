@@ -77,7 +77,7 @@ export function DocViewer(props: DocViewerProps): React.JSX.Element {
   const codeView = (): React.JSX.Element => {
     if (code.failure) return <DocStub path={path} failure={code.failure} now={now} actions={actions} onAction={onAction} onRetry={onRetry} />
     if (code.data === undefined) return <DocLoading name={name} />
-    return <CodeView text={code.data} name={name} codeRef={props.textRef} scrollRef={props.scrollRef} onScroll={props.onScroll} />
+    return <CodeView text={code.data} name={name} path={path} codeRef={props.textRef} scrollRef={props.scrollRef} onScroll={props.onScroll} />
   }
 
   let body: React.JSX.Element

@@ -38,7 +38,7 @@ export function DocHtml(props: Props): React.JSX.Element {
   if (mode === 'preview') return <HtmlPreview {...props} />
   if (code.failure) return <DocStub path={path} failure={code.failure} now={now} actions={actions} onAction={onAction} onRetry={onRetry} />
   if (code.data === undefined) return <DocLoading name={name} />
-  return <CodeView text={code.data} name={name} codeRef={props.codeRef} scrollRef={props.scrollRef} onScroll={props.onScroll} />
+  return <CodeView text={code.data} name={name} path={path} codeRef={props.codeRef} scrollRef={props.scrollRef} onScroll={props.onScroll} />
 }
 
 function HtmlPreview({ source, path, name, reload, now, actions, onAction, onRetry }: Props): React.JSX.Element {

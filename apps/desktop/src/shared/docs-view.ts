@@ -21,7 +21,7 @@ export interface DocKind {
   language?: string
 }
 
-/** Текст больше — заглушка `tooBig`: показ одним текстовым узлом без виртуализации. */
+/** Текст больше — заглушка `tooBig`: показ без виртуализации, подсветка renderer имеет отдельный меньший лимит. */
 export const DOC_TEXT_MAX_BYTES = 1024 * 1024
 /** Картинка больше — заглушка `tooBig` (= `SHOWCASE_READ_MAX_BYTES`). */
 export const DOC_IMAGE_MAX_BYTES = 10 * 1024 * 1024
