@@ -67,15 +67,15 @@
 - Produces: `createWorkerServices({ host, resources, messages, sessions, launcher })` → `startWorker`, `startCoordinator`, `returnToWork`, `startAssistant`, `workerPath`; прежние сигнатуры результатов и WorkerEnvContext/AssistantContext.
 - Desktop получает Electron paths только в своём adapter, сохраняет cliBinDir/pruneLaunchTempFiles и все функции worker.ts; запуск использует те же singleton launcher и PTY registry.
 
-- [ ] Написать тесты реальных store/Git/resources/launcher/registry с управляемым OS PTY port: worker dispatch/env/prompts/повторный ответ/role override; coordinator resume/attachments/exit escalation/rollback; возврат закрывает прежний терминал; assistant neutral cwd; два host контекста; Windows before и Unix quoted setup.
-- [ ] Run: `node --test packages/runtime/test/workers.test.ts`.
+- [x] Написать тесты реальных store/Git/resources/launcher/registry с управляемым OS PTY port: worker dispatch/env/prompts/повторный ответ/role override; coordinator resume/attachments/exit escalation/rollback; возврат закрывает прежний терминал; assistant neutral cwd; два host контекста; Windows before и Unix quoted setup.
+- [x] Run: `node --test packages/runtime/test/workers.test.ts`.
   Expected: FAIL — общий сервис ещё отсутствует.
-- [ ] Перенести worker.ts в factory, заменить Electron/i18n/path discovery на host context, сохранить последовательность guards/effects и ошибки.
-- [ ] Run: `pnpm --filter @orca-board/runtime typecheck` и `pnpm --filter @orca-board/desktop typecheck`.
+- [x] Перенести worker.ts в factory, заменить Electron/i18n/path discovery на host context, сохранить последовательность guards/effects и ошибки.
+- [x] Run: `pnpm --filter @orca-board/runtime typecheck` и `pnpm --filter @orca-board/desktop typecheck`.
   Expected: PASS.
-- [ ] task-done: `pnpm --filter @orca-board/runtime test`.
+- [x] task-done: `pnpm --filter @orca-board/runtime test`.
   Expected: PASS.
-- [ ] Commit: `refactor: выделить общий сервис воркеров и координатора`.
+- [x] Commit: `refactor: выделить общий сервис воркеров и координатора`.
 
 ## Task 3: Интеграция без окна и совместимость Desktop
 

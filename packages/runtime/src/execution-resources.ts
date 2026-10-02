@@ -16,6 +16,8 @@ export interface ExecutionResourceDeps {
 export function createExecutionResources(deps: ExecutionResourceDeps) {
   const branches = createRunBranchServices(deps)
   return {
+    git: deps.git,
+    logger: deps.logger,
     ...branches,
     ...createCoordinatorResumeServices(deps),
     ...createAttachmentServices({ ...deps, branches }),

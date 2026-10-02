@@ -129,8 +129,24 @@ Linux PTY и раздельными install roots ещё предстоит пр
 также общие. Suites attachments/run-images перенесены в runtime; Desktop integration
 проверяет прежние ошибки, возвраты и review/merge через совместимые facades.
 
-Это часть этапа исполнения. Worker/coordinator orchestration, bundled prompts,
-dialog drivers и AssistantSession пока в Desktop. Single-owner lifecycle, writer leases,
+### Общие воркеры и координатор
+
+`createWorkerServices({ host, resources, messages, sessions, launcher })` запускает
+воркера, координатора и терминальный режим ассистента, выполняет повторный запуск и
+возврат глобальной задачи в работу. Host передаёт dataDir, CLI bin, Node executable,
+bundled prompts, язык инструкций, shell, PATH и Windows launch options. Runtime
+создаёт worktree/dispatch, передаёт прежние ORCA_* переменные, обрабатывает выход
+агента и эскалацию вопросов. Отписка observer не меняет исполнение или состояние store.
+
+Desktop `main/worker.ts` лениво создаёт общий сервис и сохраняет прежние функции.
+Electron paths и очистка прошлых Windows prompt files остаются в этом adapter;
+launcher и session registry используются те же, что остальными Desktop вызовами.
+Язык читается callback при запуске, поэтому смена настроек сохраняет прежнее
+поведение. Другой host передаёт собственный язык и доступную shell.
+
+Это часть этапа исполнения. Workflow/review executors и wiring main/index.ts,
+обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
+Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
 сама по себе не является авторизацией для удалённого клиента.
