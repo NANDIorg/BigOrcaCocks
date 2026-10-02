@@ -113,11 +113,17 @@ export function reservedFlagsIn(agent: string, args: readonly string[]): Reserve
   const rules = getAgent(agent)?.reservedFlags ?? []
   const found: ReservedFlag[] = []
   args.forEach((token, i) => {
+    // Gemini объединяет булевы -d/-s/-y: разрешения могут стоять внутри связки, например -dy.
+    const geminiBooleanGroup = agent === 'gemini' && /^-[dsy]+$/.test(token)
     for (const rule of rules) {
       for (const flag of rule.flags) {
-        const attached = attachedValue(token, flag)
+        const attached = geminiBooleanGroup && (flag === '-y' || flag === '-s')
+          ? (token.includes(flag[1]) ? '' : undefined)
+          : attachedValue(token, flag)
         if (attached === undefined) continue
-        if (rule.valuePrefix !== undefined && !(attached || args[i + 1] || '').startsWith(rule.valuePrefix)) continue
+        // Codex принимает пробелы вокруг `=` в -c: сравниваем ключ настройки, а не её оформление.
+        const value = (attached || args[i + 1] || '').trimStart().replace(/\s*=\s*/, '=')
+        if (rule.valuePrefix !== undefined && !value.startsWith(rule.valuePrefix)) continue
         const shown = rule.valuePrefix === undefined ? flag : `${flag} ${rule.valuePrefix}`
         if (!found.some((f) => f.flag === shown)) found.push({ flag: shown, reason: rule.reason })
       }

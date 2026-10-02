@@ -10,6 +10,7 @@ import { Markdown } from './Markdown'
 import { Icon } from './icons'
 import { AssistantInteraction } from './AssistantInteraction'
 import { emptyChatState, groupMessages, isAssistantThinking, subscribeAssistantChat, toolActivityDetail, type ChatState } from './assistantChat'
+import { assistantActivityOf, type AssistantActivity } from './assistantActivity'
 import { ipcErrorMessage } from './ipcError'
 import { useModalFocus } from './useModalFocus'
 import { useT, type TFunction, type TKey } from './i18n'
@@ -20,6 +21,7 @@ interface Props {
   activePty: string | null
   status: { busy: boolean; error: string | null }
   onClose(): void
+  onActivityChange(activity: AssistantActivity): void
   onReset(): void
   onSettings(): void
   onChooseChatAgent(sessionId: string, agent: 'amp' | 'shell'): void
@@ -66,7 +68,7 @@ function ChatMessageRow({ message, t }: { message: AssistantChatMessage; t: TFun
 }
 
 /** Сессия и черновик живут при закрытой панели; встроенного терминала здесь нет. */
-export function AssistantPanel({ open, suspended, activePty, status, onClose, onReset, onSettings, onChooseChatAgent, onOpenInTerminals, canOpenInTerminals, attachment, returnAvailable, result, composerRequest, onComposerRequestApplied, onCreateWorkflow, onDetachWorkflow, onWorkflowSent, onReturnWorkflow, onOpenWorkflow }: Props): React.JSX.Element {
+export function AssistantPanel({ open, suspended, activePty, status, onClose, onActivityChange, onReset, onSettings, onChooseChatAgent, onOpenInTerminals, canOpenInTerminals, attachment, returnAvailable, result, composerRequest, onComposerRequestApplied, onCreateWorkflow, onDetachWorkflow, onWorkflowSent, onReturnWorkflow, onOpenWorkflow }: Props): React.JSX.Element {
   const t = useT()
   const layerRef = useRef<HTMLDivElement>(null)
   const composeRef = useRef<HTMLTextAreaElement>(null)
@@ -85,6 +87,12 @@ export function AssistantPanel({ open, suspended, activePty, status, onClose, on
   const [error, setError] = useState<string | null>(null)
   const [away, setAway] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Ошибка чтения снимка завершает подключение; сбой send/interrupt не меняет настоящий статус CLI.
+  const activity = assistantActivityOf(error && chat.status === 'starting' ? { ...chat, status: 'error' } : chat)
+  useEffect(() => {
+    onActivityChange(activity)
+    // Текст стримится внутри панели; оболочка получает только значимые смены состояния.
+  }, [activity.ptyId, activity.revision, activity.status, activity.responseReady, activity.terminal, onActivityChange])
 
   useEffect(() => {
     if (!open) return

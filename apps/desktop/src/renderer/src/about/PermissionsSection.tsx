@@ -12,7 +12,7 @@ export function permissionParts(mode: PermissionMode): { title: string; desc: st
   return { title: t(`config.about.perm.${mode}`), desc: t(`config.about.perm.${mode}Desc`) }
 }
 
-/** Раздел «Разрешения агентов»: режим подтверждений Claude Code карточками-радио. */
+/** Раздел «Разрешения агентов»: режим типа задачи карточками-радио. */
 export function PermissionsSection({ value, error, onChange }: {
   value: PermissionMode
   error: string | null
@@ -43,6 +43,7 @@ export function PermissionsSection({ value, error, onChange }: {
           )
         })}
       </div>
+      <p className="hint">{t('config.about.perm.differences')}</p>
       <p className="hint">{withCode(t('config.about.perm.note'), 'orca-board')}</p>
       {error && <div className="editor-error">{error}</div>}
     </>
