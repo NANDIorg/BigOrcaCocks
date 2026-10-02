@@ -74,14 +74,43 @@ revision checks графов и rollback не изменены. Общие пу�
 codec читает и объединяет настройки. Runtime знает язык, appearance, уведомления и
 ассистента; Desktop добавляет keepInBackground и updates через `main/project-settings.ts`.
 Непрозрачные поля другого хоста сохраняются на диске при записи общих настроек.
-Проверка флагов ассистента/ролей и очистка extraArgs в ответах также общие; запуск
-процессов пока остаётся в Desktop.
+Проверка флагов ассистента/ролей и очистка extraArgs в ответах также общие.
 
 `main/projects.ts`, `main/task-types-migration.ts` и `main/task-type-detect.ts` —
 совместимые входы в runtime. Классы Desktop создаются один раз, сохраняя instanceof
 для сокета. Core экспортирует модули с `.ts`, поэтому package entrypoints работают
 в обычном Node 24 без сборщика Electron. Сохранённый activeId пока служит legacy API
 Desktop; Web-клиенты получат свой контекст выбора проекта на следующем этапе.
+
+### Общий запуск агентов и терминальные сессии
+
+`createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,
+создаёт защищённую временную копию настроек Amp и файл длинного system prompt
+Windows. Существующие JSONC, MCP, permissions, quoting и лимиты сохранены.
+Cleanup принадлежит экземпляру launcher: exit, ошибка spawn и dispose удаляют
+его файлы. Desktop вызывает dispose при выходе main; импорт runtime не добавляет
+обработчик process.exit. Общий `createBinaryLookup` принимает home/platform/env;
+defaults читают текущее окружение. Обнаружение версий/моделей и их кэш пока в Desktop.
+
+`createSessionRegistry({ spawn, onObserverError? })` владеет PTY lifecycle,
+input/resize, метаданными и ограниченным хвостом вывода (256×1024 единиц UTF-16,
+как в прежнем Desktop). Подписки data/exit/changed независимы от BrowserWindow.
+Отписка не останавливает процесс; новые подписчики читают terminalSnapshots.
+Snapshots содержат последние 200 строк без ANSI; это не точное восстановление TUI.
+Ошибки подписчика изолированы, host может регистрировать их через onObserverError.
+
+Native node-pty и его ABI выбирает host. Desktop передаёт node-pty.spawn и доставляет
+прежние IPC каналы текущему окну; закрытие/пересоздание окна сохраняет процессы и tail.
+Runtime загружается обычным Node без Electron и node-pty. Отдельный Desktop integration
+тест запускает настоящий PTY и проверяет доставку после замены получателя IPC.
+Node package smoke использует тестовый PTY port: установленный headless с реальным
+Linux PTY и раздельными install roots ещё предстоит проверить.
+
+Это часть этапа исполнения. Worker/coordinator orchestration, prompts/attachments,
+dialog drivers и AssistantSession пока в Desktop. Single-owner lifecycle, writer leases,
+client context и ограниченный журнал replay остаются обязательными до подключения Web.
+Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
+сама по себе не является авторизацией для удалённого клиента.
 
 ## Процессы
 

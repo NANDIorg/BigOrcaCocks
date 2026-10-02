@@ -65,6 +65,18 @@ it('snapshot не позволяет изменить метаданные жи�
   assert.equal(registry.terminalSnapshots()[0].label, 'Задача')
 })
 
+it('изменение payload одним observer не меняет следующий snapshot и других клиентов', () => {
+  const { registry, spawn } = setup()
+  registry.subscribe(event => {
+    if (event.type === 'changed') { event.terminals[0].label = 'изменено'; event.terminals.length = 0 }
+  })
+  let label: string | undefined
+  registry.subscribe(event => { if (event.type === 'changed') label = event.terminals[0].label })
+  spawn()
+  assert.equal(label, 'Задача')
+  assert.equal(registry.listTerminals()[0].label, 'Задача')
+})
+
 it('tail ограничен и snapshot содержит последние 200 строк', () => {
   const { registry, ports, spawn } = setup()
   const id = spawn()

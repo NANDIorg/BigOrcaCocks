@@ -7,10 +7,6 @@ import { getAgent, type AgentInvocation } from '@orca-board/core'
 import * as runtime from '../src/index.ts'
 
 const { createAgentLauncher, createBinaryLookup } = runtime
-it('runtime предоставляет общий запуск и поиск бинарников', () => {
-  assert.equal(typeof createAgentLauncher, 'function')
-  assert.equal(typeof createBinaryLookup, 'function')
-})
 
 let root: string
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'orca-runtime-launch-')) })
