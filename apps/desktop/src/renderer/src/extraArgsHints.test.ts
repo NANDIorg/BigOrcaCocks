@@ -123,7 +123,7 @@ test('commandPreview — флаги пользователя сразу посл
     "claude --verbose --add-dir '/a b' --permission-mode auto --allowedTools 'Bash(orca-board:*)' --model opus " +
       '--append-system-prompt ‹skills/worker.md› ‹задание›'
   )
-  assert.match(commandPreview(t, { agent: 'goose', extraArgs: '--debug' }, 'worker', '‹задание›'), /^goose run --debug --interactive /)
+  assert.match(commandPreview(t, { agent: 'goose', extraArgs: '--debug' }, 'worker', '‹задание›'), /^GOOSE_MODE=approve goose run --debug --interactive /)
   assert.equal(commandPreview(t, { agent: 'shell', extraArgs: '-l' }, 'worker', '‹задание›'), "'$SHELL' -l")
 })
 
@@ -152,6 +152,17 @@ test('commandPreview — полный доступ типа задачи вид�
     commandPreview(t, { agent: 'claude' }, 'worker', '‹задание›', 'bypassPermissions'),
     /--permission-mode bypassPermissions/
   )
+})
+
+test('commandPreview — показывает окружение разрешений и отдельный файл настроек Amp', () => {
+  assert.match(commandPreview(t, { agent: 'goose' }, 'worker', '‹задание›', 'bypassPermissions'), /^GOOSE_MODE=auto goose run /)
+  const open = commandPreview(t, { agent: 'opencode' }, 'worker', '‹задание›', 'acceptEdits')
+  assert.match(open, /^OPENCODE_PERMISSION='/)
+  assert.ok(open.includes('"edit":{"*":"allow"}'))
+  assert.ok(open.includes('"bash":{"*":"ask"}'))
+  const amp = commandPreview(t, { agent: 'amp' }, 'worker', '‹задание›', 'auto')
+  assert.match(amp, /--settings-file ‹/)
+  assert.ok(amp.includes('"amp.dangerouslyAllowAll":false'))
 })
 
 test('withPatch — флаги хранятся как введены, пустые и из одних пробелов удаляются', () => {

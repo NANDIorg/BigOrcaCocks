@@ -169,6 +169,19 @@ describe('reservedFlagsIn', () => {
     ])
   })
 
+  it('остальные CLI: ручные разрешения предупреждают о конфликте с режимом типа', () => {
+    for (const [agent, flags] of [
+      ['gemini', ['--approval-mode=plan', '--yolo', '-dy', '--sandbox']],
+      ['cursor', ['--force', '-f', '--yolo', '--sandbox', '--approve-mcps']],
+      ['amp', ['--settings-file=x.json', '--dangerously-allow-all']],
+      ['copilot', ['--allow-all', '--yolo', '--allow-tool=write', '--deny-tool=shell', '--allow-all-paths', '--allow-all-urls']]
+    ] as const) {
+      const warnings = reservedFlagsIn(agent, [...flags])
+      assert.equal(warnings.length, flags.length, agent)
+      assert.ok(warnings.every((warning) => warning.reason === 'permission'), agent)
+    }
+  })
+
   it('флаг одного агента у другого не зарезервирован; неизвестный агент и агент без списка — []', () => {
     assert.deepEqual(reservedFlagsIn('codex', ['--effort', 'high', '--permission-mode', 'plan']), [])
     assert.deepEqual(reservedFlagsIn('gemini', ['-m', 'pro']), [{ flag: '-m', reason: 'model' }])

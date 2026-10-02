@@ -18,6 +18,7 @@ describe('инструкции предметных заготовок', () => {
   it('координатор и воркер используют режим типа: полный доступ передаётся и Codex, и Claude', () => {
     for (const skill of [worker, coordinator]) {
       assert.match(skill, /режим разрешений из типа задачи/i)
+      for (const agent of ['Gemini', 'OpenCode', 'Cursor', 'Amp', 'Copilot', 'Goose']) assert.ok(skill.includes(agent))
       const opts = { permissionMode: 'bypassPermissions', shell: '/bin/sh' }
       const codex = getAgent('codex')!.invoke(skill, 'задание', opts).args
       assert.ok(codex.includes('sandbox_mode="danger-full-access"'))

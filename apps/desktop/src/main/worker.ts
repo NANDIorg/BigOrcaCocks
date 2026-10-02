@@ -2,13 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter } from 'node:path'
 import { existsSync, mkdirSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentInvocation, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { addTaskWorktree, assertHasCommits, projectBranchInfo, setupCommand, taskWorktreePath } from './git'
 import { extraPathDirs, missingRoleText } from './agents'
 import { roleLaunchExtraArgs } from './launch-extra-args'
-import { win32Launch, type Win32Launch } from './win32-launch'
+import { launchAgent } from './agent-launch'
 import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv, assistantCwd, assistantLaunch } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
@@ -52,14 +52,6 @@ export function cliBinDir(): string {
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
-}
-
-/**
- * Запуск агента на Windows (`win32Launch`, сборка командной строки — `win32-launch.ts`): Node для JS-точки входа
- * npm-шима в собранном приложении — Node из Electron.
- */
-function launchOnWin32(inv: AgentInvocation): Win32Launch {
-  return win32Launch(inv.command, inv.args, { electronNode: app.isPackaged ? process.execPath : undefined })
 }
 
 /**
@@ -154,29 +146,27 @@ export function startWorker(
   // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
   // Worktree, который создала нода «Git» до первого запуска, тоже «свежий»: зависимостей в нём ещё нет.
   const setup = fresh || !snap.dispatches.some((d) => d.taskId === task.id) ? setupCommand(worktree) : null
-  const win32 = process.platform === 'win32' ? launchOnWin32(inv) : undefined
-  const { command, args } = win32
-    ? win32
-    : setup
+  const ptyId = launchAgent(inv, worktree, (launch, onExit) => {
+    const unixSetup = process.platform !== 'win32' && setup && Array.isArray(launch.args)
       ? {
           command: defaultShell(),
-          args: ['-c', `echo "[orca] ${setup}"; ${setup}; exec ${[inv.command, ...inv.args].map(shellQuote).join(' ')}`]
+          args: ['-c', `echo "[orca] ${setup}"; ${setup}; exec ${[launch.command, ...launch.args].map(shellQuote).join(' ')}`]
         }
-      : { command: inv.command, args: inv.args }
-
-  const ptyId = spawnPty(
-    {
-      meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
-      cwd: worktree,
-      command,
-      args,
-      ...(win32 && setup ? { before: win32Setup(setup) } : {}),
-      cols,
-      rows,
-      env: { ...baseEnv(ctx), ...win32?.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
-    },
-    (id, code) => store.ptyExited(id, code)
-  )
+      : undefined
+    return spawnPty(
+      {
+        meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
+        cwd: worktree,
+        command: unixSetup?.command ?? launch.command,
+        args: unixSetup?.args ?? launch.args,
+        ...(process.platform === 'win32' && setup ? { before: win32Setup(setup) } : {}),
+        cols,
+        rows,
+        env: { ...baseEnv(ctx), ...launch.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
+      },
+      onExit
+    )
+  }, (id, code) => store.ptyExited(id, code), { electronNode: app.isPackaged ? process.execPath : undefined })
   store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, dispatchId, worktree, branch }
 }
@@ -250,8 +240,7 @@ export function startCoordinator(
       sessionId,
       extraArgs
     })
-    const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
-    ptyId = spawnPty({
+    ptyId = launchAgent(inv, cwd, (launch, onExit) => spawnPty({
       meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
       cwd,
       command: launch.command,
@@ -267,10 +256,10 @@ export function startCoordinator(
         BASH_DEFAULT_TIMEOUT_MS: '1800000',
         BASH_MAX_TIMEOUT_MS: '3600000'
       }
-    }, (id) => {
+    }, onExit), (id) => {
       store.coordinatorExited(run.id, id)
       escalateAfterCoordinator(store, run.id)
-    })
+    }, { electronNode: app.isPackaged ? process.execPath : undefined })
   } catch (e) {
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
@@ -339,8 +328,7 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onE
   })
   const cwd = assistantCwd(app.getPath('userData'))
   mkdirSync(cwd, { recursive: true })
-  const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
-  const ptyId = spawnPty(
+  const ptyId = launchAgent(inv, cwd, (launch, exited) => spawnPty(
     {
       meta: { role: 'assistant', label: 'ассистент' },
       cwd,
@@ -353,7 +341,7 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onE
         ...launch.env
       }
     },
-    onExit
-  )
+    exited
+  ), onExit, { electronNode: app.isPackaged ? process.execPath : undefined })
   return { ptyId, sessionId }
 }

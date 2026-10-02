@@ -6,6 +6,10 @@
 export interface AgentInvocation {
   command: string
   args: string[]
+  /** Настройки только этого процесса; main добавляет их к окружению PTY на всех платформах. */
+  env?: Record<string, string>
+  /** Amp принимает настройки только файлом: main создаёт временную копию, сохраняя прочие настройки. */
+  settingsFile?: { flag: string; overrides: Record<string, unknown> }
 }
 
 export interface AgentInvokeOptions {
@@ -109,6 +113,45 @@ function extra(opts: AgentInvokeOptions): readonly string[] {
   return opts.extraArgs ?? []
 }
 
+/** В ограниченных режимах сохраняем штатное чтение (.env) и конкретные правила конфигов при mergeDeep. */
+function openCodePermissions(mode: string): string {
+  if (mode === 'bypassPermissions') return JSON.stringify({
+    '*': 'allow', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow', lsp: 'allow',
+    skill: 'allow', todowrite: 'allow', question: 'allow', websearch: 'allow', edit: 'allow',
+    bash: 'allow', shell: 'allow', task: 'allow', subagent: 'allow', webfetch: 'allow', external_directory: 'allow'
+  })
+  return JSON.stringify({
+    edit: { '*': mode === 'acceptEdits' ? 'allow' : 'ask' },
+    bash: { '*': 'ask' }, shell: { '*': 'ask' }, task: { '*': 'ask' }, subagent: { '*': 'ask' },
+    external_directory: { '*': 'ask' }, webfetch: 'ask'
+  })
+}
+
+/** Явные правила включают и встроенный permissions plugin нового Amp, где по умолчанию вопросов нет. */
+function ampPermissions(mode: string): Record<string, unknown> {
+  const full = mode === 'bypassPermissions'
+  const edits = mode === 'acceptEdits' ? 'allow' : 'ask'
+  return {
+    'amp.dangerouslyAllowAll': full,
+    'amp.permissions': full ? [{ tool: '*', action: 'allow' }] : [
+      ...['Read', 'read_file', 'glob', 'Grep', 'grep', 'list_directory'].map((tool) => ({ tool, action: 'allow' })),
+      ...['edit_file', 'create_file', 'apply_patch', 'Write', 'Edit'].map((tool) => ({ tool, action: edits })),
+      { tool: '*', action: 'ask' }
+    ]
+  }
+}
+
+/** Gemini запрещает сочетать --yolo и --approval-mode. Явные флаги человека сохраняются с предупреждением UI. */
+function geminiPermissions(opts: AgentInvokeOptions): string[] {
+  const manual = extra(opts).some((arg) =>
+    ['--approval-mode', '--yolo', '-y'].some((flag) => arg === flag || arg.startsWith(`${flag}=`)) ||
+    (/^-[dsy]+$/.test(arg) && arg.includes('y'))
+  )
+  return manual ? [] : [
+    '--approval-mode', opts.permissionMode === 'bypassPermissions' ? 'yolo' : opts.permissionMode === 'acceptEdits' ? 'auto_edit' : 'default'
+  ]
+}
+
 export const AGENTS = [
   {
     id: 'claude',
@@ -204,7 +247,8 @@ export const AGENTS = [
     reservedFlags: [{ flags: ['--model'], reason: 'model' }],
     invoke: (system, prompt, opts) => ({
       command: 'opencode',
-      args: [...extra(opts), ...modelFlag('--model', opts.model), '--prompt', combine(system, prompt)]
+      args: [...extra(opts), ...modelFlag('--model', opts.model), '--prompt', combine(system, prompt)],
+      env: { OPENCODE_PERMISSION: openCodePermissions(opts.permissionMode) }
     })
   },
   {
@@ -214,10 +258,17 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: [],
     // Интерактивный режим с начальным промптом.
-    reservedFlags: [{ flags: ['-m'], reason: 'model' }],
+    reservedFlags: [
+      { flags: ['-m', '--model'], reason: 'model' },
+      { flags: ['--approval-mode', '--yolo', '-y', '--sandbox', '-s', '--allowed-tools'], reason: 'permission' }
+    ],
     invoke: (system, prompt, opts) => ({
       command: 'gemini',
-      args: [...extra(opts), ...modelFlag('-m', opts.model), '-i', combine(system, prompt)]
+      args: [
+        ...extra(opts), ...geminiPermissions(opts),
+        ...modelFlag('-m', opts.model), '-i', combine(system, prompt)
+      ],
+      ...(opts.permissionMode === 'bypassPermissions' ? { env: { GEMINI_SANDBOX: 'false' } } : {})
     })
   },
   {
@@ -226,10 +277,18 @@ export const AGENTS = [
     bin: 'cursor-agent',
     versionArgs: ['--version'],
     effortOptions: [],
-    reservedFlags: [{ flags: ['--model'], reason: 'model' }],
+    reservedFlags: [
+      { flags: ['--model'], reason: 'model' },
+      { flags: ['--force', '-f', '--yolo', '--sandbox', '--approve-mcps'], reason: 'permission' }
+    ],
     invoke: (system, prompt, opts) => ({
       command: 'cursor-agent',
-      args: [...extra(opts), ...modelFlag('--model', opts.model), combine(system, prompt)]
+      args: [
+        ...extra(opts), ...modelFlag('--model', opts.model),
+        ...(opts.permissionMode === 'bypassPermissions' ? ['--force', '--approve-mcps'] : []),
+        '--sandbox', opts.permissionMode === 'bypassPermissions' ? 'disabled' : 'enabled',
+        combine(system, prompt)
+      ]
     })
   },
   {
@@ -239,7 +298,11 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: [],
     // Модель не выбирается из CLI — игнорируем.
-    invoke: (system, prompt, opts) => ({ command: 'amp', args: [...extra(opts), combine(system, prompt)] })
+    reservedFlags: [{ flags: ['--settings-file', '--dangerously-allow-all'], reason: 'permission' }],
+    invoke: (system, prompt, opts) => ({
+      command: 'amp', args: [...extra(opts), combine(system, prompt)],
+      settingsFile: { flag: '--settings-file', overrides: ampPermissions(opts.permissionMode) }
+    })
   },
   {
     id: 'copilot',
@@ -248,7 +311,16 @@ export const AGENTS = [
     versionArgs: ['--version'],
     effortOptions: [],
     // Модель не выбирается из CLI — игнорируем.
-    invoke: (system, prompt, opts) => ({ command: 'copilot', args: [...extra(opts), '-i', combine(system, prompt)] })
+    reservedFlags: [{ flags: ['--allow-all', '--yolo', '--allow-all-tools', '--allow-all-paths', '--allow-all-urls', '--allow-tool', '--deny-tool'], reason: 'permission' }],
+    invoke: (system, prompt, opts) => ({
+      command: 'copilot',
+      args: [
+        ...extra(opts),
+        ...(opts.permissionMode === 'bypassPermissions' ? ['--allow-all'] : opts.permissionMode === 'acceptEdits' ? ['--allow-tool=write'] : []),
+        '-i', combine(system, prompt)
+      ],
+      env: { COPILOT_ALLOW_ALL: 'false' }
+    })
   },
   {
     id: 'goose',
@@ -259,7 +331,8 @@ export const AGENTS = [
     // Модель задаётся конфигом goose, из CLI — игнорируем. Флаги пользователя — после подкоманды `run`.
     invoke: (system, prompt, opts) => ({
       command: 'goose',
-      args: ['run', ...extra(opts), '--interactive', '--text', combine(system, prompt)]
+      args: ['run', ...extra(opts), '--interactive', '--text', combine(system, prompt)],
+      env: { GOOSE_MODE: opts.permissionMode === 'bypassPermissions' ? 'auto' : opts.permissionMode === 'acceptEdits' ? 'smart_approve' : 'approve' }
     })
   },
   {

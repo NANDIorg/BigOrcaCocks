@@ -43,7 +43,7 @@ export function PermissionsSection({ value, error, onChange }: {
           )
         })}
       </div>
-      <p className="hint">{t('config.about.perm.codexNote')}</p>
+      <p className="hint">{t('config.about.perm.differences')}</p>
       <p className="hint">{withCode(t('config.about.perm.note'), 'orca-board')}</p>
       {error && <div className="editor-error">{error}</div>}
     </>

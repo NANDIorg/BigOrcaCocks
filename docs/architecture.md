@@ -885,10 +885,15 @@ orca-board decision escalate --reason "..."        # не может выбра�
 
 При старте PTY в env кладутся `ORCA_TASK_ID`, `ORCA_DISPATCH_ID`, `ORCA_SOCKET`, `ORCA_PROJECT`,
 а в `PATH` — папка с `orca-board`. Команда запуска берётся из реестра по агенту роли задачи:
-`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort, sessionId, extraArgs})` → `{command, args}`
+`AGENTS[role.agent].invoke(инструкция, задание, {permissionMode, shell, model: role.model, effort: role.effort, sessionId, extraArgs})` → `{command, args, env?, settingsFile?}`
 (`worker.ts`; `extraArgs` — флаги запуска роли, разобранные `roleLaunchExtraArgs`; так же у координатора, у ассистента —
 из `assistantLaunch`). Инструкция — `skills/worker.md`, задание — `# Задача: <title>` + spec + ответы на вопросы + раздел
 «Этап» (инструкция и показ ноды «Работа», `store.taskWorkStage`) + замечания ревью.
+
+`launchAgent` (`src/main/agent-launch.ts`) передаёт `inv.env` в PTY, включая Windows npm-шимы и Unix setup+exec.
+Для Amp создаёт отдельную копию JSON/JSONC настроек через `--settings-file`; глобальный файл не меняется.
+Копия удаляется после выхода PTY, при ошибке запуска и синхронно при завершении main. Превью команды показывает окружение и содержимое
+переопределений временного файла. Режимы всех агентов — в «Разрешения агентов».
 
 Координатор (`startCoordinator`): каждый запуск создаёт прогон `store.createRun(objective)`, после спавна —
 `setRunPty(runId, ptyId, agent)`; если спавн упал, прогон сразу закрывается (`closeRun`), чтобы не висел открытым.
@@ -1061,8 +1066,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   - остальные — `models = []`, в UI модель вводится свободным текстом.
 - **Запуск** `invoke(system, prompt, {permissionMode, shell, model?, effort?, sessionId?, extraArgs?})`: модель — флагом агента;
   `effort` — claude `--effort <e>`, codex `-c model_reasoning_effort=<e>`, у прочих игнорируется;
-  `permissionMode` — claude `--permission-mode`, codex `-c sandbox_mode=… -c approval_policy=…` (таблица ниже в «Разрешения агентов»);
-  пустое значение — флаг не добавляется. `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
+  `permissionMode` переводится адаптером каждого CLI в его аргументы, окружение или временные настройки
+  (таблица ниже в «Разрешения агентов»). Пустая модель/effort — флаг не добавляется.
+  `worker.ts` передаёт `role.model`/`role.effort` и воркеру, и координатору.
   `sessionId` — uuid сессии для статистики: `worker.ts` генерирует его (`agentSessionId`) только агентам с
   `acceptsSessionId` (сейчас claude → `--session-id <uuid>`), ассистенту не передаётся.
 - **Флаги пользователя** (`Role.extraArgs`, `AssistantSettings.extraArgs` → `AgentInvokeOptions.extraArgs`,
@@ -1116,8 +1122,9 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     `--resume`/`-r`, `--continue`/`-c`, `--fork-session`, `--from-pr`, `--teleport`, `--no-session-persistence`;
     `--print`/`-p`; `--append-system-prompt`, `--system-prompt` и их `-file`-варианты. codex (`--help` 0.156.1):
     `--model`/`-m`, `-c`/`--config` со значением `model=…` или `model_reasoning_effort=…` (`valuePrefix`; прочие `-c`
-    свободны); sandbox и approval приложение codex не задаёт — они не зарезервированы. opencode, cursor — `--model`,
-    gemini — `-m` (то, что ставит сам `invoke`). Узнаются `--flag=значение`, слитное `-mзначение` и связка коротких (`-pc`);
+    свободны); также зарезервированы sandbox/approval и их пресеты, `-c sandbox_mode=…` / `approval_policy=…`.
+    opencode, cursor — `--model`; gemini — `-m`/`--model`. У Gemini, Cursor, Amp и Copilot предупреждаются
+    собственные флаги разрешений (список рядом с `invoke` в реестре). Узнаются `--flag=значение`, слитное `-mзначение` и связка коротких (`-pc`);
     значение чужого флага от флага не отличается — лишнее предупреждение дешевле таблицы арности всех флагов.
     Про `model` и `effort` UI предупреждает, только когда поле исполнителя заполнено (`FIELD_OF` в
     `renderer/src/extraArgsHints.ts`): тогда приложение ставит свой флаг после флагов пользователя и побеждает. При пустом
@@ -2056,27 +2063,54 @@ dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalatio
 прогон — по своему типу, `resolveRunType`), по умолчанию `auto`. Координатор и все воркеры, включая этапы проверки
 и принятия решений, передают его в общий адаптер `AgentSpec.invoke`. Изменение действует на новые терминалы.
 
-| Режим типа | Claude Code (`--permission-mode`) | Codex (`-c sandbox_mode=…`, `-c approval_policy=…`) |
-| --- | --- | --- |
-| `auto` | `auto`: обычные действия сам, опасные — с подтверждением | `workspace-write`, `on-request`: работа в песочнице, при необходимости запрос дополнительных прав |
-| `bypassPermissions` | `bypassPermissions`: без запросов разрешений | `danger-full-access`, `never`: доступ к файлам и сети без песочницы и запросов разрешений |
-| `acceptEdits` | `acceptEdits`: правки без вопросов, остальные действия — с подтверждением | `workspace-write`, `on-request`: у Codex нет отдельного режима подтверждения только команд |
+| Агент | `auto` | `acceptEdits` | `bypassPermissions` |
+| --- | --- | --- | --- |
+| Claude Code | `--permission-mode auto` | `--permission-mode acceptEdits` | `--permission-mode bypassPermissions` |
+| Codex | `-c sandbox_mode="workspace-write" -c approval_policy="on-request"` | тот же режим: отдельного подтверждения только команд нет | `-c sandbox_mode="danger-full-access" -c approval_policy="never"` |
+| Gemini CLI | `--approval-mode default` | `--approval-mode auto_edit` | `--approval-mode yolo`, `GEMINI_SANDBOX=false` |
+| OpenCode | `OPENCODE_PERMISSION`: штатные правила чтения/поиска, правки и команды `{"*":"ask"}` | правки `{"*":"allow"}`, команды `{"*":"ask"}` | wildcard и известные действия `allow`, включая внешние папки |
+| Cursor Agent | `--sandbox enabled`, собственные подтверждения CLI | тот же режим: отдельного флага для правок нет | `--force --approve-mcps --sandbox disabled` |
+| Amp | временные настройки: `amp.dangerouslyAllowAll=false`, чтение разрешено, остальные инструменты `ask` | инструменты правок также `allow` | `amp.dangerouslyAllowAll=true`, `amp.permissions=[{tool:"*",action:"allow"}]` |
+| GitHub Copilot CLI | обычные подтверждения, `COPILOT_ALLOW_ALL=false` | `--allow-tool=write`, `COPILOT_ALLOW_ALL=false` | `--allow-all`, `COPILOT_ALLOW_ALL=false` (режим задаёт аргумент) |
+| Goose | `GOOSE_MODE=approve` | `GOOSE_MODE=smart_approve` | `GOOSE_MODE=auto` |
+| Shell | режим не применяется: у оболочки нет системы подтверждений инструментов | — | — |
 
 Claude Code дополнительно получает `--allowedTools "Bash(orca-board:*)"`: CLI доски разрешён всегда.
-У Codex отдельного исключения для `orca-board` нет; действуют его sandbox и approval. Остальные CLI пока используют
-собственные настройки разрешений. Полный доступ Codex требует **обеих** настроек; прежний адаптер полностью
-игнорировал `permissionMode`, поэтому режим типа на него не влиял.
+У остальных CLI отдельного исключения для `orca-board` нет. В Goose «Только правки» — ближайший режим
+Smart Approval: он оценивает риск и может разрешать безопасные команды или запрашивать подтверждение правок.
+Явные запреты Cursor/Copilot, правила выбранного агента OpenCode, проектные настройки Amp и управляемые
+политики могут ограничивать выбранный режим. Настройки типа не меняют глобальные конфиги;
+обязательные ограничения, которые CLI применяет независимо от настроек запуска, остаются в силе.
+
+Amp читает исходный файл из последнего `--settings-file` роли, `AMP_SETTINGS_FILE` или
+`~/.config/amp/settings.json` / `settings.jsonc`. В копии меняются только два ключа разрешений, остальные настройки
+(MCP, proxy и т. д.) сохраняются; файл имеет права `0600`. Некорректный или недоступный явно заданный конфиг —
+ошибка до запуска. Явные правила включают permissions plugin Amp Neo, который иначе не задаёт вопросов.
+Проверено без обращения к моделям: OpenCode 1.2.15 `debug config`, Amp 0.0.1790887360-g98f23e `permissions test`.
+`OPENCODE_PERMISSION` — совместимый формат V1; он остаётся в конфигурационном загрузчике OpenCode при переходе
+на V2. Передаются имена команд обеих схем (`bash`/`shell`, `task`/`subagent`).
+В `auto`/`acceptEdits` адаптер не переопределяет `read`: штатные ограничения `.env` остаются.
+Правки/команды задаются объектом с wildcard, чтобы mergeDeep сохранял конкретные правила конфига.
+Приоритет определяет порядок правил OpenCode: поздний wildcard может перекрывать существующее правило.
 
 Codex получает настройки через повторяемый `-c`, а не через `-s`/`-a`: если такие флаги уже есть в `Role.extraArgs`,
 повтор приводит к ошибке CLI (проверено на 0.159.0). Переопределения `-c sandbox_mode=…` и `-c approval_policy=…`
 приложения стоят после флагов пользователя. Прямые `--sandbox`/`--ask-for-approval` и пресеты CLI могут изменить
 режим запуска; UI предупреждает о них через `reservedFlagsIn`, включая короткие формы, обход sandbox и настройки `-c`.
 У Claude повторный `--permission-mode` приложения побеждает, но `--dangerously-skip-permissions` обходит режим.
+У Gemini явный `--approval-mode` или `--yolo` роли заменяет режим типа: два способа одновременно CLI запрещает,
+а повторный одиночный флаг может сломать запуск. Ручные флаги остаются с предупреждением в UI.
 
 Флаги задаёт только человек в UI: ни CLI, ни сокет их не принимают и не отдают — иначе агент, читающий недоверенный
 текст задач, мог бы сам расширить себе права. Управляемые политиками ограничения Codex (`requirements.toml`) сохраняются.
 Официальные источники: [sandbox и approvals](https://learn.chatgpt.com/docs/sandboxing),
-[аргументы CLI](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
+[аргументы Codex CLI](https://learn.chatgpt.com/docs/developer-commands?surface=cli),
+[Gemini CLI](https://geminicli.com/docs/cli/cli-reference/),
+[OpenCode config loader](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/config/config.ts),
+[Cursor CLI](https://cursor.com/docs/cli/reference/parameters),
+[Copilot tool permissions](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools),
+[Amp Neo permissions](https://ampcode.com/news/neo#permissions),
+[Goose modes](https://block.github.io/goose/docs/guides/managing-tools/goose-permissions/).
 
 ## Ветка глобальной задачи (`src/main/run-branch.ts`, чистая часть — `packages/core/src/run-branch.ts`)
 
@@ -2997,7 +3031,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Доп. папки агентов | `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`… | `%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, `~/.local/bin`… | `extraPathDirs()` — `src/main/agents.ts` |
 | Поиск бинарника | имя как есть | сначала расширения из `PATHEXT` (`claude.cmd`, `codex.exe`), потом имя как есть — рядом с `claude.cmd` npm кладёт sh-скрипт без расширения | `binSuffixes()`, `findBin()` — `src/main/agents.ts` |
 | Версия агента | `execFileSync(bin)` | `.cmd`/`.bat` (`isCmdScript()`) — через `shell: true` | `readVersion()` — `src/main/agents.ts` |
-| Запуск агента | argv напрямую | `win32Launch()`: см. ниже | `src/main/win32-launch.ts`; вызывает `src/main/worker.ts` (`startWorker`, `startCoordinator`, `startAssistant`) |
+| Запуск агента | argv напрямую | `win32Launch()`: см. ниже | `src/main/win32-launch.ts`; вызывает `launchAgent` из `src/main/agent-launch.ts`, общий для трёх запусков в `worker.ts` |
 | Подготовка worktree | `$SHELL -c "<setup>; exec <agent>"` | отдельный шаг `cmd.exe /d /s /c` перед агентом | `win32Setup()` — `src/main/worker.ts`; `spawnPty({ before })` — `src/main/pty.ts` |
 | CLI-обёртка | `packages/cli/bin/orca-board` (sh) | `packages/cli/bin/orca-board.cmd` | обе в `cliBinDir()` — `src/main/worker.ts` |
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |

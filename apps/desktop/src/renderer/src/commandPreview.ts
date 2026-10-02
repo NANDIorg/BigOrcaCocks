@@ -31,9 +31,12 @@ export function commandPreview(
   if (!spec) return t('config.roles.agentUnknownCmd', { agent: exec.agent })
   const system = t(exec.systemPrompt ? 'config.roles.ph.systemWithRole' : 'config.roles.ph.system', { kind })
   const extra = parseExtraArgs(exec.extraArgs ?? '')
-  const { command, args } = spec.invoke(system, prompt, {
+  const { command, args, env, settingsFile } = spec.invoke(system, prompt, {
     permissionMode: permissionMode ?? t('config.roles.ph.permission'), shell: '$SHELL', model: exec.model, effort: exec.effort,
     extraArgs: extra.ok ? extra.args : [t('config.roles.ph.extraArgsBad')]
   })
-  return [command, ...args].map(shellArg).join(' ')
+  const argv = settingsFile
+    ? [...args.slice(0, -1), settingsFile.flag, t('config.roles.ph.permissionSettings', { settings: JSON.stringify(settingsFile.overrides) }), ...args.slice(-1)]
+    : args
+  return [...Object.entries(env ?? {}).map(([key, value]) => `${key}=${shellArg(value)}`), ...[command, ...argv].map(shellArg)].join(' ')
 }
