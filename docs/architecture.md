@@ -106,6 +106,11 @@ Native node-pty и его ABI выбирает host. Desktop передаёт no
 прежние IPC каналы текущему окну; закрытие/пересоздание окна сохраняет процессы и tail.
 Runtime загружается обычным Node без Electron и node-pty. Отдельный Desktop integration
 тест запускает настоящий PTY и проверяет доставку после замены получателя IPC.
+Сценарий работает в дочернем процессе-владельце fixture: после assertions он
+завершает собственные native ресурсы. На Windows node-pty 1.1.0 оставляет conout
+worker после естественного exit; это прежнее поведение backend, которое может
+удерживать Node test runner. Такая изоляция не доказывает освобождение завершённых
+ConPTY в долгоживущем owner; lifecycle native adapter нужно проверить в headless этапе.
 Node package smoke использует тестовый PTY port: установленный headless с реальным
 Linux PTY и раздельными install roots ещё предстоит проверить.
 

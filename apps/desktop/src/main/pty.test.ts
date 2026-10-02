@@ -1,5 +1,7 @@
 import { it } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { BrowserWindow } from 'electron'
@@ -24,7 +26,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
 }
 
-it('настоящий PTY переживает закрытие окна и доставляет прежние IPC новому окну', { timeout: 40_000 }, async () => {
+async function checkWindowLifecycle(): Promise<void> {
   const first = windowSink()
   const second = windowSink()
   setPtyWindow(first.win)
@@ -62,4 +64,29 @@ it('настоящий PTY переживает закрытие окна и д�
     assert.equal(second.events[exitIndex + 1].channel, 'terminals:changed')
     assert.equal(isAlive(id), false)
   } finally { setPtyWindow(null); killPty(id) }
-})
+}
+
+// Windows node-pty оставляет conout worker после естественного exit. Отдельный владелец
+// fixture завершает свои native ресурсы после assertions; ошибки сценария дают ненулевой exit.
+if (process.env.ORCA_TEST_PTY_WINDOW_FIXTURE === '1') {
+  void checkWindowLifecycle().then(
+    () => { process.exit(0) },
+    error => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error)
+      process.stderr.write(`${message}\n`, () => { process.exit(1) })
+    }
+  )
+} else {
+  it('настоящий PTY переживает закрытие окна и доставляет прежние IPC новому окну', { timeout: 30_000 }, () => {
+    const child = spawnSync(process.execPath, [
+      '--experimental-transform-types', '--no-warnings', '--import',
+      new URL('../../test/ts-resolve.mjs', import.meta.url).href,
+      fileURLToPath(import.meta.url)
+    ], {
+      encoding: 'utf8', timeout: 25_000,
+      env: { ...process.env, NODE_OPTIONS: '', ORCA_TEST_PTY_WINDOW_FIXTURE: '1' }
+    })
+    assert.equal(child.error, undefined, `${child.error?.message ?? ''}\n${child.stderr}`)
+    assert.equal(child.status, 0, `${child.stdout}\n${child.stderr}`)
+  })
+}

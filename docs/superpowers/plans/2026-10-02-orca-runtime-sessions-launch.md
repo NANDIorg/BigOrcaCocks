@@ -112,6 +112,14 @@
 получателя IPC; вручную UI проверяет пользователь.
 CI финального HEAD — [checks PR #59](https://github.com/NANDIorg/BigOrcaCocks/pull/59).
 
+Первый Windows CI на `323d5f6` выявил зависание владельца native integration теста:
+сами assertions прошли, но conout worker node-pty удерживал Node до таймаута задания.
+Сценарий изолирован в дочернем fixture owner с явным exit после assertions и
+ненулевым exit при ошибке; parent имеет timeout 25 секунд. Отрицательная проверка
+exit code подтвердила, что fixture не скрывает assertion failures. Production
+runtime/Desktop этим исправлением не изменены; проверка cleanup native ресурсов
+долгоживущего owner остаётся частью headless lifecycle.
+
 Решения по границам ревью:
 - WorkerService/dialog drivers/owner/writer leases/client context/replay продолжаются
   следующим этапом. Подключение Web раньше них рискует несогласованным состоянием
