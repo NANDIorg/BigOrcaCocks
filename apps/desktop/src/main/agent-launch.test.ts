@@ -14,6 +14,52 @@ const invocation = (agent: string, mode = 'auto'): AgentInvocation =>
   getAgent(agent)!.invoke('system', 'task', { permissionMode: mode, shell: 'sh' })
 
 describe('launchAgent: настройки одного процесса', () => {
+  for (const outcome of ['exit', 'callback error', 'spawn error'] as const) {
+    it(`Windows: длинный system prompt сохраняет разрешения и удаляется при ${outcome}`, () => {
+      const system = 'правила\n'.repeat(5000)
+      const inv = getAgent('claude')!.invoke(system, 'task', { permissionMode: 'bypassPermissions', shell: 'cmd.exe' })
+      const file = join(root, 'system.md')
+      let finished: ((id: string, code: number) => void) | undefined
+      const start = (): string => launchAgent(inv, root, (launch, onExit) => {
+        assert.deepEqual(launch.tempFiles, [file])
+        assert.equal(readFileSync(file, 'utf8'), system)
+        assert.ok(Array.isArray(launch.args))
+        assert.deepEqual(launch.args.slice(0, -3), inv.args.slice(0, -3))
+        assert.ok(launch.args.includes('bypassPermissions'))
+        assert.deepEqual(launch.args.slice(-3), ['--append-system-prompt-file', file, 'task'])
+        finished = onExit
+        if (outcome === 'spawn error') throw new Error('spawn failed')
+        return 'pty_prompt'
+      }, () => { if (outcome === 'callback error') throw new Error('callback failed') },
+      { platform: 'win32', findBin: () => undefined, systemPromptFile: () => file })
+      if (outcome === 'spawn error') assert.throws(start, /spawn failed/)
+      else {
+        assert.equal(start(), 'pty_prompt')
+        assert.ok(existsSync(file))
+        if (outcome === 'callback error') assert.throws(() => finished!('pty_prompt', 0), /callback failed/)
+        else finished!('pty_prompt', 0)
+      }
+      assert.equal(existsSync(file), false)
+    })
+  }
+
+  it('Windows: выход main удаляет файл system prompt без ожидания PTY onExit', () => {
+    const moduleUrl = new URL('./agent-launch.ts', import.meta.url).href
+    const loader = new URL('../../test/ts-resolve.mjs', import.meta.url).href
+    const file = join(root, 'system.md')
+    const code = `import { getAgent } from '@orca-board/core';
+      import { launchAgent } from ${JSON.stringify(moduleUrl)};
+      const inv = getAgent('claude').invoke('x'.repeat(35000), 'task', { permissionMode: 'bypassPermissions', shell: 'cmd.exe' });
+      launchAgent(inv, ${JSON.stringify(root)}, (launch) => {
+        process.stdout.write(launch.tempFiles[0]);
+        return 'pty';
+      }, undefined, { platform: 'win32', findBin: () => undefined, systemPromptFile: () => ${JSON.stringify(file)} });`
+    const generated = execFileSync(process.execPath, ['--experimental-transform-types', '--no-warnings', '--import', loader, '--input-type=module', '-e', code], { encoding: 'utf8' })
+    assert.equal(generated, file)
+    assert.equal(existsSync(file), false)
+    assert.deepEqual(readdirSync(root), [])
+  })
+
   for (const platform of ['darwin', 'win32'] as const) {
     it(`${platform}: окружение адаптера доходит до запуска без shell-подстановки`, () => {
       const inv = invocation('opencode', 'bypassPermissions')

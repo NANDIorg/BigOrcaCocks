@@ -1,5 +1,5 @@
 import type { WorkflowAssistantContext, WorkflowAssistantSaved } from './assistant-workflow'
-import type { Task, ImageAttachmentInput, AgentKind, AssistantSettings, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
+import type { Task, AttachmentInput, AgentKind, AssistantSettings, AgentInfo, StoreSnapshot, Role, BoardColumn, Run, GlobalTask, BuiltinPrompts, AnswerAudience, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, TaskTypeSettings, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfMigrationNote, WfNodeTemplate, WfTemplateNode } from '@orca-board/core'
 import type { NotificationSettings, NotificationSettingsPatch } from './notifications'
 import type { WindowChromeMode } from './window-chrome'
 import type { AppearanceSettings } from './appearance'
@@ -591,6 +591,14 @@ export interface RequestResolveResult {
   startError?: string
 }
 
+/** Итог `attachments.capabilities()`: что main примет в аргументе вложений IPC-каналов. */
+export interface AttachmentCapabilities {
+  /** `true` — любые файлы; `false` — только картинки PNG/JPEG/GIF/WebP. */
+  files: boolean
+  /** Лимиты, которые проверяет main (`ATTACHMENT_LIMITS` или прежние `IMAGE_ATTACHMENT_LIMITS` из core), байт. */
+  limits: { maxCount: number; maxBytes: number; maxTotalBytes: number }
+}
+
 /** Клик по уведомлению о запросе: открыть Инбокс на нём. */
 export interface RequestFocus {
   projectId: string
@@ -843,14 +851,14 @@ export interface OrcaApi {
     list(): Promise<GlobalTask[]>
     get(id: string): Promise<GlobalTask>
     /**
-     * Создать глобальную задачу. `images` — картинки, вставленные человеком в `GlobalTaskModal`: отдельным
-     * аргументом, а не полем `GlobalTaskInput`, чтобы байты не смешивались с JSON-описанием карточки (так же
-     * устроен `coordinator:start`). Main проверяет их `validateImageAttachments` (PNG/JPEG/GIF/WebP по сигнатуре,
-     * `IMAGE_ATTACHMENT_LIMITS`: ≤ 8 шт., ≤ 10 МБ каждая, ≤ 30 МБ всего на задачу), сохраняет файлы и кладёт
-     * метаданные в `Run.images`. Невалидная картинка — ошибка, задача при этом **не создаётся**.
+     * Создать глобальную задачу. `images` — вложения (картинки и любые файлы), приложенные человеком в `GlobalTaskModal`:
+     * отдельным аргументом, а не полем `GlobalTaskInput`, чтобы байты не смешивались с JSON-описанием карточки (так же
+     * устроен `coordinator:start`). Main проверяет их `validateAttachments` (любой тип, картинка — по сигнатуре;
+     * `ATTACHMENT_LIMITS`: ≤ 8 шт., ≤ 25 МБ каждый, ≤ 50 МБ всего на задачу), сохраняет файлы и кладёт
+     * метаданные в `Run.images`. Невалидное вложение — ошибка, задача при этом **не создаётся**.
      * Без `images` (и у старого renderer) поведение прежнее.
      */
-    create(input: GlobalTaskInput, images?: ImageAttachmentInput[]): Promise<GlobalTask>
+    create(input: GlobalTaskInput, images?: AttachmentInput[]): Promise<GlobalTask>
     update(id: string, patch: GlobalTaskPatch): Promise<GlobalTask>
     /**
      * Сменить тип задачи (`typeId` из типов проекта) — только до начала работы (`canChangeRunType` из core):
@@ -858,15 +866,15 @@ export interface OrcaApi {
      */
     changeType(id: string, typeId: string): Promise<GlobalTask>
     /**
-     * Добавить картинки к существующей задаче. Лимиты `IMAGE_ATTACHMENT_LIMITS` действуют на задачу
+     * Добавить вложения к существующей задаче. Лимиты `ATTACHMENT_LIMITS` действуют на задачу
      * **суммарно**: уже сохранённые (`GlobalTask.images`) плюс новые; превышение количества или общего размера,
-     * неподдерживаемый формат, пустой массив — ошибка, ничего не сохраняется (всё или ничего).
+     * пустой файл, пустой массив — ошибка, ничего не сохраняется (всё или ничего).
      * Править картинки можно только до начала работы — то же правило, что у `changeType` (`canChangeRunType` /
      * `runTypeLockReason` из core: бэклог, ни разу не «В работе», без координатора и подзадач); «Входящие» —
      * ошибка. Позже картинку можно приложить только при запуске координатора (`startCoordinator(..., images)`),
      * но в задаче она не сохранится. Возвращает обновлённую карточку.
      */
-    addImages(id: string, images: ImageAttachmentInput[]): Promise<GlobalTask>
+    addImages(id: string, images: AttachmentInput[]): Promise<GlobalTask>
     /**
      * Удалить картинку задачи (метаданные и файл). Правило то же, что у `addImages`; нет задачи или картинки
      * с таким `imageId` — ошибка. Возвращает обновлённую карточку.
@@ -878,6 +886,19 @@ export interface OrcaApi {
      * на диске — ошибка.
      */
     image(id: string, imageId: string): Promise<{ mime: string; data: Uint8Array }>
+    /**
+     * Показать файл вложения задачи в папке системы (`shell.showItemInFolder`) — только вложение из метаданных
+     * задачи (`GlobalTask.images`), путь строит main. Сам файл приложение не открывает и не запускает.
+     * Пока main не принимает файлы (`attachments.capabilities().files === false`), вызов — ошибка; старый main —
+     * «No handler registered»: renderer проверяет наличие метода и просит перезапустить приложение.
+     */
+    revealAttachment(id: string, imageId: string): Promise<void>
+    /**
+     * Открыть вложение задачи приложением системы (`shell.openPath`) — только расширения из белого списка
+     * (`attachmentOpenable` в `shared/showcase.ts`: картинки, Markdown, PDF; без HTML и SVG). Остальное —
+     * `global.attachmentNotOpenable`: исполняемый файл приложение не запускает. Старый main — «No handler registered».
+     */
+    openAttachment(id: string, imageId: string): Promise<void>
     /** status — id колонки проекта. Подзадачи не трогает. */
     move(id: string, status: string): Promise<GlobalTask>
     /**
@@ -895,11 +916,11 @@ export interface OrcaApi {
      * Картинки: координатору передаются **сохранённые картинки задачи** (`GlobalTask.images`) и `images` этого
      * вызова (вставленные в момент запуска) — одним списком, сохранённые первыми, с абсолютными путями в промпте
      * (`coordinatorPrompt`, как в `coordinator:start`). Так же — при повторных запусках и в `returnToWork`, где
-     * отдельного аргумента нет: там уходят только сохранённые. Суммарно те же `IMAGE_ATTACHMENT_LIMITS`;
+     * отдельного аргумента нет: там уходят только сохранённые. Суммарно те же `ATTACHMENT_LIMITS`;
      * превышение (сохранённые + пришедшие) — ошибка запуска до старта агента. Пришедшие в `images` в задачу
      * не сохраняются — для этого есть `addImages`.
      */
-    startCoordinator(id: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
+    startCoordinator(id: string, cols: number, rows: number, images?: AttachmentInput[]): Promise<string>
     /**
      * «Подтвердить» на «Проверке»: из колонки kind=review в done, событий нет. Не на проверке — ошибка.
      * У прогона с воркфлоу (`workflowScope: 'run'`) это решение по approval ноды `human`, а `decision` — поле
@@ -911,7 +932,7 @@ export interface OrcaApi {
      * запускается повторно и получает уточнение в цели и сохранённые картинки задачи. Возвращает ptyId координатора.
      * `images` — картинки к уточнению (байты, как у `startCoordinator`): main проверяет их и сохраняет в cwd координатора.
      */
-    returnToWork(id: string, text: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
+    returnToWork(id: string, text: string, cols: number, rows: number, images?: AttachmentInput[]): Promise<string>
   }
   tasks: {
     /** Без roleId — единственная роль типа проекта по умолчанию, иначе ошибка. Задача попадает во «Входящие» (см. globalTasks). */
@@ -937,7 +958,7 @@ export interface OrcaApi {
      * `images` — картинки к «Уточнить»/«Вернуть» (байты): main проверяет их, сохраняет в cwd читателя и сам ставит
      * `resolution.images` (пути). `resolution.images` из renderer main отбрасывает.
      */
-    resolve(id: string, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<RequestResolveResult>
+    resolve(id: string, resolution: RequestResolution, images?: AttachmentInput[]): Promise<RequestResolveResult>
     /** Клик по системному уведомлению о запросе: открыть Инбокс на этом запросе. */
     onFocus(cb: (p: RequestFocus) => void): () => void
   }
@@ -961,11 +982,11 @@ export interface OrcaApi {
   }
   coordinator: {
     /**
-     * Запуск координатора. `images` — вставленные из буфера изображения: main проверяет их
-     * (`validateImageAttachments`), сохраняет файлами на время прогона и передаёт агенту пути.
-     * Пустая цель допустима только с изображениями (тогда цель — `DEFAULT_IMAGE_OBJECTIVE`).
+     * Запуск координатора. `images` — приложенные картинки и файлы: main проверяет их
+     * (`validateAttachments`), сохраняет файлами на время прогона и передаёт агенту пути.
+     * Пустая цель допустима только с вложениями (тогда цель — `DEFAULT_ATTACHMENT_OBJECTIVE`).
      */
-    start(objective: string, cols: number, rows: number, images?: ImageAttachmentInput[]): Promise<string>
+    start(objective: string, cols: number, rows: number, images?: AttachmentInput[]): Promise<string>
   }
   /** Ассистент доски активного проекта (skills/assistant.md): интерактивный агент, действует через orca-board. */
   assistant: {
@@ -1094,7 +1115,7 @@ export interface OrcaApi {
     /** `decision` — решение человека по задаче-ответу, уходит координатору в answer_accepted. */
     accept(taskId: string, decision?: string): Promise<void>
     /** `images` — картинки к замечаниям (байты): main проверяет их и сохраняет в worktree задачи (или cwd координатора у проверки ветки). */
-    reject(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
+    reject(taskId: string, feedback: string, images?: AttachmentInput[]): Promise<void>
   }
   /**
    * Картинки к замечаниям при возврате в работу. Только рукопожатие: «новый preload + старый main» молча
@@ -1103,6 +1124,12 @@ export interface OrcaApi {
    */
   attachments: {
     ping(): Promise<true>
+    /**
+     * Что принимает main: `files: false` — только картинки PNG/JPEG/GIF/WebP (main до перехода на вложения-файлы),
+     * `true` — любые файлы. `limits` — лимиты, которые main проверяет на самом деле. Нет метода или хендлера —
+     * старый preload/main: режим «только картинки» с прежними лимитами.
+     */
+    capabilities(): Promise<AttachmentCapabilities>
   }
 }
 

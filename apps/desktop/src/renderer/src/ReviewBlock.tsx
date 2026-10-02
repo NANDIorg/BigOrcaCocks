@@ -1,18 +1,18 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
-import type { ImageAttachmentInput } from '@orca-board/core'
+import type { AttachmentInput } from '@orca-board/core'
 import type { ReviewInfo } from '../../shared/ipc'
 import { useT } from './i18n'
 import { ipcErrorCode, ipcErrorMessage } from './ipcError'
-import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageDrafts'
+import { AttachmentField } from './AttachmentField'
+import { useAttachmentDrafts } from './attachmentDrafts'
 
 interface Props {
   taskId: string
   summary?: string
   onAccept(): Promise<void>
   /** `images` — картинки к замечаниям (байты); у задач без картинок аргумента нет. */
-  onReject(feedback: string, images?: ImageAttachmentInput[]): Promise<void>
+  onReject(feedback: string, images?: AttachmentInput[]): Promise<void>
   /**
    * Этап задачи остановлен (мерж упал или прервался): вместо ревью — причина и те же два действия с другим смыслом —
    * `onAccept` повторяет этап, `onReject` возвращает задачу в работу (taskReview.ts).
@@ -29,7 +29,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject, stalled }: Pr
   const [feedback, setFeedback] = useState('')
   const [mode, setMode] = useState<'view' | 'reject'>('view')
   const [busy, setBusy] = useState(false)
-  const attachments = useImageAttachments()
+  const attachments = useAttachmentDrafts()
 
   useEffect(() => {
     window.orca.review.info(taskId).then(setInfo).catch((e: unknown) => setError(ipcErrorMessage(e)))
@@ -79,7 +79,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject, stalled }: Pr
         </div>
       ) : (
         <div className="reject">
-          <ImageAttachField attachments={attachments} disabled={busy}>
+          <AttachmentField attachments={attachments} disabled={busy}>
             <textarea
               autoFocus
               aria-label={t(stalled ? 'shell.feed.returnLabel' : 'shell.request.rejectLabel')}
@@ -87,7 +87,7 @@ export function ReviewBlock({ taskId, summary, onAccept, onReject, stalled }: Pr
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
             />
-          </ImageAttachField>
+          </AttachmentField>
           <div className="actions">
             <button className="btn-sm primary" disabled={busy || attachments.reading || !feedback.trim()} onClick={() => run(async () => {
               await onReject(feedback.trim(), attachments.payload())

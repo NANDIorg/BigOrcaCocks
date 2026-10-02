@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_COLUMNS, STORE_FORMAT_VERSION, globalBoardColumns, globalStoredColumns, toGlobalTasks,
   type Task, type StoreSnapshot, type AgentInfo, type Role, type GlobalTask, type HumanRequest, type RequestResolution,
-  type TaskPriority, type ImageAttachmentInput
+  type TaskPriority, type AttachmentInput
 } from '@orca-board/core'
 import type { AppSettings, GlobalTaskPatch, Project, ProjectGroup, TaskTypesState, TerminalInfo } from '../../shared/ipc'
 import { Board } from './Board'
@@ -572,7 +572,7 @@ export function App(): React.JSX.Element {
   }
 
   /** Решить запрос вне Инбокса (карточка, экран глобальной задачи, модалка задачи). Ошибка — на карточке. */
-  async function resolveRequest(r: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
+  async function resolveRequest(r: HumanRequest, resolution: RequestResolution, images?: AttachmentInput[]): Promise<void> {
     const res = await window.orca.requests.resolve(r.id, resolution, images)
     if (res.startError) alert(t('shell.app.startError', { title: r.title, error: res.startError }))
   }
@@ -646,7 +646,7 @@ export function App(): React.JSX.Element {
    * «Вернуть в работу» с уточнением: main переводит задачу в работу и запускает координатора — открываем
    * его терминал, как startGlobalCoordinator. Старый preload — ошибка остаётся в модалке.
    */
-  async function returnGlobalTask(id: string, text: string, images?: ImageAttachmentInput[]): Promise<void> {
+  async function returnGlobalTask(id: string, text: string, images?: AttachmentInput[]): Promise<void> {
     const projectId = active?.id
     const api = globalReviewApi(window.orca)
     try {

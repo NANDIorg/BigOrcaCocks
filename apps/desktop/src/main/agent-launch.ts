@@ -6,10 +6,10 @@ import type { AgentInvocation } from '@orca-board/core'
 import { OrcaError } from './i18n'
 import { win32Launch, type Win32Launch, type Win32LaunchEnv } from './win32-launch'
 
-const temporarySettings = new Set<string>()
+const temporaryLaunchPaths = new Set<string>()
 // app.quit()/установщик завершают main раньше асинхронного PTY onExit: чистим оставшиеся копии синхронно.
 process.once('exit', () => {
-  for (const directory of temporarySettings) rmSync(directory, { recursive: true, force: true })
+  for (const path of temporaryLaunchPaths) rmSync(path, { recursive: true, force: true })
 })
 
 interface LaunchOptions extends Win32LaunchEnv {
@@ -65,7 +65,8 @@ function ampSettingsPath(inv: AgentInvocation, cwd: string, options: LaunchOptio
 
 /**
  * Единая граница запуска воркера, координатора и PTY-ассистента. Окружение адаптера сохраняется и при
- * Windows npm-шимах, и при Unix setup+exec. Файл Amp живёт до выхода/закрытия PTY; отказ spawn тоже его удаляет.
+ * Windows npm-шимах, и при Unix setup+exec. Копия Amp и файл system prompt живут до выхода/закрытия PTY;
+ * отказ spawn и завершение main тоже их удаляют.
  */
 export function launchAgent(
   inv: AgentInvocation,
@@ -75,10 +76,15 @@ export function launchAgent(
   options: LaunchOptions = {}
 ): string {
   let temporary: string | undefined
+  let tempFiles: readonly string[] = []
   const dispose = (): void => {
     if (temporary) {
       rmSync(temporary, { recursive: true, force: true })
-      temporarySettings.delete(temporary)
+      temporaryLaunchPaths.delete(temporary)
+    }
+    for (const file of tempFiles) {
+      rmSync(file, { force: true })
+      temporaryLaunchPaths.delete(file)
     }
   }
   try {
@@ -92,14 +98,16 @@ export function launchAgent(
         throw OrcaError.of({ key: 'agentLaunch.settingsInvalid', params: { path: original.path } })
       }
       temporary = mkdtempSync(join(options.tempRoot ?? tmpdir(), 'orca-agent-settings-'))
-      temporarySettings.add(temporary)
+      temporaryLaunchPaths.add(temporary)
       const file = join(temporary, 'settings.json')
       writeFileSync(file, JSON.stringify({ ...settings, ...inv.settingsFile.overrides }), { mode: 0o600 })
       args = [...args.slice(0, -1), inv.settingsFile.flag, file, ...args.slice(-1)]
     }
-    const launch = (options.platform ?? process.platform) === 'win32'
+    const launch: Win32Launch = (options.platform ?? process.platform) === 'win32'
       ? win32Launch(inv.command, args, options)
       : { command: inv.command, args, env: {} }
+    tempFiles = launch.tempFiles ?? []
+    for (const file of tempFiles) temporaryLaunchPaths.add(file)
     return start({ ...launch, env: { ...inv.env, ...launch.env } }, (id, code) => {
       try { onExit?.(id, code) } finally { dispose() }
     })

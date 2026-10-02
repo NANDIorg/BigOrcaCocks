@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   isTaskPriority, modelLabel,
   type AgentInfo, type Task, type Question, type Dispatch, type BoardColumn, type Role, type HumanRequest,
-  type RequestResolution, type GlobalTask, type Workflow, type ImageAttachmentInput
+  type RequestResolution, type GlobalTask, type Workflow, type AttachmentInput
 } from '@orca-board/core'
 import type { TaskPatch } from '../../shared/ipc'
 import { AgentLogo } from './AgentLogo'
@@ -57,10 +57,10 @@ interface Props {
   onOpenTerminal(taskId: string): void
   onRemove(id: string): Promise<void>
   /** Ответ на вопрос, приёмка и уточнение ответа, перезапуск эскалации — всё через requests.resolve. */
-  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: AttachmentInput[]): Promise<void>
   /** Ревью кода (не задачи-ответа). */
   onAccept(taskId: string): Promise<void>
-  onReject(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
+  onReject(taskId: string, feedback: string, images?: AttachmentInput[]): Promise<void>
 }
 
 function errorText(e: unknown): string {

@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter } from 'node:path'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type Attachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { addTaskWorktree, assertHasCommits, projectBranchInfo, setupCommand, taskWorktreePath } from './git'
 import { extraPathDirs, missingRoleText } from './agents'
 import { roleLaunchExtraArgs } from './launch-extra-args'
 import { launchAgent } from './agent-launch'
+import type { Win32LaunchEnv } from './win32-launch'
 import { OrcaError, mainLocale } from './i18n'
 import { assistantEnv, assistantCwd, assistantLaunch } from './assistant'
 import { resumeObjective, returnGlobalTaskToWork } from './coordinator-resume'
@@ -52,6 +53,30 @@ export function cliBinDir(): string {
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+/** Временные файлы запуска агентов на Windows (system prompt claude, `win32Launch`): в userData, не в репозитории. */
+function launchTempDir(): string {
+  return join(app.getPath('userData'), 'tmp', 'system-prompts')
+}
+
+/** Electron и путь длинного system prompt передаются общему адаптеру; он удаляет файлы после выхода агента. */
+function agentLaunchOptions(): Win32LaunchEnv {
+  return {
+    electronNode: app.isPackaged ? process.execPath : undefined,
+    systemPromptFile: () => {
+      mkdirSync(launchTempDir(), { recursive: true })
+      return join(launchTempDir(), `${randomUUID()}.md`)
+    }
+  }
+}
+
+/**
+ * Хвосты временных файлов запуска от прошлой сессии приложения (выход по сбою, kill): при старте агентов этого
+ * экземпляра ещё нет, а агенты прошлого умерли вместе с его PTY — папку можно очистить целиком.
+ */
+export function pruneLaunchTempFiles(): void {
+  if (process.platform === 'win32') rmSync(launchTempDir(), { recursive: true, force: true })
 }
 
 /**
@@ -166,7 +191,7 @@ export function startWorker(
       },
       onExit
     )
-  }, (id, code) => store.ptyExited(id, code), { electronNode: app.isPackaged ? process.execPath : undefined })
+  }, (id, code) => store.ptyExited(id, code), agentLaunchOptions())
   store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, dispatchId, worktree, branch }
 }
@@ -176,7 +201,7 @@ export function startWorker(
  * глобальной задачи (`ensureRunBranch`), а без неё — в корне репозитория.
  * Без `runId` запуск создаёт новый прогон = глобальную задачу; с `runId` — повторный запуск на существующей
  * (цель — её описание и список подзадач, см. `resumeObjective`). Id прогона уходит координатору в ORCA_RUN_ID.
- * `images` (уже проверенные `validateImageAttachments`) сохраняются файлами на время прогона,
+ * `images` — вложения любого типа (уже проверенные `validateAttachments`): сохраняются файлами на время прогона,
  * в промпт уходят только их пути — содержимое через терминал не передаётся.
  */
 /**
@@ -197,7 +222,7 @@ export function startCoordinator(
   objective: string,
   cols = 120,
   rows = 30,
-  images: ImageAttachment[] = [],
+  images: Attachment[] = [],
   runId?: string
 ): { ptyId: string; runId: string } {
   // Роль coordinator можно удалить из типа задачи («Настройки» → «Типы задач»); молча запускать claude вместо неё нельзя — человек её убрал.
@@ -209,12 +234,12 @@ export function startCoordinator(
   const extraArgs = roleLaunchExtraArgs(role, 'coordinator.cannotStart')
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
   if (resume) objective = resume.objective
-  // Картинки, сохранённые у задачи, идут координатору при каждом запуске (первом, повторном и «Вернуть в работу»):
-  // сохранённые первыми, потом вставленные при запуске. Сумма — в тех же лимитах: превышение — ошибка до старта
-  // агента (молча отбрасывать чьи-то картинки нельзя). Пришедшие в `images` в задаче не сохраняются.
+  // Вложения, сохранённые у задачи, идут координатору при каждом запуске (первом, повторном и «Вернуть в работу»):
+  // сохранённые первыми, потом приложенные при запуске. Сумма — в тех же лимитах: превышение — ошибка до старта
+  // агента (молча отбрасывать чьи-то файлы нельзя). Пришедшие в `images` в задаче не сохраняются.
   if (resume && ctx.runImagesRoot) {
     const merged = coordinatorImages(ctx.runImagesRoot, ctx.projectId, resume.run, images)
-    if (merged.missing.length > 0) console.error(`[orca] у задачи ${runId} нет на диске сохранённых изображений: ${merged.missing.map((m) => m.id).join(', ')}`)
+    if (merged.missing.length > 0) console.error(`[orca] у задачи ${runId} нет на диске сохранённых вложений: ${merged.missing.map((m) => m.id).join(', ')}`)
     images = merged.images
   }
   // Репозиторий без коммитов — отказ до `createRun`: иначе карточка создалась бы и тут же закрылась пустой.
@@ -228,7 +253,7 @@ export function startCoordinator(
     const cwd = ensureRunBranch(store, repoRoot, run.id)?.worktree ?? repoRoot
     root = images.length > 0 ? attachmentsRoot(cwd) : undefined
     if (root) pruneAttachments(store, root, isAlive)
-    // Изображения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны. Возвраты
+    // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны. Возвраты
     // в работу (`returns/`) остаются: на них ссылаются `Run.stageInput.images` и `Run.returns`.
     if (root && resume) clearStartImages(root, run.id)
     const paths = root ? writeAttachments(root, run.id, images) : []
@@ -259,7 +284,7 @@ export function startCoordinator(
     }, onExit), (id) => {
       store.coordinatorExited(run.id, id)
       escalateAfterCoordinator(store, run.id)
-    }, { electronNode: app.isPackaged ? process.execPath : undefined })
+    }, agentLaunchOptions())
   } catch (e) {
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
@@ -342,6 +367,6 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onE
       }
     },
     exited
-  ), onExit, { electronNode: app.isPackaged ? process.execPath : undefined })
+  ), onExit, agentLaunchOptions())
   return { ptyId, sessionId }
 }
