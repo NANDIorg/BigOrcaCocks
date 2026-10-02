@@ -91,7 +91,35 @@
 - [x] task-done: `pnpm verify`.
   Expected: PASS — все suites, strict typecheck, production build; включая Desktop настоящий PTY.
 - [x] Commit: `test: проверить интеграцию общих сессий и запуска`.
-- [ ] Одно итоговое fresh-context ревью диапазона af92d48..HEAD; Critical/Important исправить одним TDD pass, Minor записать.
-- [ ] `pnpm --filter @orca-board/desktop run pack`; проверить codesign/app.asar; запустить актуальную сборку, сохранив пользовательские процессы при необходимости.
+- [x] Одно итоговое fresh-context ревью диапазона af92d48..HEAD; Critical/Important исправить одним TDD pass, Minor записать.
+- [x] `pnpm --filter @orca-board/desktop run pack`; проверить codesign/app.asar; запустить актуальную сборку, сохранив пользовательские процессы при необходимости.
   Expected: рабочая macOS сборка 1.1.3 с общими реализациями в main bundle.
-- [ ] Push своей ветки, обновить PR #59; дождаться успешного CI на точном HEAD, без merge/release.
+Доставка завершённого среза: push своей ветки, обновить PR #59 и проверить успешный CI на точном HEAD, без merge/release. Актуальный результат доставки хранится в checks PR, а не в статическом чекбоксе плана.
+
+
+## Результат локального выполнения
+
+Реализация: `7522613`, `ee77ba4`, `6acb685`; исправления итогового ревью: `e7e87bb`.
+Финальный `pnpm verify` прошёл: 3253 теста (89 runtime и 2096 Desktop),
+без failures/skips; strict typecheck и production build прошли.
+Независимый reviewer нашёл два Important новых API: mixed-case Windows env
+и вложенные события observer. Оба воспроизведены тестами RED, исправлены
+одним проходом и проверены полной suite; Critical/Minor нет.
+
+Актуальный mac x64 pack 1.1.3 собран и открыт. Codesign deep/strict и проверка
+реального app.asar подтвердили встраивание общих пакетов и новых фабрик.
+Настоящий Desktop PTY проверен инженерным integration тестом с заменой
+получателя IPC; вручную UI проверяет пользователь.
+CI финального HEAD — [checks PR #59](https://github.com/NANDIorg/BigOrcaCocks/pull/59).
+
+Решения по границам ревью:
+- WorkerService/dialog drivers/owner/writer leases/client context/replay продолжаются
+  следующим этапом. Подключение Web раньше них рискует несогласованным состоянием
+  клиентов и вводом без общего ownership/авторизации.
+- Package smoke не доказывает installed Linux headless или разные native ABI roots;
+  иначе возможна неработающая поставка вне workspace. Проверить в headless этапе.
+- Legacy `/bin/zsh` fallback сохранён ради совместимости Desktop. Headless host
+  должен выбрать доступную Linux shell; иначе сервер без SHELL/zsh не откроет терминал.
+- Reviewer не исполнял реальный Windows CreateProcess/cmd и UI. Cross-platform CI
+  и fixtures дополняются ручной проверкой пользователя; платформенные/визуальные
+  дефекты, которые они не покрывают, могут оставаться.
