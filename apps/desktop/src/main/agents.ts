@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
+import { findBin, isCmdScript } from '@orca-board/runtime'
 import { AGENTS, AGENT_IDS, DEFAULT_ROLES, getAgent, parseCodexModelsCache, type AgentInfo, type AgentKind, type AgentSpec, type ModelOption, type Role } from '@orca-board/core'
 import { OrcaError, mtIn, type MText } from './i18n'
 
@@ -15,71 +16,7 @@ export interface DetectedAgent {
   version?: string
 }
 
-/**
- * Папки, где обычно лежат CLI-агенты, но которых может не быть в PATH приложения:
- * Electron, запущенный из Finder, получает урезанный PATH без настроек шелла.
- */
-export function extraPathDirs(): string[] {
-  const home = homedir()
-  const dirs =
-    process.platform === 'win32'
-      ? [
-          // npm i -g кладёт shim-ы claude.cmd и т.п. в %APPDATA%\npm.
-          ...(process.env.APPDATA ? [join(process.env.APPDATA, 'npm')] : []),
-          ...(process.env.LOCALAPPDATA ? [join(process.env.LOCALAPPDATA, 'Programs')] : []),
-          join(home, '.local', 'bin'),
-          join(home, '.cargo', 'bin'),
-          join(home, '.bun', 'bin')
-        ]
-      : [
-          '/opt/homebrew/bin',
-          '/usr/local/bin',
-          join(home, '.local', 'bin'),
-          join(home, '.npm-global', 'bin'),
-          join(home, '.cargo', 'bin'),
-          join(home, '.bun', 'bin')
-        ]
-  const current = new Set((process.env.PATH ?? '').split(delimiter).filter(Boolean))
-  return dirs.filter((d) => !current.has(d))
-}
-
-function isExecutable(file: string): boolean {
-  if (!existsSync(file)) return false
-  try {
-    accessSync(file, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * Суффиксы имени бинарника: на Windows — расширения из PATHEXT (claude.cmd, codex.exe…), затем имя как есть;
- * иначе только имя как есть. Расширения первыми: рядом с claude.cmd npm кладёт sh-скрипт `claude` без расширения.
- */
-function binSuffixes(): string[] {
-  if (process.platform !== 'win32') return ['']
-  const exts = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
-  return [...exts.map((e) => e.toLowerCase()), '']
-}
-
-/** Бинарник — bat/cmd-скрипт: на Windows его запускает только cmd.exe. */
-export function isCmdScript(file: string): boolean {
-  return process.platform === 'win32' && /\.(cmd|bat)$/i.test(file)
-}
-
-/** Полный путь к бинарнику: PATH процесса плюс стандартные папки. */
-export function findBin(bin: string): string | undefined {
-  const dirs = [...(process.env.PATH ?? '').split(delimiter).filter(Boolean), ...extraPathDirs()]
-  const suffixes = binSuffixes()
-  for (const dir of dirs) {
-    for (const suffix of suffixes) {
-      const file = join(dir, bin + suffix)
-      if (isExecutable(file)) return file
-    }
-  }
-  return undefined
-}
+export { extraPathDirs, findBin, isCmdScript } from '@orca-board/runtime'
 
 /** Первая строка вывода `<bin> <versionArgs>`, не длиннее 60 символов; ошибки и таймаут → undefined. */
 function readVersion(binPath: string, args: string[]): string | undefined {
