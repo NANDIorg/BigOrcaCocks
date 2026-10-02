@@ -2777,6 +2777,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 [data-motion='reduced'] .updates-card .update-spin { animation: none; }
 .rail .icon { position: relative; }
 .rail-dot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--page); }
+.assistant-rail-unread { top: 7px; right: 7px; width: 12px; height: 12px; background: var(--notification); }
+.assistant-rail-working { position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--page); color: var(--accent); }
+.assistant-rail-working svg { width: 16px; height: 16px; }
 .toast {
   position: fixed; right: 20px; bottom: 20px; z-index: 50; display: flex; align-items: center; gap: 10px;
   padding: 10px 12px 10px 14px; border-radius: 12px; background: var(--side); border: 1px solid var(--line);

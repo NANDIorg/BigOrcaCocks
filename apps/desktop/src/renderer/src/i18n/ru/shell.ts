@@ -307,6 +307,10 @@ export default {
 
   // Ассистент (AssistantPanel.tsx)
   "assistant.settings": "Настройки ассистента",
+  'assistant.rail.working': 'Ассистент работает · ⌘K',
+  'assistant.rail.unread': 'Ответ ассистента готов · ⌘K',
+  'assistant.rail.waiting': 'Ассистент ждёт вашего ответа · ⌘K',
+  'assistant.rail.error': 'Ошибка ассистента · ⌘K',
   "assistant.welcomeTitle": "С чего начнём?",
   "assistant.welcomeDescription": "Разберём задачи, настроим доску и подготовим работу для агентов.",
   "assistant.suggestion.tasks.label": "Разобраться с задачами",

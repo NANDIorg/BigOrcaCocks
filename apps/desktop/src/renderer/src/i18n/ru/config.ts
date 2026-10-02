@@ -2,6 +2,7 @@ import type { AreaDict } from '../types'
 
 /** «О проекте»: роли, воркфлоу, типы задач, документация. */
 export default {
+  'roles.ph.permissionSettings': '‹временные настройки: {settings}›',
   'wf.tab.assistant': 'Изменить с ассистентом',
   'wf.tab.externalConflict': 'Сохранённый воркфлоу изменился. Ваш черновик сохранён, но его исходная база устарела. Отмените правки, чтобы загрузить новый граф.',
   'about.navAria': 'Разделы',
@@ -53,14 +54,15 @@ export default {
   'about.agents.missing': 'Не установлены · {count}',
 
   'about.perm.title': 'Разрешения агентов',
-  'about.perm.hint': 'Как Claude Code (координатор и воркеры) обращается с подтверждениями.',
+  'about.perm.hint': 'Режим подтверждений для координатора и воркеров всех CLI-агентов.',
   'about.perm.auto': 'Авто',
-  'about.perm.autoDesc': 'Claude сам решает, опасное спросит',
+  'about.perm.autoDesc': 'агент работает самостоятельно, при необходимости спросит',
   'about.perm.bypassPermissions': 'Без подтверждений',
-  'about.perm.bypassPermissionsDesc': 'полностью автономно',
+  'about.perm.bypassPermissionsDesc': 'полный доступ к файлам и командам',
   'about.perm.acceptEdits': 'Только правки файлов',
-  'about.perm.acceptEditsDesc': 'остальное спросит в терминале',
-  'about.perm.note': 'Команда {cmd} разрешена всегда. Действует на новые терминалы.',
+  'about.perm.acceptEditsDesc': 'правки без вопросов; остальные действия зависят от агента',
+  'about.perm.differences': 'В Codex и Cursor «Авто» и «Только правки файлов» используют одинаковую рабочую песочницу. В Goose «Только правки файлов» включает умное подтверждение: агент оценивает риск действий.',
+  'about.perm.note': 'Действует на новые терминалы Claude Code, Codex, Gemini, OpenCode, Cursor, Amp, Copilot и Goose. Shell не поддерживает разрешения. Явные запреты и политики CLI могут ограничивать доступ. В Claude Code команда {cmd} разрешена всегда.',
 
   'about.rules.stale': 'Приложение запущено со старой версией main/preload, где ещё нет раздела «Правила». Перезапустите приложение.',
   'about.rules.hintClaude': 'Читает Claude Code: запреты, обязательные шаги, стиль, проверки.',

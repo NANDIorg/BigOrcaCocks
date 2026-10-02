@@ -2,6 +2,7 @@ import type ru from './ru'
 
 // Английские тексты main: ровно те же ключи, что в ru.ts (лишний или пропущенный — ошибка типа).
 export default {
+  'agentLaunch.settingsInvalid': 'Could not read Amp settings: {path}. Check the JSON/JSONC and file access.',
   'assistantTransport.missingCli': 'CLI {command} was not found. Install the agent and check PATH.',
   'assistantTransport.windowsLauncher': 'CLI {command} uses an unsupported Windows launcher. Use a native executable or a standard npm shim.',
   'assistantTransport.windowsEntry': 'Windows launcher entry was not found: {entry}',

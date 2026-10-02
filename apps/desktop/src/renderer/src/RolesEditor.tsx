@@ -24,6 +24,7 @@ import {
   ExecutorFields, InstructionTabs, commandPreview, effortsOf, useBuiltinPrompts, type BuiltinState
 } from './RoleParts'
 import { AGENT_STATE_TEXT, roleAgentState } from './stageRoles'
+import type { PermissionMode } from '../../shared/ipc'
 
 interface Props {
   /** Ключ черновика (id проекта или 'defaults'): при смене черновик переинициализируется. */
@@ -36,6 +37,8 @@ interface Props {
   taskCounts?: Readonly<Record<string, number>>
   /** Свой воркфлоу (проекта или дефолта): роль, занятая в графе, — в последствиях удаления. */
   workflow?: Workflow
+  /** Режим типа задачи для точного превью аргументов запуска. */
+  permissionMode?: PermissionMode
   /** Только просмотр: роли можно выбирать и читать, правки не сохраняются. */
   readOnly?: boolean
   /** Роли типа задачи: в последствиях удаления — незакрытые глобальные задачи этого типа. */
@@ -59,7 +62,7 @@ function newRoleId(): string {
 
 /** Вкладка «Роли» типа задачи («Настройки» → «Типы задач»): список ролей слева, панель выбранной роли справа; сохраняется автоматически. */
 export function RolesEditor({
-  storageKey, roles: initial, agents, taskCounts, workflow, readOnly = false, ofTaskType = false, onSave
+  storageKey, roles: initial, agents, taskCounts, workflow, permissionMode, readOnly = false, ofTaskType = false, onSave
 }: Props): React.JSX.Element {
   const t = useT()
   // Негодные флаги запуска в main не уходят (`rolesForSave`): он отверг бы тип целиком вместе с правками соседних полей.
@@ -245,6 +248,7 @@ export function RolesEditor({
             enabled={enabled}
             count={taskCounts?.[selected.id]}
             workflow={workflow}
+            permissionMode={permissionMode}
             ofTaskType={ofTaskType}
             deleteBlocker={removeBlocker(roles)}
             builtin={builtin}
@@ -270,6 +274,7 @@ interface PanelProps {
   enabled: AgentInfo[]
   count: number | undefined
   workflow: Workflow | undefined
+  permissionMode?: PermissionMode
   ofTaskType: boolean
   /** Почему удалить нельзя (последняя роль); undefined — можно. */
   deleteBlocker: string | undefined
@@ -284,7 +289,7 @@ interface PanelProps {
 
 /** Панель выбранной роли: название, назначение, исполнитель, превью запуска, инструкции вкладками, действия. */
 function RolePanel({
-  role: r, agents, enabled, count, workflow, ofTaskType, deleteBlocker, builtin, readOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
+  role: r, agents, enabled, count, workflow, permissionMode, ofTaskType, deleteBlocker, builtin, readOnly, onPatch, onAgent, onModel, onDuplicate, onRemove
 }: PanelProps): React.JSX.Element {
   const t = useT()
   const locked = readOnly
@@ -361,7 +366,7 @@ function RolePanel({
         exec={r}
         agents={agents}
         enabled={enabled}
-        preview={commandPreview(t, r, kind, kind === 'coordinator' ? t('config.roles.ph.goal') : t('config.roles.ph.task'))}
+        preview={commandPreview(t, r, kind, kind === 'coordinator' ? t('config.roles.ph.goal') : t('config.roles.ph.task'), permissionMode)}
         onAgent={onAgent}
         onModel={onModel}
         onEffort={(effort) => onPatch({ effort })}

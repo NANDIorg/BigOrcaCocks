@@ -2,6 +2,7 @@
 // получают сокет и CLI: `OrcaError.message` строится отсюда. Порядок — по областям: трей, диалоги, уведомления,
 // ошибки по модулям.
 export default {
+  'agentLaunch.settingsInvalid': 'Не удалось прочитать настройки Amp: {path}. Проверьте JSON/JSONC и доступ к файлу.',
   'assistantTransport.missingCli': 'Не найден CLI {command}. Установите агент и проверьте PATH.',
   'assistantTransport.windowsLauncher': 'CLI {command} использует неподдерживаемый Windows launcher. Укажите native executable или стандартный npm shim.',
   'assistantTransport.windowsEntry': 'Не найден файл Windows launcher: {entry}',
