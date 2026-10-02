@@ -1,8 +1,6 @@
 // Лимиты просмотра и словари ошибок Desktop; классификатор проверяется в contracts.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 import { DOC_IMAGE_MAX_BYTES, DOC_SNIFF_BYTES, DOC_TEXT_MAX_BYTES, DOCS_LIST_LIMIT } from '../shared/docs-view'
 import { SHOWCASE_READ_MAX_BYTES } from '../shared/showcase'
 import { DOC_VIEW_ERROR_CODES, PROJECT_FILES_ERROR_CODES } from '../shared/ipc'
@@ -26,9 +24,4 @@ describe('контракт docs:view', () => {
     }
   })
 
-  it('общий docs-view.ts без Node/Electron: его грузит renderer', () => {
-    const src = readFileSync(path.join(import.meta.dirname, '../../../../packages/contracts/src/docs-view.ts'), 'utf8')
-    assert.doesNotMatch(src, /from\s+['"](?:node:|electron|fs['"]|path['"])/)
-    assert.doesNotMatch(src, /require\(/)
-  })
 })

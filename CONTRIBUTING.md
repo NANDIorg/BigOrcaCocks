@@ -23,3 +23,11 @@
 
 Изменение процесса тоже проходит PR. Не создавай копии правил в персональных промптах:
 дай агенту ссылку на `AGENTS.md` и документы из него.
+
+Общие DTO и чистые функции находятся в `packages/contracts`; доменная модель и store —
+в `packages/core`. Contracts не зависит от Node/Electron/Desktop. Его отдельная проверка —
+`pnpm --filter @orca-board/contracts test`; корневой `pnpm verify` включает её автоматически.
+Desktop API и составные настройки остаются в `shared/desktop-api.ts` и
+`shared/desktop-settings.ts`; прежний `shared/ipc.ts` сохраняет совместимые экспорты.
+Runtime, серверный API, общий UI и независимые релизные инструменты ещё предстоит извлечь
+по [согласованной архитектуре](docs/superpowers/specs/2026-10-02-orca-shared-foundation-design.md).

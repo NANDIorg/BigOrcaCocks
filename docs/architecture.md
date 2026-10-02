@@ -4,6 +4,31 @@
 Ветки, PR и выпуск самого проекта — [git-flow.md](git-flow.md); исходный аудит инструкций —
 [development-audit.md](development-audit.md).
 
+## Общие контракты и граница Desktop
+
+`packages/contracts` (`@orca-board/contracts`) содержит общие DTO проектов, задач,
+файлов, правил, терминальных сессий и диалогов; настройки языка/onboarding, appearance,
+чистые фильтры уведомлений, классификацию файлов и preview policy. Browser-safe типы
+берутся из core; package entrypoint не экспортирует store, provider driver или Desktop API.
+
+`apps/desktop/src/shared/ipc.ts` — совместимый путь импортов: общие definitions приходят
+из contracts, `OrcaApi` — из `desktop-api.ts`, составные `AppSettings` и update types —
+из `desktop-settings.ts`. Старые shared paths чистых модулей сохраняют именованные
+переэкспорты. Палитры, шрифты и window chrome остаются в Desktop. Сигнатуры IPC,
+optional methods для старого preload и формат пользовательских данных не изменены.
+
+Contracts — private TS-пакет, встраиваемый в main/preload/renderer bundles. Установленное
+приложение не требует workspace с исходниками contracts. Тесты `test/*.test.ts` запускаются
+через `pnpm --filter @orca-board/contracts test` и общий `pnpm verify`: AST проверяет imports,
+reexports, type-only и динамические edges, включая транзитивные dependencies core;
+TypeScript проверяет публичные exports и компиляцию без Node/DOM globals.
+
+Это первый перенос [общего фундамента Desktop/CLI/Web](superpowers/specs/2026-10-02-orca-shared-foundation-design.md).
+`OrcaApi` пока использует активный проект Desktop и системные диалоги; нового серверного
+API здесь нет. Application services/runtime с явным project/client context, общий client/UI,
+headless owner и product-aware релизные инструменты выполняются следующими этапами.
+Web и самостоятельный терминальный чат CLI строятся после готовности этой базы.
+
 ## Процессы
 
 ```

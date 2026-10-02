@@ -1,7 +1,8 @@
 # orca-board — правила для разработки
 
 Монорепо pnpm: `apps/desktop` (Electron: main / preload / renderer / shared), `packages/core`
-(модель, store, промпты — TypeScript без сборки), `packages/cli` (голый JS, `bin/orca-board.js`),
+(модель, store, промпты — TypeScript без сборки), `packages/contracts` (общие DTO и чистые функции),
+`packages/cli` (голый JS, `bin/orca-board.js`),
 `skills/` (инструкции координатора и воркера, вшиваются в сборку), `docs/` (архитектура и решения).
 Полная картина — `docs/architecture.md`. Комментарии в коде, документация и коммиты — на русском;
 UI — на русском и английском через i18n (`renderer/src/i18n/`).
@@ -24,6 +25,10 @@ orca-board; `skills/*.md` — инструкции самого продукта
   так сделано с `defaultSocketPath()` (`packages/core/src/paths.ts` ↔ `orca-board.js`). Меняй обе копии вместе.
 - **Не добавлять node-импорты (`fs`, `path`, `os`…) в модули core, которые импортирует renderer**
   (`paths.ts`, `types.ts`, `global-tasks.ts` и др.). Окружение передаёт вызывающий код.
+- **Contracts не импортирует Node/Electron/Desktop и не экспортирует store или provider driver.**
+  Разрешены browser-safe типы core. Production import graph и type-only exports проверяются в
+  `packages/contracts/test/`; тестовый AST-страж использует Node, но не входит в поставку пакета.
+  Private TS-пакет встраивается в Desktop bundles, а не загружается с диска пользователя.
 - **Не класть в `skills/*.md` ничего, что относится только к этому репозиторию** (pnpm, пути, стиль).
   Skills получают агенты **любого** проекта пользователя (`apps/desktop/src/main/prompts.ts` →
   `withRoleInstructions` в `apps/desktop/src/main/worker.ts`).
@@ -61,7 +66,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
   они остаются в релизном PR и инженерной документации. Только обязательное действие
   при обновлении или риск потери данных заслуживает короткого «Важно».
   Полный формат — [docs/releasing.md](docs/releasing.md#версия-и-release-notes).
-- **Новый IPC-канал — сразу в четырёх местах:** `apps/desktop/src/shared/ipc.ts` (`OrcaApi`),
+- **Новый IPC-канал — сразу в четырёх местах:** `apps/desktop/src/shared/desktop-api.ts` (`OrcaApi`,
+  совместимый экспорт через `shared/ipc.ts`),
   `preload/index.ts`, `preload/api.d.ts`, `registerIpc` в `main/index.ts`. Плюс строка в разделе «IPC»
   `docs/architecture.md`.
 - **Renderer должен работать со старыми main и preload.** В `pnpm dev` renderer обновляется по HMR, а
@@ -85,6 +91,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
   тест в подпапке (`about/`, `settings/`) не выполнится, клади его в `renderer/src/`
   (как `taskTypeEdit.test.ts`). Логику из компонентов выноси в `.ts`-модуль и тестируй его
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).
+  В contracts чистые функции и границы проверяются через `test/*.test.ts`; перенесённые suites
+  запускаются командой `pnpm --filter @orca-board/contracts test` и входят в корневой `pnpm test`.
 - **Новый UI-текст в renderer — только через `t()`, ключ сразу в ru и en.** Словари — по областям:
   `renderer/src/i18n/ru/<область>.ts` и `i18n/en/<область>.ts` (`common`, `settings`, `board`, `shell`, `global`,
   `config`, `builtin`). В компоненте — `const t = useT()`, в `.ts`-модулях — `t()` из `./i18n`. Числа, даты и
@@ -113,7 +121,7 @@ orca-board; `skills/*.md` — инструкции самого продукта
 - Markdown от агентов рендерить только через `Markdown.tsx` (`marked` + `DOMPurify`). Не использовать
   `dangerouslySetInnerHTML` в обход санитайзера.
 - Новые зависимости — только если без них не обойтись, с объяснением в коммите. core зависит только от
-  `typescript` (dev), cli — ни от чего.
+  `typescript` (dev), cli — ни от чего; contracts — только от core (production) и TypeScript (dev).
 - `*.cmd` — CRLF (`.gitattributes`) и сообщения латиницей: консоль Windows работает в OEM-кодировке.
 
 ## Проверки перед сдачей
@@ -122,8 +130,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
 
 ```
 pnpm install --frozen-lockfile # при первом запуске; Node 24, pnpm из packageManager
-pnpm typecheck   # pnpm -r typecheck: core — tsc, desktop — tsc node+web, cli — node --check
-pnpm test        # scripts + пакеты: core, cli (test/cli.test.js), desktop (main + renderer)
+pnpm typecheck   # pnpm -r typecheck: core/contracts — tsc, desktop — tsc node+web, cli — node --check
+pnpm test        # scripts + core, contracts (test/*.test.ts), cli, desktop (main + renderer)
 pnpm verify      # перед PR: check:git-flow + typecheck + test + build (как в CI)
 ```
 
