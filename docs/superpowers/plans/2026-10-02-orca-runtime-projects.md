@@ -70,15 +70,15 @@
 - Produces: Общие safeArtifactId/runImagesRoot/runImagesDir/removeRunImagesDir/showcaseSnapshotsRoot/showcaseSnapshotDir/removeShowcaseDir; прежние пути и обработка ошибок.
 - Desktop экспортирует singleton классы фабрики + одноимённые type aliases для совместимости; DEFAULT_APP_SETTINGS остаётся Desktop.
 
-- [ ] Написать Node integration тест фабрики с реальным temp git репозиторием: проект, доска, reload, отдельные профили; ошибки наследуют host Error; удаление очищает собственные каталоги.
-- [ ] Run: `node --test packages/runtime/test/projects.test.ts`.
+- [x] Написать Node integration тест фабрики с реальным temp git репозиторием: проект, доска, reload, отдельные профили; ошибки наследуют host Error; удаление очищает собственные каталоги.
+- [x] Run: `node --test packages/runtime/test/projects.test.ts`.
   Expected: FAIL — createProjectServices отсутствует.
-- [ ] Перенести класс и его helper-функции в фабрику без изменения алгоритмов; заменить только i18n/настройки через host, constructor parameter properties явными полями. Миграции и детектор перенести целиком. Из модулей вложений вынести только пути и удаление каталогов; файлы/снимки и launch остаются следующими срезами.
-- [ ] Run: `pnpm --filter @orca-board/runtime typecheck && pnpm --filter @orca-board/desktop typecheck`.
+- [x] Перенести класс и его helper-функции в фабрику без изменения алгоритмов; заменить только i18n/настройки через host, constructor parameter properties явными полями. Миграции и детектор перенести целиком. Из модулей вложений вынести только пути и удаление каталогов; файлы/снимки и launch остаются следующими срезами.
+- [x] Run: `pnpm --filter @orca-board/runtime typecheck && pnpm --filter @orca-board/desktop typecheck`.
   Expected: PASS.
-- [ ] Финальная проверка задачи через task-done: `pnpm --filter @orca-board/runtime test && pnpm --filter @orca-board/desktop test`.
+- [x] Финальная проверка задачи через task-done: `pnpm --filter @orca-board/runtime test && pnpm --filter @orca-board/desktop test`.
   Expected: PASS, не меняя старые ожидания и JSON fixtures.
-- [ ] Commit: `refactor: вынести проекты и миграции в общий runtime`.
+- [x] Commit: `refactor: вынести проекты и миграции в общий runtime`.
 
 ## Task 3: Интеграционные гарантии и итоговая проверка
 

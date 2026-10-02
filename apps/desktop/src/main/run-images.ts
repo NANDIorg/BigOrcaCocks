@@ -19,25 +19,8 @@ import {
 } from '@orca-board/core'
 import { attachmentOpenable } from '../shared/showcase'
 import { OrcaError } from './i18n'
-
-const ROOT_DIR = 'run-images'
-/** Идентификаторы проекта, прогона и вложения в путях — только такие символы (см. `newId`). */
-const SAFE_ID = /^[A-Za-z0-9_-]+$/
-
-/** Корень хранилища вложений: `<userData>/run-images`. */
-export function runImagesRoot(userData: string): string {
-  return join(userData, ROOT_DIR)
-}
-
-function safe(id: string, what: string): string {
-  if (!SAFE_ID.test(id)) throw new Error(`${what}: недопустимый идентификатор «${id}»`)
-  return id
-}
-
-/** Папка вложений задачи: `<root>/<projectId>/<runId>`. */
-export function runImagesDir(root: string, projectId: string, runId: string): string {
-  return join(root, safe(projectId, 'проект'), safe(runId, 'задача'))
-}
+import { runImagesRoot, runImagesDir, safeArtifactId as safe } from '@orca-board/runtime'
+export { runImagesRoot, runImagesDir, removeRunImagesDir } from '@orca-board/runtime'
 
 /** Нет `kind` — картинка: так записаны вложения до появления файлов. */
 function isImage(meta: Pick<RunImage, 'kind'>): boolean {
@@ -81,19 +64,6 @@ export function writeRunImages(dir: string, prepared: ReadonlyArray<{ meta: RunI
 /** Удаляет файл вложения; нет файла — не ошибка. */
 export function removeRunImageFile(dir: string, meta: RunImage): void {
   rmSync(runImageFile(dir, meta), { force: true })
-}
-
-/**
- * Удаляет все файлы задачи (`runId`) или всего проекта (без `runId`) — при удалении глобальной задачи и проекта.
- * Ошибку файловой системы не бросает: задача уже удалена, остаток на диске не должен ломать удаление.
- */
-export function removeRunImagesDir(root: string, projectId: string, runId?: string): void {
-  try {
-    const dir = runId === undefined ? join(root, safe(projectId, 'проект')) : runImagesDir(root, projectId, runId)
-    rmSync(dir, { recursive: true, force: true })
-  } catch (e) {
-    console.error(`[orca] не удалось удалить вложения ${runId ?? projectId}:`, (e as Error).message)
-  }
 }
 
 /**

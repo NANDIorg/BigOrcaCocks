@@ -18,12 +18,9 @@ import {
 } from '@orca-board/core'
 import { SHOWCASE_FILE_TYPES, isAssetType, isEntryType, showcaseFileType } from '../shared/showcase'
 import { isInside } from './docs'
+import { showcaseSnapshotDir, safeArtifactId as safe } from '@orca-board/runtime'
+export { showcaseSnapshotsRoot, showcaseSnapshotDir, removeShowcaseDir } from '@orca-board/runtime'
 
-const ROOT_DIR = 'showcase'
-/** Идентификаторы проекта, прогона и запуска в путях — только такие символы (см. `newId`). */
-const SAFE_ID = /^[A-Za-z0-9_-]+$/
-/** Папка снимков задач без глобальной задачи (`Task.runId` нет): `_` в начале у `newId` не бывает. */
-const NO_RUN = '_tasks'
 /** Каталоги, которые при раскрытии папки не обходятся: зависимости и служебное. Скрытые (с точки) — тоже. */
 const SKIP_DIRS = new Set(['node_modules'])
 /** Ссылки страницы на ассеты: атрибуты src/href, `url(...)` и `@import "..."` в css — разбор best-effort. */
@@ -42,34 +39,6 @@ const mb = (bytes: number): number => bytes / 1024 / 1024
 export interface ShowcaseSnapshots {
   root: string
   projectId: string
-}
-
-/** Корень хранилища снимков: `<userData>/showcase`. */
-export function showcaseSnapshotsRoot(userData: string): string {
-  return join(userData, ROOT_DIR)
-}
-
-function safe(id: string, what: string): string {
-  if (!SAFE_ID.test(id)) throw new Error(`${what}: недопустимый идентификатор «${id}»`)
-  return id
-}
-
-/** Папка снимка запуска: `<root>/<projectId>/<runId>/<dispatchId>` (задача без прогона — `<root>/<projectId>/_tasks/…`). */
-export function showcaseSnapshotDir(root: string, projectId: string, runId: string | undefined, dispatchId: string): string {
-  return join(root, safe(projectId, 'проект'), runId === undefined ? NO_RUN : safe(runId, 'задача'), safe(dispatchId, 'запуск'))
-}
-
-/**
- * Удаляет снимки глобальной задачи (`runId`) или всего проекта (без `runId`) — при удалении задачи и проекта, как
- * `removeRunImagesDir`. Ошибку файловой системы не бросает: задача уже удалена, остаток на диске не должен ломать удаление.
- */
-export function removeShowcaseDir(root: string, projectId: string, runId?: string): void {
-  try {
-    const dir = runId === undefined ? join(root, safe(projectId, 'проект')) : join(root, safe(projectId, 'проект'), safe(runId, 'задача'))
-    rmSync(dir, { recursive: true, force: true })
-  } catch (e) {
-    console.error(`[orca] не удалось удалить снимки показа ${runId ?? projectId}:`, (e as Error).message)
-  }
 }
 
 /** Файл снимка: `rel` — путь в снимке (как в репозитории, через `/`), `src` — реальный путь в worktree. */
