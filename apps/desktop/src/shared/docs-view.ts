@@ -1,3 +1,6 @@
+import type { DocViewKind } from '@orca-board/contracts'
+export type { DocViewKind } from '@orca-board/contracts'
+
 // Как «Документы» показывают файл проекта: вид по пути и лимиты чтения. Чистый модуль без node и electron:
 // renderer по нему рисует иконки дерева (без IPC), а main (`docs:view`) — выбирает, читать ли текст. Таблицы —
 // только про показ; что можно открыть приложением системы, решает белый список `SHOWCASE_FILE_TYPES`.
@@ -7,7 +10,6 @@
  * картинка по байтам (`docs:bytes`); `html` — исходник, превью в изолированном фрейме по кнопке; `pdf` — только
  * «Открыть»; `binary` — заглушка.
  */
-export type DocViewKind = 'markdown' | 'text' | 'image' | 'html' | 'pdf' | 'binary'
 
 /**
  * Итог классификации по пути. `unknown` — по пути не понять (нет расширения, незнакомое): main решает по

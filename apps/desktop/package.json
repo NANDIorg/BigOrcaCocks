@@ -16,6 +16,7 @@
     "test": "node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/*.test.ts src/renderer/src/*.test.ts"
   },
   "dependencies": {
+    "@orca-board/contracts": "workspace:*",
     "@orca-board/core": "workspace:*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",

@@ -4,7 +4,7 @@
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": [],
-    "paths": { "@orca-board/core": ["../../packages/core/src/index.ts"] }
+    "paths": { "@orca-board/core": ["../../packages/core/src/index.ts"], "@orca-board/contracts": ["../../packages/contracts/src/index.ts"] }
   },
   "include": ["src/renderer", "src/shared", "src/preload/api.d.ts"],
   "exclude": ["src/renderer/**/*.test.ts"]

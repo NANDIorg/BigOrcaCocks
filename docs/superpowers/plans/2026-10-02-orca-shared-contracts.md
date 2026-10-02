@@ -78,7 +78,7 @@ services и последующими рубежами. Не создаём пу�
 импортируемые файлы внутри нового пакета используют `.ts`, как browser-safe core;
 это позволяет Node 24 запускать tests без Desktop resolve hook.
 
-## Задача 1: Общие DTO становятся настоящей зависимостью Desktop
+## Task 1: Общие DTO становятся настоящей зависимостью Desktop
 
 **Files:**
 - Create: `packages/contracts/package.json`, `packages/contracts/tsconfig.json`.
@@ -112,7 +112,7 @@ assert.equal('createConversation' in contracts, false)
 - [ ] **Шаг 5. Запустить `pnpm --filter @orca-board/contracts test`, `pnpm typecheck`, `pnpm build`.** Expected: PASS; existing preload компилируется с прежними signatures, main/preload output не содержит внешнего import/require `@orca-board/contracts`.
 - [ ] **Шаг 6. Просмотреть конкретный diff и закоммитить** только файлы этой задачи: `refactor: вынести общие DTO Orca в contracts`.
 
-## Задача 2: Чистые общие функции и их проверки переезжают вместе
+## Task 2: Чистые общие функции и их проверки переезжают вместе
 
 **Files:**
 - Create: `packages/contracts/src/{appearance,notifications,docs-view,showcase}.ts`.
@@ -152,7 +152,7 @@ pnpm typecheck
 ```
 - [ ] **Шаг 6. Закоммитить проверенный перенос:** `refactor: перенести общие правила файлов и настроек Orca`.
 
-## Задача 3: Desktop API становится явной локальной оболочкой
+## Task 3: Desktop API становится явной локальной оболочкой
 
 **Files:**
 - Create: `apps/desktop/src/shared/desktop-api.ts`, `apps/desktop/src/shared/desktop-settings.ts`.
@@ -175,7 +175,7 @@ pnpm typecheck
 - [ ] **Шаг 4. Проверить отсутствие изменений IPC/socket/store.** В diff нет новых handle/send channels, изменения `main/index.ts`/`socket.ts`/core store или UI copy. Экспорт AppLanguage/common appearance не вводит новых пользовательских settings и не меняет существующую persistence schema.
 - [ ] **Шаг 5. Закоммитить:** `refactor: отделить Desktop API от общих контрактов Orca`.
 
-## Задача 4: Границы пакета и автономность сборки проверяются автоматически
+## Task 4: Границы пакета и автономность сборки проверяются автоматически
 
 **Files:**
 - Create: `packages/contracts/test/import-boundaries.ts`, `packages/contracts/test/import-boundaries.test.ts`.
