@@ -86,14 +86,13 @@ export function groupMessages(messages: AssistantChatMessage[]): MessageGroup[] 
   return groups
 }
 
-/** Ждём только первый видимый ответ на текущую реплику, а не конец работы CLI. */
+/** Частичный текст не завершает ответ: ожидание длится до финального статуса, активный инструмент показывает свой спиннер. */
 export function isAssistantThinking(state: Pick<ChatState, 'messages' | 'status' | 'interactions'>): boolean {
   if (state.status !== 'thinking' || state.interactions.length > 0) return false
   for (let index = state.messages.length - 1; index >= 0; index--) {
     const message = state.messages[index]
     if (message.role === 'human') break
     if (message.role === 'tool' && message.toolCalls?.some((call) => call.status === 'running')) return false
-    if (message.role === 'agent' && hasVisibleContent(message)) return false
   }
   return true
 }

@@ -93,12 +93,16 @@ describe('invoke: argv агентов и флаги пользователя (ex
         '--session-id', 'uuid-1', '--append-system-prompt', SYS, TASK
       ]
     },
-    codex: { command: 'codex', min: [X, D, BOTH], full: [X, '-m', 'M', '-c', 'model_reasoning_effort=high', D, BOTH] },
+    codex: {
+      command: 'codex',
+      min: [X, '-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="on-request"', D, BOTH],
+      full: [X, '-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="on-request"', '-m', 'M', '-c', 'model_reasoning_effort=high', D, BOTH]
+    },
     opencode: { command: 'opencode', min: [X, '--prompt', BOTH], full: [X, '--model', 'M', '--prompt', BOTH] },
-    gemini: { command: 'gemini', min: [X, '-i', BOTH], full: [X, '-m', 'M', '-i', BOTH] },
-    cursor: { command: 'cursor-agent', min: [X, BOTH], full: [X, '--model', 'M', BOTH] },
+    gemini: { command: 'gemini', min: [X, '--approval-mode', 'default', '-i', BOTH], full: [X, '--approval-mode', 'auto_edit', '-m', 'M', '-i', BOTH] },
+    cursor: { command: 'cursor-agent', min: [X, '--sandbox', 'enabled', BOTH], full: [X, '--model', 'M', '--sandbox', 'enabled', BOTH] },
     amp: { command: 'amp', min: [X, BOTH], full: [X, BOTH] },
-    copilot: { command: 'copilot', min: [X, '-i', BOTH], full: [X, '-i', BOTH] },
+    copilot: { command: 'copilot', min: [X, '-i', BOTH], full: [X, '--allow-tool=write', '-i', BOTH] },
     // Подкоманда `run` остаётся первой: флаги пользователя относятся к ней.
     goose: { command: 'goose', min: ['run', X, '--interactive', '--text', BOTH], full: ['run', X, '--interactive', '--text', BOTH] },
     shell: { command: '/bin/zsh', min: [X], full: [X] }
@@ -112,7 +116,11 @@ describe('invoke: argv агентов и флаги пользователя (ex
 
   for (const spec of AGENTS) {
     const want = expected[spec.id]
-    const invoke = (opts: AgentInvokeOptions) => getAgent(spec.id)!.invoke(SYS, TASK, opts)
+    // Эта матрица проверяет argv; окружение и временные настройки проверяются в agent-permissions.test.ts.
+    const invoke = (opts: AgentInvokeOptions) => {
+      const { command, args } = getAgent(spec.id)!.invoke(SYS, TASK, opts)
+      return { command, args }
+    }
 
     it(`${spec.id}: без extraArgs argv прежний`, () => {
       assert.deepEqual(invoke(min), { command: want.command, args: withExtra(want.min, []) })
@@ -143,7 +151,31 @@ describe('invoke: argv агентов и флаги пользователя (ex
       assert.ok(args.indexOf('--image') < args.indexOf('--'))
     }
     // Флагов нет — разделителя нет, argv прежний.
-    assert.deepEqual(getAgent('codex')!.invoke(SYS, TASK, min).args, [BOTH])
+    assert.deepEqual(getAgent('codex')!.invoke(SYS, TASK, min).args, [
+      '-c', 'sandbox_mode="workspace-write"', '-c', 'approval_policy="on-request"', BOTH
+    ])
+  })
+
+  for (const [mode, sandbox, approval] of [
+    ['auto', 'workspace-write', 'on-request'],
+    ['acceptEdits', 'workspace-write', 'on-request'],
+    ['bypassPermissions', 'danger-full-access', 'never']
+  ]) {
+    it(`codex: режим типа ${mode} передаёт sandbox и approval даже без модели и флагов роли`, () => {
+      const inv = getAgent('codex')!.invoke(SYS, TASK, { ...min, permissionMode: mode })
+      assert.equal(inv.command, 'codex')
+      assert.deepEqual(inv.args, ['-c', `sandbox_mode="${sandbox}"`, '-c', `approval_policy="${approval}"`, BOTH])
+    })
+  }
+
+  it('codex: ручные sandbox/approval сохраняются без повторных одиночных флагов', () => {
+    const manual = Object.freeze(['--sandbox', 'read-only', '--ask-for-approval', 'on-request'])
+    const { args } = getAgent('codex')!.invoke(SYS, TASK, { ...min, permissionMode: 'bypassPermissions', extraArgs: manual })
+    assert.deepEqual(args, [
+      ...manual, '-c', 'sandbox_mode="danger-full-access"', '-c', 'approval_policy="never"', '--', BOTH
+    ])
+    assert.equal(args.filter((a) => a === '--sandbox').length, 1)
+    assert.equal(args.filter((a) => a === '--ask-for-approval').length, 1)
   })
 
   it('promptChannel от extraArgs не зависит', () => {

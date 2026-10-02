@@ -8,11 +8,10 @@ import { DocImage } from './DocImage'
 import { DocLoading, DocStub } from './DocStub'
 import { Markdown } from './Markdown'
 import { PopupMenu, POPUP_MENU_WIDTH, type PopupItem } from './PopupMenu'
-import { DocIcon } from './docsIcons'
+import { DocFileIcon, DocIcon } from './docsIcons'
 import {
   codeText,
   docFindable,
-  docIconOf,
   docModes,
   docStatusFacts,
   docStubOf,
@@ -77,7 +76,7 @@ export function DocViewer(props: DocViewerProps): React.JSX.Element {
   const codeView = (): React.JSX.Element => {
     if (code.failure) return <DocStub path={path} failure={code.failure} now={now} actions={actions} onAction={onAction} onRetry={onRetry} />
     if (code.data === undefined) return <DocLoading name={name} />
-    return <CodeView text={code.data} name={name} codeRef={props.textRef} scrollRef={props.scrollRef} onScroll={props.onScroll} />
+    return <CodeView text={code.data} name={name} path={path} codeRef={props.textRef} scrollRef={props.scrollRef} onScroll={props.onScroll} />
   }
 
   let body: React.JSX.Element
@@ -125,8 +124,7 @@ function MarkdownDoc({ source, path, text, name, reload, textRef, scrollRef, onS
 
 /** Значок файла по виду — дерево, выдача поиска, крошки. `kind` — уточнённый вид из `docs:view`, если он есть. */
 export function DocKindIcon({ path, kind }: { path: string; kind?: DocViewKind }): React.JSX.Element {
-  const Icon = DocIcon[docIconOf(path, kind)]
-  return <Icon />
+  return <DocFileIcon path={path} kind={kind} />
 }
 
 interface ControlsProps {

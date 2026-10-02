@@ -261,7 +261,7 @@ export default {
   'coordModal.intro': 'Claude Code opens in the repository root with the coordinator instructions. It splits the goal into tasks, starts workers and waits for events.',
   'coordModal.goal': 'Goal',
   'coordModal.goalPlaceholder': 'For example: add PDF report export, cover it with tests, update the README',
-  'coordModal.pasteHint': 'Paste a screenshot into the field with {keys} — the coordinator gets it as a file. Without text the goal will be: “{goal}”',
+  'coordModal.pasteHint': 'Paste a file into the field with {keys}, drop it or pick it — the coordinator gets it as a file. Without text the goal will be: “{goal}”',
   'coordModal.starting': 'Starting…',
   'coordModal.start': 'Start',
 
@@ -295,6 +295,10 @@ export default {
   'coord.tailEmpty': 'No output yet.',
 
   "assistant.settings": "Assistant settings",
+  'assistant.rail.working': 'Assistant is working · ⌘K',
+  'assistant.rail.unread': 'Assistant response is ready · ⌘K',
+  'assistant.rail.waiting': 'Assistant needs your input · ⌘K',
+  'assistant.rail.error': 'Assistant error · ⌘K',
   "assistant.welcomeTitle": "Where shall we start?",
   "assistant.welcomeDescription": "Sort out tasks, set up your board, and prepare work for your agents.",
   "assistant.suggestion.tasks.label": "Plan the next tasks",

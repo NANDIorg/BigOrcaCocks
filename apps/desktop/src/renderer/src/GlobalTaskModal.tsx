@@ -2,11 +2,10 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
   isTaskPriority,
-  type AgentInfo, type BoardColumn, type ColumnKind, type GlobalTask, type ImageAttachmentInput, type TaskPriority, type TaskType
+  type AgentInfo, type BoardColumn, type ColumnKind, type GlobalTask, type AttachmentInput, type TaskPriority, type TaskType
 } from '@orca-board/core'
 import { ipcErrorMessage } from './useAutoSave'
 import { GlobalDuration } from './GlobalBoard'
-import { Icon } from './icons'
 import { GlobalReturns } from './GlobalOverview'
 import { globalTaskActions } from './globalReview'
 import { formatStamp } from './boardSort'
@@ -16,11 +15,10 @@ import { rolesWithDisabledAgent } from './taskTypes'
 import { typeChangeOptions } from './globalTypeChange'
 import { useT } from './i18n'
 import { agentTitle, builtinText } from './defaultTitles'
-import { ImageAttachments } from './ImageAttachments'
+import { AttachmentField } from './AttachmentField'
 import { RunImageGallery } from './RunImageGallery'
-import { IMAGE_ACCEPT, imageUsage, pasteKeys } from './imagePaste'
+import { pasteKeys, useAttachmentDrafts, usageOf } from './attachmentDrafts'
 import { canSaveGlobal, imagesEditable } from './runImages'
-import { useImageAttachments } from './useImageAttachments'
 import { lightboxOpen } from './imageViewer'
 
 interface Props {
@@ -58,16 +56,16 @@ interface Props {
   onSave(input: GlobalTaskModalInput): Promise<void>
 }
 
-/** Что модалка отдаёт при сохранении. Картинки — отдельно от полей: байты уходят вторым аргументом IPC. */
+/** Что модалка отдаёт при сохранении. Вложения — отдельно от полей: байты уходят вторым аргументом IPC. */
 export interface GlobalTaskModalInput {
   title: string
   description: string
   status?: string
   priority?: TaskPriority
   typeId?: string
-  /** Новые картинки: при создании — вместе с задачей, при правке — `addImages`. */
-  images?: ImageAttachmentInput[]
-  /** Сохранённые картинки, которые человек убрал (только правка). */
+  /** Новые вложения (картинки и любые файлы): при создании — вместе с задачей, при правке — `addImages`. */
+  images?: AttachmentInput[]
+  /** Сохранённые вложения, которые человек убрал (только правка). */
   removeImageIds?: string[]
 }
 
@@ -85,14 +83,13 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const busyRef = useRef(false)
-  const fileInput = useRef<HTMLInputElement>(null)
   const editing = global !== undefined
   // Сохранённые картинки, убранные в этой форме: удалятся при сохранении, отмена ничего не меняет.
   const [removedImages, setRemovedImages] = useState<string[]>([])
   const savedImages = (global?.images ?? []).filter((i) => !removedImages.includes(i.id))
   // Создание — всегда можно; правка — пока задача не начата (то же правило, что у смены типа), иначе только просмотр.
   const canEditImages = !global || imagesEditable(global, statusKind)
-  const attach = useImageAttachments({ saved: imageUsage(savedImages), locked: busy || !canEditImages })
+  const attach = useAttachmentDrafts({ saved: usageOf(savedImages), locked: busy || !canEditImages, legacyImages: true })
   const actions = global ? globalTaskActions(global, statusKind, live, props.approvals) : undefined
   const selectedType = editing ? undefined
     : types?.find((ty) => ty.id === pickedTypeId) ?? types?.find((ty) => ty.id === defaultTypeId) ?? types?.[0]
@@ -135,7 +132,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
         // Только явный выбор человека: у прогона без typeId подставленный по умолчанию тип не должен записаться сам.
         ...(editTypes && pickedTypeId !== null ? { typeId: pickedTypeId } : {}),
         ...(priorityEditable ? { priority } : {}),
-        ...(canEditImages && attach.images.length > 0 ? { images: attach.payload() } : {}),
+        ...(canEditImages && attach.items.length > 0 ? { images: attach.payload() } : {}),
         ...(editing && removedImages.length > 0 ? { removeImageIds: removedImages } : {})
       })
     } catch (e) {
@@ -145,6 +142,17 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
       setBusy(false)
     }
   }
+
+  const descriptionField = (
+    <label>
+      {t('global.modal.description')}
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder={t('global.modal.descriptionPlaceholder')}
+      />
+    </label>
+  )
 
   return (
     <div className="modal-backdrop" onClick={close}>
@@ -185,18 +193,14 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             placeholder={t('global.modal.titlePlaceholder')}
           />
         </label>
-        <label>
-          {t('global.modal.description')}
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onPaste={canEditImages ? attach.onPaste : undefined}
-            placeholder={t('global.modal.descriptionPlaceholder')}
-          />
-        </label>
-        {(canEditImages || savedImages.length > 0 || attach.images.length > 0) && (
-          <div className="g-modal-images" role="group" aria-label={t('global.modal.images')}>
-            {savedImages.length > 0 && global && (
+        {canEditImages || savedImages.length > 0 ? (
+          <AttachmentField
+            attachments={attach}
+            disabled={busy}
+            label={t('global.modal.images')}
+            hint={t('global.modal.imagesHint', { keys: pasteKeys(navigator.platform) })}
+            lockedHint={canEditImages ? undefined : t('global.modal.imagesLocked')}
+            saved={savedImages.length > 0 && global ? (
               <RunImageGallery
                 key={global.id}
                 globalId={global.id}
@@ -204,36 +208,11 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
                 disabled={busy}
                 onRemove={canEditImages ? (id) => setRemovedImages((ids) => [...ids, id]) : undefined}
               />
-            )}
-            <ImageAttachments
-              items={attach.images.map((img) => ({ key: String(img.id), url: img.url }))}
-              reading={attach.reading}
-              disabled={busy}
-              onRemove={(key) => attach.remove(Number(key))}
-            />
-            {canEditImages ? (
-              <>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept={IMAGE_ACCEPT}
-                  multiple
-                  hidden
-                  onChange={(e) => {
-                    attach.addFiles(e.target.files ?? [])
-                    e.target.value = '' // тот же файл можно выбрать повторно
-                  }}
-                />
-                <button type="button" className="btn-sm modal-images-add" disabled={busy} onClick={() => fileInput.current?.click()}>
-                  <Icon.image /> {t('global.modal.imagesAdd')}
-                </button>
-                <span className="muted modal-images-hint">{t('global.modal.imagesHint', { keys: pasteKeys(navigator.platform) })}</span>
-              </>
-            ) : (
-              <span className="muted modal-images-hint">{t('global.modal.imagesLocked')}</span>
-            )}
-          </div>
-        )}
+            ) : undefined}
+          >
+            {descriptionField}
+          </AttachmentField>
+        ) : descriptionField}
         {!global?.inbox && (
           <label>
             {t('global.modal.priority')}
@@ -293,7 +272,7 @@ export function GlobalTaskModal(props: Props): React.JSX.Element {
             </select>
           </label>
         )}
-        {(attach.error ?? error) && <span className="error-text">{attach.error ?? error}</span>}
+        {error && <span className="error-text attach-error">{error}</span>}
         <div className="row">
           <button className="btn-text" onClick={close} disabled={busy}>{t('global.cancel')}</button>
           <button className="btn-primary" disabled={!canSave} onClick={() => void save()}>

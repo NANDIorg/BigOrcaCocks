@@ -425,7 +425,7 @@ select:not([multiple]):not([size]) option:disabled { color: var(--muted); }
 textarea { min-height: 96px; resize: vertical; }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
 .modal .btn-primary { height: 40px; padding: 0 20px; border-radius: 9px; font-size: 14px; }
-/* Приложенные изображения (ImageAttachField): кнопка, подсказка, миниатюры с «×». Тесный вид — карточка на доске, лента. */
+/* Вложения (AttachmentField, AttachmentList): кнопка, подсказка, миниатюры картинок и карточки файлов с «×». Тесный вид — карточка на доске, лента. */
 .attach { display: flex; flex-direction: column; gap: 6px; border-radius: 10px; }
 .attach.dragging { outline: 2px dashed var(--col-progress); outline-offset: 2px; }
 .attach-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -445,6 +445,39 @@ textarea { min-height: 96px; resize: vertical; }
   background: rgba(0,0,0,.65); color: #fff; font-size: 14px; line-height: 20px; cursor: pointer;
 }
 .attach-image-remove:hover { background: var(--danger); color: var(--on-status); }
+/* Карточка файла (не картинки) в том же ряду: значок с бейджем расширения, имя с обрезкой посередине, размер и
+   кнопки «Открыть» (белый список) / «Показать в папке» / «×». Высота как у миниатюры — ряд не прыгает. */
+.attach-file {
+  display: flex; align-items: center; gap: 8px; flex: none; box-sizing: border-box; width: 232px; max-width: 100%;
+  height: 72px; padding: 0 6px 0 10px; border-radius: 10px; overflow: hidden; background: var(--frame); border: 1px solid var(--line);
+}
+.attach-file-icon { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--muted); }
+.attach-file-icon svg { width: 22px; height: 22px; }
+.attach-file-ext {
+  max-width: 44px; padding: 0 4px; border-radius: 4px; background: var(--chip); color: var(--text);
+  font-size: 10px; font-weight: 600; line-height: 15px; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.attach-file-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.attach-file-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attach-file-size { font-size: 12px; color: var(--muted); }
+.attach-file-actions { display: flex; flex-direction: column; justify-content: center; gap: 2px; flex: none; }
+.attach-file-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer;
+}
+.attach-file-btn svg { width: 14px; height: 14px; }
+.attach-file-btn:hover { background: var(--card-hover); color: var(--text); }
+.attach-file-remove { font-size: 16px; }
+.attach-file-remove:hover { background: var(--danger); color: var(--on-status); }
+.attach-file-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.attach-file-btn:disabled { opacity: .5; cursor: default; }
+/* Тесно (карточка запроса, лента): 48 px, одна строка — значок и имя, размер в подсказке; кнопки в ряд. */
+.attach.compact .attach-file, .attach-images.compact .attach-file { width: 184px; height: 48px; gap: 6px; padding: 0 4px 0 6px; border-radius: 8px; }
+.attach.compact .attach-file-icon svg, .attach-images.compact .attach-file-icon svg { width: 16px; height: 16px; }
+.attach.compact .attach-file-ext, .attach-images.compact .attach-file-ext { font-size: 9px; line-height: 13px; }
+.attach.compact .attach-file-name, .attach-images.compact .attach-file-name { font-size: 12px; }
+.attach.compact .attach-file-actions, .attach-images.compact .attach-file-actions { flex-direction: row; }
+.attach-error { white-space: pre-line; }
 .btn-text { background: transparent; border: 0; color: var(--muted); padding: 0 14px; }
 .btn-text:hover { color: var(--text); }
 
@@ -1224,8 +1257,12 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-hit b { color: var(--col-input); font-weight: 600; }
 .docs-tree-foot { border-top: 1px solid var(--line); padding: 8px 12px; font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
 .docs-tree-foot kbd + kbd { margin-left: 2px; }
-/* Значок вида файла: цвет — по виду (docView.ts → DocIconName), как в макете. */
-.docs-fi { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
+/* Категории — по docView.ts; языки и служебные имена — docFileIcons.ts и локальные SVG Devicon. */
+.docs-fi { display: inline-grid; place-items: center; flex-shrink: 0; width: 16px; height: 16px; color: var(--muted); }
+.docs-fi .docs-i { width: 16px; height: 16px; }
+.docs-file-logo { display: block; object-fit: contain; }
+.docs-file-logo[data-mono='true'] { filter: brightness(0) invert(.9); }
+:root[data-theme='paper'] .docs-file-logo[data-mono='true'] { filter: brightness(0); }
 .docs-fi[data-kind='doc'] { color: var(--accent); }
 .docs-fi[data-kind='code'] { color: var(--col-ready); }
 .docs-fi[data-kind='config'], .docs-fi[data-kind='env'] { color: var(--col-input); }
@@ -1233,6 +1270,12 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-fi[data-kind='image'] { color: var(--col-done); }
 .docs-fi[data-kind='pdf'] { color: var(--danger); }
 .docs-fi[data-kind='binary'] { color: var(--col-backlog); }
+.docs-fi[data-glyph='archive'] { color: var(--syntax-number); }
+.docs-fi[data-glyph='audio'], .docs-fi[data-glyph='video'] { color: var(--syntax-keyword); }
+.docs-fi[data-glyph='font'] { color: var(--syntax-tag); }
+.docs-fi[data-glyph='database'], .docs-fi[data-glyph='table'] { color: var(--syntax-function); }
+.docs-fi[data-glyph='terminal'] { color: var(--syntax-string); }
+.docs-fi[data-glyph='diff'] { color: var(--syntax-property); }
 .docs-row.file .docs-fi .docs-i, .docs-hit-l1 .docs-fi .docs-i { color: inherit; }
 .docs-lnk { display: inline-grid; place-items: center; flex-shrink: 0; color: var(--muted); }
 .docs-lnk .docs-i { width: 12px; height: 12px; }
@@ -1265,6 +1308,8 @@ fieldset.editor { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
 .docs-path button.seg:hover { background: var(--side-2); color: var(--text); }
 .docs-path .cur { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
 .docs-path .cur .docs-i { margin-right: 6px; vertical-align: -2px; color: var(--muted); }
+.docs-path .cur .docs-fi { margin-right: 6px; vertical-align: -2px; }
+.docs-path .cur .docs-fi .docs-i { margin-right: 0; vertical-align: 0; color: inherit; }
 .docs-path .sep { color: var(--chip); }
 .docs-find { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 16px; border-bottom: 1px solid var(--line); background: var(--frame); color: var(--muted); }
 .docs-find input { flex: 0 1 320px; min-width: 0; height: 28px; border-radius: 8px; border: 1px solid var(--accent); background: var(--side-2); color: var(--text); padding: 0 10px; font: inherit; font-size: 13px; outline: none; }
@@ -2732,6 +2777,9 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
 [data-motion='reduced'] .updates-card .update-spin { animation: none; }
 .rail .icon { position: relative; }
 .rail-dot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--page); }
+.assistant-rail-unread { top: 7px; right: 7px; width: 12px; height: 12px; background: var(--notification); }
+.assistant-rail-working { position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--page); color: var(--accent); }
+.assistant-rail-working svg { width: 16px; height: 16px; }
 .toast {
   position: fixed; right: 20px; bottom: 20px; z-index: 50; display: flex; align-items: center; gap: 10px;
   padding: 10px 12px 10px 14px; border-radius: 12px; background: var(--side); border: 1px solid var(--line);
@@ -3086,9 +3134,6 @@ fieldset:disabled .wf-role.on:hover { background: color-mix(in srgb, var(--accen
   position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); padding: 2px 10px; border-radius: 999px;
   background: rgba(0,0,0,.55); color: #fff; font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none;
 }
-.modal-images-hint { font-size: 12px; margin-top: -6px; }
-.modal-images-add { align-self: flex-start; }
-.g-modal-images { display: flex; flex-direction: column; gap: 8px; }
 .gt-box h3.gt-images-title { margin-top: 14px; }
 
 /* Панели доходят до края окна; кнопки macOS/Windows нативные, их DOM-копий нет. */

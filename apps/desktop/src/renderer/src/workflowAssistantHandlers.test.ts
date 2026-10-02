@@ -12,6 +12,8 @@ import * as defaultTitles from './defaultTitles'
 import * as nodeTemplates from './nodeTemplates'
 import * as workflowAssistant from './workflowAssistant'
 import * as assistantChat from './assistantChat'
+import * as assistantActivity from './assistantActivity'
+import type { AssistantChatUpdate } from '../../shared/ipc'
 import type { TestContext } from 'node:test'
 import { t } from './i18n'
 import { ipcErrorMessage } from './ipcError'
@@ -239,7 +241,7 @@ function workflowEntryFixture() {
     attach, detach: () => jsxHandler(source, 'AssistantPanel', 'onDetachWorkflow', bindings)(),
     consume: (nonce: number) => jsxHandler(source, 'AssistantPanel', 'onWorkflowSent', bindings)(nonce),
     newDialog: () => jsxHandler(source, 'AssistantPanel', 'onReset', bindings)(),
-    rail: () => jsxHandler(source, 'button', 'onClick', bindings, { attribute: 'title', expression: "{t('shell.rail.assistant')}" })(),
+    rail: () => jsxHandler(source, 'button', 'onClick', bindings, { attribute: 'aria-expanded', expression: '{showAssistant}' })(),
     hotkey: () => namedHandler(source, 'onKey', bindings)({ code: 'KeyK', metaKey: true, preventDefault: () => {}, stopPropagation: () => {} }) }
 }
 
@@ -290,6 +292,10 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
   const plain: string[] = []
   const consumed: number[] = []
   const choices: string[] = []
+  const activities: assistantActivity.AssistantActivity[] = []
+  const onActivityChange = (activity: assistantActivity.AssistantActivity): void => { activities.push(activity) }
+  let chatListener: ((update: AssistantChatUpdate) => void) | undefined
+  let interruptFails = false
   let settings = 0
   let attachment: WorkflowAttachment | null = { nonce: 7, context: { mode: 'create' } }
   let session = 'panel-session'
@@ -308,7 +314,8 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
       await snapshotReady
       return { protocolVersion: 2, ptyId, revision: 1, transport, agent: transport === 'terminal' ? 'shell' : 'codex', messages: discussion ? [{ id: 'human', role: 'human', text: 'Existing discussion', at: 1 }] : [], interactions: [], status: 'done' }
     },
-    onMessage: () => () => {}, interrupt: async () => {}, respond: async () => {},
+    onMessage: (_id: string, listener: (update: AssistantChatUpdate) => void) => { chatListener = listener; return () => { chatListener = undefined } },
+    interrupt: async () => { if (interruptFails) throw new Error('interrupt failed') }, respond: async () => {},
     send: async (_session: string, text: string) => { plain.push(text) },
     sendWithWorkflow: (session: string, text: string, context: unknown) => { contextual.push({ session, text, context }); return sending }
   } } } })
@@ -316,6 +323,7 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
     './workflowAssistant': workflowAssistant, './AgentLogo': { AgentLogo: 'logo' }, './defaultTitles': defaultTitles,
     './Markdown': { Markdown: 'markdown' }, './icons': { Icon: new Proxy({}, { get: (_target, key) => `icon-${String(key)}` }) },
     './AssistantInteraction': { AssistantInteraction: 'interaction' }, './assistantChat': assistantChat,
+    './assistantActivity': assistantActivity,
     './ipcError': { ipcErrorMessage }, './useModalFocus': { useModalFocus: () => {} }, './i18n': { useT: () => t }
   })
   context.after(() => {
@@ -326,7 +334,7 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
   })
   const noop = () => {}
   const flush = () => harness.flush({ open, suspended: false, activePty: session, status: { busy: false, error: null },
-    onClose: noop, onReset: noop, onSettings: () => { settings++ },
+    onClose: noop, onActivityChange, onReset: noop, onSettings: () => { settings++ },
     onChooseChatAgent: (session: string, agent: string) => { choices.push(`${session}:${agent}`) },
     onOpenInTerminals: noop, canOpenInTerminals: true, attachment: entry ? entry.attachment() : attachment, returnAvailable: entry ? entry.destination() !== null : true, result: null,
     composerRequest, onComposerRequestApplied: (nonce: number) => { applied.push(nonce) },
@@ -337,7 +345,10 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
   const edit = (text: string) => { (textarea().props.onChange as (event: { target: { value: string } }) => void)({ target: { value: text } }); flush() }
   const send = () => { (harness.find((node) => node.props.className === 'chat-send').props.onClick as () => void)(); flush() }
   flush(); await tick(); flush(); focusRef()
-  return { harness, flush, edit, send, applied,
+  return { harness, flush, edit, send, applied, activities,
+    emit: (update: AssistantChatUpdate) => { chatListener?.(update); flush() },
+    failInterrupt: () => { interruptFails = true },
+    stop: () => { (harness.find((node) => node.props.className === 'chat-send stopping').props.onClick as () => void)(); flush() },
     connect: (next: ReturnType<typeof workflowEntryFixture>) => { entry = next; flush() },
     open: (next: boolean) => { open = next; flush() }, focuses: () => focuses,
     prefill: (next: { nonce: number; text: string }) => { composerRequest = next; flush() },
@@ -346,6 +357,36 @@ async function panelFixture(context: TestContext, transport: 'chat' | 'terminal'
     settings: () => settings, attachment: () => attachment, accept: pending.resolve, reject,
     replace: (next: WorkflowAttachment, nextSession = session) => { attachment = next; session = nextSession; flush() } }
 }
+
+test('закрытая реальная панель передаёт работу и готовый ответ в rail без публикации каждого фрагмента', async (context) => {
+  const f = await panelFixture(context)
+  const rail = () => assistantActivity.assistantRailState(f.activities.at(-1) ?? null, null, false)
+  assert.equal(rail(), 'idle')
+  f.emit({ ptyId: 'panel-session', revision: 2, status: 'thinking' })
+  assert.equal(rail(), 'working')
+  const publications = f.activities.length
+  f.emit({ ptyId: 'panel-session', revision: 3, message: { id: 'a1', role: 'agent', text: 'Проверяю граф.', at: 1 } })
+  f.emit({ ptyId: 'panel-session', revision: 4, message: { id: 'a1', role: 'agent', text: 'Граф проверен.', at: 1 } })
+  assert.equal(f.activities.length, publications)
+  f.emit({ ptyId: 'panel-session', revision: 5, status: 'done' })
+  assert.equal(rail(), 'unread')
+  const read = f.activities.at(-1)!
+  assert.equal(assistantActivity.assistantRailState(read, null, true), 'idle')
+  assert.equal(assistantActivity.assistantRailState(read, read, false), 'idle')
+  f.emit({ ptyId: 'old-session', revision: 99, status: 'thinking' })
+  assert.equal(f.activities.at(-1), read, 'события старого диалога не меняют индикатор')
+})
+
+test('неудачная остановка не скрывает продолжающуюся работу и не публикует токены в оболочку', async (context) => {
+  const f = await panelFixture(context)
+  f.emit({ ptyId: 'panel-session', revision: 2, status: 'thinking' })
+  f.failInterrupt(); f.stop(); await tick(); f.flush()
+  assert.equal(assistantActivity.assistantRailState(f.activities.at(-1) ?? null, null, false), 'working')
+  const publications = f.activities.length
+  f.emit({ ptyId: 'panel-session', revision: 3, message: { id: 'a1', role: 'agent', text: 'Продолжаю.', at: 1 } })
+  f.emit({ ptyId: 'panel-session', revision: 4, message: { id: 'a1', role: 'agent', text: 'Продолжаю ответ.', at: 1 } })
+  assert.equal(f.activities.length, publications)
+})
 
 test('реальная welcome suggestion заполняет поле, фокусирует его и не отправляет', async (context) => {
   const f = await panelFixture(context)

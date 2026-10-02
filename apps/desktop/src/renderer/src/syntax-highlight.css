@@ -1,0 +1,43 @@
+/* Общая палитра исходников и блоков Markdown. Токены меняет appearance.ts из shared/theme.ts. */
+.syntax-highlight .token.comment,
+.syntax-highlight .token.prolog,
+.syntax-highlight .token.doctype,
+.syntax-highlight .token.cdata { color: var(--muted); }
+
+.syntax-highlight .token.punctuation { color: var(--subtle); }
+
+.syntax-highlight .token.keyword,
+.syntax-highlight .token.atrule,
+.syntax-highlight .token.class-name,
+.syntax-highlight .token.builtin { color: var(--syntax-keyword); }
+
+.syntax-highlight .token.string,
+.syntax-highlight .token.char,
+.syntax-highlight .token.attr-value,
+.syntax-highlight .token.selector,
+.syntax-highlight .token.regex { color: var(--syntax-string); }
+
+.syntax-highlight .token.number,
+.syntax-highlight .token.boolean,
+.syntax-highlight .token.constant { color: var(--syntax-number); }
+
+.syntax-highlight .token.function,
+.syntax-highlight .token.function-name { color: var(--syntax-function); }
+
+.syntax-highlight .token.property,
+.syntax-highlight .token.key,
+.syntax-highlight .token.attr-name,
+.syntax-highlight .token.variable,
+.syntax-highlight .token.symbol,
+.syntax-highlight .token.important { color: var(--syntax-property); }
+
+.syntax-highlight .token.tag { color: var(--syntax-tag); }
+.syntax-highlight .token.deleted { color: var(--danger); }
+.syntax-highlight .token.inserted { color: var(--col-done); }
+.syntax-highlight .token.title,
+.syntax-highlight .token.bold { font-weight: 600; }
+.syntax-highlight .token.italic { font-style: italic; }
+
+@media (forced-colors: active) {
+  .syntax-highlight .token { color: CanvasText; }
+}

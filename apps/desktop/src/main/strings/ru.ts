@@ -2,6 +2,7 @@
 // получают сокет и CLI: `OrcaError.message` строится отсюда. Порядок — по областям: трей, диалоги, уведомления,
 // ошибки по модулям.
 export default {
+  'agentLaunch.settingsInvalid': 'Не удалось прочитать настройки Amp: {path}. Проверьте JSON/JSONC и доступ к файлу.',
   'assistantTransport.missingCli': 'Не найден CLI {command}. Установите агент и проверьте PATH.',
   'assistantTransport.windowsLauncher': 'CLI {command} использует неподдерживаемый Windows launcher. Укажите native executable или стандартный npm shim.',
   'assistantTransport.windowsEntry': 'Не найден файл Windows launcher: {entry}',
@@ -181,11 +182,11 @@ export default {
   'coordinator.alreadyRunning': 'координатор этой глобальной задачи уже работает (терминал {pty})',
   'coordinator.finishing': 'координатор этой глобальной задачи ещё завершается — повторите через несколько секунд',
 
-  'attachments.noWorktree': 'у задачи нет worktree на диске — изображения к замечаниям сохранять некуда (задача уже принята или её worktree удалён)',
-  'attachments.saveFailed': 'не удалось сохранить изображения: {error}',
-  'attachments.invalid': 'изображения не приняты: {error}',
-  'attachments.needText': 'к изображениям нужен текст замечаний: опиши, что исправить',
-  'attachments.notForAction': 'изображения можно приложить только к «Уточнить» и «Вернуть»',
+  'attachments.noWorktree': 'у задачи нет worktree на диске — вложения к замечаниям сохранять некуда (задача уже принята или её worktree удалён)',
+  'attachments.saveFailed': 'не удалось сохранить вложения: {error}',
+  'attachments.invalid': 'вложения не приняты: {error}',
+  'attachments.needText': 'к вложениям нужен текст замечаний: опиши, что исправить',
+  'attachments.notForAction': 'файлы можно приложить только к «Уточнить» и «Вернуть»',
 
   'workflow.runFinished': 'воркфлоу глобальной задачи уже дошёл до конца — координатор не нужен',
   'workflow.coordinatorNotRunning': 'замечания сохранены, но координатор не запустился — запусти его: карточка глобальной задачи → «Запустить координатора»',
@@ -193,10 +194,12 @@ export default {
   'global.coordinatorAlive': 'координатор этой глобальной задачи ещё работает — сначала закрой его терминал',
   'global.typeRequired': 'укажи тип задачи',
   'global.subtaskTitleEmpty': 'название подзадачи не может быть пустым',
-  'global.imageNotFound': 'у глобальной задачи нет изображения {imageId}',
-  'global.imageFileMissing': 'файл изображения {imageId} не найден на диске — удалите картинку и приложите её заново',
-  'global.imagesEmpty': 'нет изображений для добавления',
-  'global.imagesSaveFailed': 'не удалось сохранить изображения задачи: {reason}',
+  'global.imageNotFound': 'у глобальной задачи нет вложения {imageId}',
+  'global.imageFileMissing': 'файл вложения {imageId} не найден на диске — удалите вложение и приложите файл заново',
+  'global.notAnImage': 'вложение {imageId} — не изображение: превью нет, его можно показать в папке',
+  'global.attachmentNotOpenable': 'вложение {imageId} не открывается приложением — его можно показать в папке',
+  'global.imagesEmpty': 'нет вложений для добавления',
+  'global.imagesSaveFailed': 'не удалось сохранить вложения задачи: {reason}',
   'global.approvalAmbiguous': {
     one: 'у глобальной задачи ждёт решения {count} запрос на проверку ({titles}) — реши его в Инбоксе',
     few: 'у глобальной задачи ждут решения {count} запроса на проверку ({titles}) — с карточки не понять, чей путь решается: реши каждый в Инбоксе',

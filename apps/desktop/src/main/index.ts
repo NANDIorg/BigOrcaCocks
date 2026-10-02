@@ -1,6 +1,6 @@
 import type { Workflow } from '@orca-board/core'
 import { buildWorkflowAssistantContext, saveWorkflowDraft } from './assistant-workflow'
-import type { TaskTypePatch } from '../shared/ipc'
+import type { TaskTypePatch, AttachmentCapabilities } from '../shared/ipc'
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -8,15 +8,15 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
-import { defaultSocketPath, validateImageAttachments, coordinatorsToClose, getAgent, DEFAULT_IMAGE_OBJECTIVE, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type ImageAttachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type Attachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
-import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, type WorkerEnvContext } from './worker'
+import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, pruneLaunchTempFiles, type WorkerEnvContext } from './worker'
 import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
 import { createAssistantConversation } from './assistant-conversation'
 import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { getReview, resolveHumanRequest } from './review'
-import { hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
+import { attachmentCapabilities, coordinatorObjective, hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
@@ -32,7 +32,7 @@ import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
-import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir } from './run-images'
+import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir, revealTaskAttachment, openTaskAttachment } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { exportTaskTypeToFile } from './task-type-export'
@@ -555,7 +555,7 @@ function runCoordinator(
   projectId?: string,
   cols?: number,
   rows?: number,
-  images: ImageAttachment[] = [],
+  images: Attachment[] = [],
   runId?: string,
   typeId?: string
 ): string {
@@ -943,8 +943,8 @@ function registerIpc(): void {
   handle('globalTasks:create', (_e, input: GlobalTaskInput, images?: unknown) => {
     const p = resolveProject()
     const { typeId, ...rest } = input ?? {}
-    // Данные из renderer не доверенные: картинки проверяются по сигнатуре и лимитам до создания — невалидная задачу не создаёт.
-    const valid = validateImageAttachments(images)
+    // Данные из renderer не доверенные: вложения (любой тип файла) проверяются по лимитам до создания — невалидные задачу не создают.
+    const valid = validateAttachments(images)
     // Тип проверяется до создания: недоступный проекту — ошибка, задача не создаётся.
     const type = projects.runType(p.id, typeof typeId === 'string' && typeId ? typeId : undefined)
     return createTaskWithImages(p.store, runImagesRoot(app.getPath('userData')), p.id, { ...rest, type }, valid)
@@ -956,10 +956,10 @@ function registerIpc(): void {
     // Тип — из библиотеки проекта, как при создании: недоступный проекту — ошибка, тип не меняется.
     return p.store.changeGlobalTaskType(id, projects.runType(p.id, typeId))
   })
-  // Картинки задачи: до начала работы (правило смены типа), лимиты — суммарно на задачу. Файлы — userData/run-images.
+  // Вложения задачи (картинки и файлы): до начала работы (правило смены типа), лимиты — суммарно на задачу. Файлы — userData/run-images.
   handle('globalTasks:addImages', (_e, id: string, images?: unknown) => {
     const p = resolveProject()
-    return addTaskImages(p.store, runImagesRoot(app.getPath('userData')), p.id, id, validateImageAttachments(images))
+    return addTaskImages(p.store, runImagesRoot(app.getPath('userData')), p.id, id, validateAttachments(images))
   })
   handle('globalTasks:removeImage', (_e, id: string, imageId: string) => {
     const p = resolveProject()
@@ -968,6 +968,17 @@ function registerIpc(): void {
   handle('globalTasks:image', (_e, id: string, imageId: string) => {
     const p = resolveProject()
     return loadTaskImage(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId)
+  })
+  // Показать в папке — любое вложение задачи (только из её метаданных).
+  handle('globalTasks:revealAttachment', (_e, id: string, imageId: string) => {
+    const p = resolveProject()
+    shell.showItemInFolder(revealTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
+  })
+  // Открыть приложением системы — только белый список (`attachmentOpenable`: картинки, Markdown, PDF), не HTML, SVG и не программы.
+  handle('globalTasks:openAttachment', async (_e, id: string, imageId: string) => {
+    const p = resolveProject()
+    const err = await shell.openPath(openTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
+    if (err) throw new Error(err)
   })
   handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
   handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
@@ -981,11 +992,11 @@ function registerIpc(): void {
     return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
   })
   handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
-    runCoordinator('', undefined, cols, rows, validateImageAttachments(images), id)
+    runCoordinator('', undefined, cols, rows, validateAttachments(images), id)
   )
   handle('globalTasks:accept', (_e, id: string, decision?: string) =>
     acceptRun(runWorkflowDeps(resolveProject().id), id, typeof decision === 'string' ? decision : undefined))
-  // `images` — картинки к уточнению (байты): main проверяет их и пишет в cwd координатора, дальше по возврату идут пути.
+  // `images` — вложения к уточнению (байты файлов): main проверяет их и пишет в cwd координатора, дальше по возврату идут пути.
   handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number, images?: unknown) => {
     const p = resolveProject()
     const reason = typeof text === 'string' ? text : ''
@@ -1006,7 +1017,7 @@ function registerIpc(): void {
     const store = projects.activeStore()
     return store.listRequests().filter((r) => (!opts?.runId || r.runId === opts.runId) && (!opts?.pending || r.status === 'pending'))
   })
-  // `images` — картинки к «Уточнить»/«Вернуть» (см. returnToWork).
+  // `images` — вложения к «Уточнить»/«Вернуть» (см. returnToWork).
   handle('requests:resolve', (_e, id: string, resolution: RequestResolution, images?: unknown) => resolveRequest(undefined, id, resolution, images))
 
   handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
@@ -1034,11 +1045,9 @@ function registerIpc(): void {
 
   handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
   handle('coordinator:start', (_e, objective: unknown, cols: number, rows: number, images?: unknown) => {
-    // Данные из renderer не доверенные: изображения проверяются по сигнатуре и лимитам.
-    const valid = validateImageAttachments(images)
-    const text = typeof objective === 'string' ? objective.trim() : ''
-    if (!text && valid.length === 0) throw new OrcaError('coordinator.noObjective')
-    return runCoordinator(text || DEFAULT_IMAGE_OBJECTIVE, undefined, cols, rows, valid)
+    // Данные из renderer не доверенные: вложения проверяются по лимитам, картинка узнаётся по сигнатуре.
+    const valid = validateAttachments(images)
+    return runCoordinator(coordinatorObjective(objective, valid), undefined, cols, rows, valid)
   })
   handle('assistant:open', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, false))
   handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
@@ -1067,8 +1076,10 @@ function registerIpc(): void {
   handle('docs:reveal', async (_e, source: unknown, path: unknown) => {
     shell.showItemInFolder(await docsRevealPath(docRoot(source), path))
   })
-  // Рукопожатие для картинок к замечаниям: renderer проверяет, что main новый и принимает `images`.
+  // Рукопожатие для вложений к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
+  // Что main принимает во вложениях: любые файлы в лимитах `ATTACHMENT_LIMITS` (`validateAttachments`).
+  handle('attachments:capabilities', (): AttachmentCapabilities => attachmentCapabilities())
   // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
   // расширений — main/showcase.ts.
   const source = (taskId: unknown, dispatchId: unknown): string => {
@@ -1114,7 +1125,7 @@ function registerIpc(): void {
     return getReview(p.store, p.root, taskId)
   })
   handle('review:accept', (_e, taskId: string, decision?: string) => void reviewDecision(resolveProject().id, taskId, 'accept', decision))
-  // `images` — картинки к замечаниям (см. returnToWork).
+  // `images` — вложения к замечаниям (см. returnToWork).
   handle('review:reject', (_e, taskId: string, feedback: string, images?: unknown) => reviewDecision(resolveProject().id, taskId, 'reject', feedback, images))
 }
 
@@ -1125,6 +1136,8 @@ app.whenReady().then(() => {
   protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
   // ДО ProjectManager и досок: их миграции переписывают файлы, а бэкап хранит состояние в формате старой версии.
   rememberUpdate(backupOnVersionChange(app.getPath('userData'), app.getVersion()))
+  // До первого запуска агентов: system prompt прошлых запусков на Windows (`win32Launch`) больше никто не читает.
+  pruneLaunchTempFiles()
   projects = new ProjectManager(app.getPath('userData'))
   syncMainAppearance()
   setMainLocale(projects.settings().language)

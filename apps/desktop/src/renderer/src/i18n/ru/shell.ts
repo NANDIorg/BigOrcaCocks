@@ -271,7 +271,7 @@ export default {
   'coordModal.intro': 'Claude Code откроется в корне репозитория с инструкцией координатора. Он разобьёт цель на задачи, запустит воркеров и будет ждать событий.',
   'coordModal.goal': 'Цель',
   'coordModal.goalPlaceholder': 'Например: добавить экспорт отчёта в PDF, покрыть тестами, обновить README',
-  'coordModal.pasteHint': 'Скриншот можно вставить в поле через {keys} — координатор получит его файлом. Без текста цель будет: «{goal}»',
+  'coordModal.pasteHint': 'Файл можно вставить в поле через {keys}, перетащить или выбрать — координатор получит его файлом. Без текста цель будет: «{goal}»',
   'coordModal.starting': 'Запуск…',
   'coordModal.start': 'Запустить',
 
@@ -307,6 +307,10 @@ export default {
 
   // Ассистент (AssistantPanel.tsx)
   "assistant.settings": "Настройки ассистента",
+  'assistant.rail.working': 'Ассистент работает · ⌘K',
+  'assistant.rail.unread': 'Ответ ассистента готов · ⌘K',
+  'assistant.rail.waiting': 'Ассистент ждёт вашего ответа · ⌘K',
+  'assistant.rail.error': 'Ошибка ассистента · ⌘K',
   "assistant.welcomeTitle": "С чего начнём?",
   "assistant.welcomeDescription": "Разберём задачи, настроим доску и подготовим работу для агентов.",
   "assistant.suggestion.tasks.label": "Разобраться с задачами",

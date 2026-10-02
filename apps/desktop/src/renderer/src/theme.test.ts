@@ -43,6 +43,13 @@ for (const normal of Object.values(appThemes)) {
 
 for (const { theme, mode } of Object.values(appThemes).flatMap(theme => [{ theme, mode: 'обычный' }, { theme: getAppTheme(theme.id, true), mode: 'насыщенный' }])) {
   const appColors = theme.colors
+  test(`${theme.id} (${mode}): синтаксис читается на фоне исходников и блоков Markdown`, () => {
+    for (const token of ['syntax-keyword', 'syntax-string', 'syntax-number', 'syntax-function', 'syntax-property', 'syntax-tag'] as const) {
+      assert.equal(typeof appColors[token], 'string', token)
+      assert.ok(contrast(appColors[token], appColors['code-bg']) >= 4.5, `${token} на ${appColors['code-bg']}`)
+    }
+  })
+
   test(`${theme.id} (${mode}): основной и вторичный текст читаются на всех рабочих поверхностях`, () => {
     for (const background of [appColors.page, appColors.frame, appColors.side, appColors['side-2'], appColors.card, appColors['card-hover'], appColors['code-bg'], appColors['tooltip-bg'], appColors['preview-bg']]) {
       for (const foreground of [appColors.text, appColors.muted, appColors.subtle]) {

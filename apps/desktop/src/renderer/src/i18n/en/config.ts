@@ -2,6 +2,7 @@ import type { AreaTranslation } from '../types'
 import type ru from '../ru/config'
 
 export default {
+  'roles.ph.permissionSettings': '‹temporary settings: {settings}›',
   'wf.tab.assistant': 'Edit with assistant',
   'wf.tab.externalConflict': 'The saved workflow changed. Your draft is preserved, but its baseline is outdated. Revert changes to load the new workflow.',
   'about.navAria': 'Sections',
@@ -53,14 +54,15 @@ export default {
   'about.agents.missing': 'Not installed · {count}',
 
   'about.perm.title': 'Agent permissions',
-  'about.perm.hint': 'How Claude Code (coordinator and workers) handles permission prompts.',
+  'about.perm.hint': 'Permission prompts for coordinators and workers across all CLI agents.',
   'about.perm.auto': 'Auto',
-  'about.perm.autoDesc': 'Claude decides, asks before risky actions',
+  'about.perm.autoDesc': 'the agent works independently and asks when needed',
   'about.perm.bypassPermissions': 'No prompts',
-  'about.perm.bypassPermissionsDesc': 'fully autonomous',
+  'about.perm.bypassPermissionsDesc': 'full access to files and commands',
   'about.perm.acceptEdits': 'File edits only',
-  'about.perm.acceptEditsDesc': 'asks about everything else in the terminal',
-  'about.perm.note': 'The {cmd} command is always allowed. Applies to new terminals.',
+  'about.perm.acceptEditsDesc': 'edits without prompts; other actions depend on the agent',
+  'about.perm.differences': 'In Codex and Cursor, Auto and File edits only use the same workspace sandbox. In Goose, File edits only enables Smart Approval: the agent assesses each action’s risk.',
+  'about.perm.note': 'Applies to new Claude Code, Codex, Gemini, OpenCode, Cursor, Amp, Copilot and Goose terminals. Shell has no permission system. Explicit CLI denials and policies may restrict access. In Claude Code, the {cmd} command is always allowed.',
 
   'about.rules.stale': 'The app is running an old main/preload without the Rules section. Restart the app.',
   'about.rules.hintClaude': 'Read by Claude Code: prohibitions, required steps, style, checks.',

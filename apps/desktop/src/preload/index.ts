@@ -112,6 +112,8 @@ const api: OrcaApi = {
     addImages: (id, images) => ipcRenderer.invoke('globalTasks:addImages', id, images),
     removeImage: (id, imageId) => ipcRenderer.invoke('globalTasks:removeImage', id, imageId),
     image: (id, imageId) => ipcRenderer.invoke('globalTasks:image', id, imageId),
+    revealAttachment: (id, imageId) => ipcRenderer.invoke('globalTasks:revealAttachment', id, imageId),
+    openAttachment: (id, imageId) => ipcRenderer.invoke('globalTasks:openAttachment', id, imageId),
     move: (id, status) => ipcRenderer.invoke('globalTasks:move', id, status),
     remove: (id, opts) => ipcRenderer.invoke('globalTasks:remove', id, opts),
     tasks: (id) => ipcRenderer.invoke('globalTasks:tasks', id),
@@ -205,7 +207,8 @@ const api: OrcaApi = {
     reject: (taskId, feedback, images) => ipcRenderer.invoke('review:reject', taskId, feedback, images)
   },
   attachments: {
-    ping: () => ipcRenderer.invoke('attachments:ping')
+    ping: () => ipcRenderer.invoke('attachments:ping'),
+    capabilities: () => ipcRenderer.invoke('attachments:capabilities')
   }
 }
 

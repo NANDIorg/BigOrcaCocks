@@ -10,6 +10,10 @@ import { readFileSync } from 'node:fs'
 const source = readFileSync(new URL('./worker.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
 describe('язык агентов в worker.ts', () => {
+  it('все три запуска передают окружение адаптера и освобождают настройки через общий launchAgent', () => {
+    assert.equal([...source.matchAll(/launchAgent\(inv,/g)].length, 3, 'воркер, координатор, ассистент')
+    assert.equal([...source.matchAll(/\.\.\.launch\.env/g)].length, 3, 'окружение не теряется в spawnPty')
+  })
   it('все spec.invoke получают agentSystemPrompt с language: mainLocale()', () => {
     const calls = [...source.matchAll(/spec\.invoke\(([^\n]*)/g)].map((m) => m[1])
     assert.equal(calls.length, 3, 'воркер, координатор, ассистент')
