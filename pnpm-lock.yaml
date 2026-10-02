@@ -95,6 +95,9 @@ importers:
 
   packages/runtime:
     dependencies:
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@orca-board/core':
         specifier: workspace:*
         version: link:../core

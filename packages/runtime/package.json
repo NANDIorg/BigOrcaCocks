@@ -14,7 +14,8 @@
     "build": "echo skip"
   },
   "dependencies": {
-    "@orca-board/core": "workspace:*"
+    "@orca-board/core": "workspace:*",
+    "@orca-board/contracts": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

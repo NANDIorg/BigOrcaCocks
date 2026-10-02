@@ -29,7 +29,7 @@ API здесь нет. Application services/runtime с явным project/client
 headless owner и product-aware релизные инструменты выполняются следующими этапами.
 Web и самостоятельный терминальный чат CLI строятся после готовности этой базы.
 
-## Общий Node runtime: хранение и резервные копии
+## Общий Node runtime: хранение, резервные копии и Git
 
 `packages/runtime` (`@orca-board/runtime`) содержит существующие atomic file writes,
 JSON persistence и версионные резервные копии. Host передаёт путь файла/каталога и
@@ -42,6 +42,17 @@ Desktop использует совместимые `main/persistence.ts` и `ma
 Это начало этапа 2: ProjectManager, application services и single-owner lifecycle
 пока остаются следующими переносами. Нельзя запускать несколько writers одного
 каталога данных; owner lock здесь ещё не реализован.
+
+Git-операции также находятся в runtime: `createGitOperations(messages)` создаёт
+экземпляр с прежними функциями worktree/merge/branch/fetch/pull/checkout/initial commit
+и check-ignore. Ошибки и подпись untracked передаёт host через callbacks;
+`main/git.ts` сохраняет прежние OrcaError и именованные exports для Desktop.
+MergeError/GitOpError общие, поэтому существующие проверки `instanceof` работают.
+
+Это перенос реализации, а не новый async service: синхронные Git-операции workflow
+и очередь fetch/pull/checkout по переданному root пока сохранены. До серверной
+готовности требуется async Git, сериализация по canonical commonDir и EffectToken
+после await. Runtime не задаёт язык клиентов и не импортирует Desktop dictionaries.
 
 ## Процессы
 
