@@ -989,7 +989,7 @@ describe('картинки к замечаниям при возврате в р
 
     alive.clear()
     const objective = resumeObjective(store, runId, deps.isAlive).objective
-    assert.match(objective, /## Замечания проверки или человека\n\nнет скриншота\n\nК замечаниям приложены изображения/)
+    assert.match(objective, /## Замечания проверки или человека\n\nнет скриншота\n\nК замечаниям приложены файлы/)
     assert.ok(objective.includes(`\`${images[0]}\``), 'путь есть в цели перезапущенного координатора')
   })
 

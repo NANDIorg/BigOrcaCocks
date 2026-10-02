@@ -96,3 +96,26 @@ describe('картинки к замечаниям (пути) в снапшот�
     assert.deepEqual(backRun.stageInput?.images, paths)
   })
 })
+
+describe('вложения глобальной задачи (`Run.images`) в снапшоте', () => {
+  it('старый RunImage без kind/name читается как есть и не переписывается; новый с kind: file переживает рестарт', () => {
+    const s = store()
+    const old = s.createRun('Цель со скриншотом')
+    const files = s.createRun('Цель с документом')
+    const snap = JSON.parse(JSON.stringify(s.snapshot())) as StoreSnapshot
+    const legacyImage = { id: 'img_1', mime: 'image/png', ext: 'png', bytes: 10, addedAt: 1 }
+    const file = { id: 'img_2', kind: 'file' as const, name: 'Отчёт Q3.xlsx', mime: 'application/vnd.ms-excel', ext: 'xlsx', bytes: 20, addedAt: 2 }
+    snap.runs.find((r) => r.id === old.id)!.images = [legacyImage]
+    snap.runs.find((r) => r.id === files.id)!.images = [file, { ...legacyImage, id: 'img_3', kind: 'image' }]
+
+    const p = memory(snap)
+    const loaded = store(p)
+    assert.equal(p.saves, 0, 'миграции нет: формат не менялся')
+    assert.deepEqual(loaded.getGlobalTask(old.id).images, [legacyImage])
+    assert.equal(loaded.getRun(old.id)!.images?.[0].kind, undefined)
+
+    const again = store(memory(loaded.snapshot()))
+    assert.deepEqual(again.getRun(files.id)!.images, [file, { ...legacyImage, id: 'img_3', kind: 'image' }])
+    assert.deepEqual(again.getGlobalTask(files.id).images?.[0], file)
+  })
+})

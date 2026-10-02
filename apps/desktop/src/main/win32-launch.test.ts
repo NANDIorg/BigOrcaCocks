@@ -3,11 +3,12 @@
 // проверялся (docs/architecture.md → «Кроссплатформенность»), тест держит саму сборку командной строки.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { getAgent, parseExtraArgs } from '@orca-board/core'
-import { CMD_LINE_LIMIT, cmdQuoteArg, win32Launch } from './win32-launch'
+import { ARGV_LINE_MARGIN, CMD_LINE_LIMIT, CREATE_PROCESS_LIMIT, argvCommandLine, cmdQuoteArg, win32Launch } from './win32-launch'
 
 /** Типичные флаги пользователя: путь с пробелом и обратными слэшами, значение с метасимволами cmd, `=`-форма. */
 const FLAGS = '--add-dir "C:\\Users\\me\\my repo" --mcp-config=\'C:\\cfg\\mcp.json\' --name "a&b|c" --verbose'
@@ -150,5 +151,79 @@ describe('win32Launch: флаги пользователя', () => {
       // Через .cmd-шим (`%*`): cmd разбирает аргументы второй раз — два слоя.
       assert.deepEqual(argvParse(unescapeCmd(unescapeCmd(cmdQuoteArg(v, true)))), [v], JSON.stringify(v))
     }
+  })
+})
+
+/** Квотинг node-pty для Windows (`argsToCommandLine`): модуль чистый JS, грузится и на macOS/Linux. */
+const { argsToCommandLine } = createRequire(import.meta.url)('node-pty/lib/windowsPtyAgent') as {
+  argsToCommandLine: (file: string, args: string[]) => string
+}
+
+describe('win32Launch: длинный system prompt claude — в файл', () => {
+  const ARGV_LIMIT = CREATE_PROCESS_LIMIT - ARGV_LINE_MARGIN
+  /** Свежий путь в tmp, как `launchOnWin32` в worker.ts; счётчик — сколько раз путь просили. */
+  function promptFiles(): { calls: () => number; env: () => string } {
+    let n = 0
+    return { calls: () => n, env: () => path.join(tmp, `sys-${++n}.md`) }
+  }
+  function shimLaunch(): { cli: string; shim: string } {
+    return { cli: bin('cli.js'), shim: bin('claude.cmd', '@ECHO off\r\n"%_prog%"  "%dp0%\\cli.js" %*\r\n') }
+  }
+  const node = { findBin: (b: string) => (b === 'node' ? 'C:\\node\\node.exe' : undefined) }
+
+  it('argvCommandLine совпадает с node-pty argsToCommandLine', () => {
+    const args = ['--x', 'with space', 'say "hi"', 'C:\\dir with space\\', 'C:\\a\\b\\', '"quoted arg"', '"lopsided', '', 'tab\there', 'много\nстрок "и" кавычек\\']
+    assert.equal(argvCommandLine('C:\\Program Files\\node.exe', args), argsToCommandLine('C:\\Program Files\\node.exe', args))
+  })
+
+  it('влезает — запуск прежний: --append-system-prompt с текстом, файла нет', () => {
+    const { cli, shim } = shimLaunch()
+    const files = promptFiles()
+    const args = getAgent('claude')!.invoke('SYSTEM', 'Сделай задачу', { permissionMode: 'auto', shell: 'cmd.exe' }).args
+    const launch = win32Launch(shim, args, { ...node, systemPromptFile: files.env })
+    assert.deepEqual(launch, { command: 'C:\\node\\node.exe', args: [cli, ...args], env: {} })
+    assert.equal(files.calls(), 0)
+  })
+
+  it('не влезает с запасом — system prompt в файл, --append-system-prompt-file, промпт и флаги на месте', () => {
+    const { cli, shim } = shimLaunch()
+    const files = promptFiles()
+    const system = 'правило "в кавычках"\n'.repeat(1600)
+    const args = getAgent('claude')!.invoke(system, 'Сделай задачу', { permissionMode: 'auto', shell: 'cmd.exe', extraArgs: userArgs() }).args
+    assert.ok(argvCommandLine('C:\\node\\node.exe', [cli, ...args]).length > ARGV_LIMIT)
+    const launch = win32Launch(shim, args, { ...node, systemPromptFile: files.env })
+    const file = path.join(tmp, 'sys-1.md')
+    assert.deepEqual(launch.tempFiles, [file])
+    assert.equal(readFileSync(file, 'utf8'), system)
+    const argv = launch.args as string[]
+    assert.deepEqual(argv.slice(-3), ['--append-system-prompt-file', file, 'Сделай задачу'])
+    assert.ok(!argv.includes('--append-system-prompt') && !argv.includes(system))
+    assert.deepEqual(argv.slice(0, ARGS.length + 1), [cli, ...ARGS])
+    assert.ok(argvCommandLine(launch.command, argv).length <= ARGV_LIMIT)
+  })
+
+  it('нераспознанный шим (cmd.exe): system prompt тоже уходит в файл, строка — в лимит cmd', () => {
+    const shim = bin('claude.cmd', '@echo off\r\n')
+    const files = promptFiles()
+    const args = getAgent('claude')!.invoke('x'.repeat(CMD_LINE_LIMIT), 'Сделай задачу', { permissionMode: 'auto', shell: 'cmd.exe' }).args
+    const launch = win32Launch(shim, args, { systemPromptFile: files.env })
+    assert.equal(launch.command, 'cmd.exe')
+    assert.ok((launch.args as string).includes('--append-system-prompt-file') && (launch.args as string).length <= CMD_LINE_LIMIT + 20)
+    assert.deepEqual(launch.tempFiles, [path.join(tmp, 'sys-1.md')])
+  })
+
+  it('не влезает и с файлом, без systemPromptFile или агент не claude — понятная ошибка, файл не пишется', () => {
+    const { shim } = shimLaunch()
+    const files = promptFiles()
+    const huge = 'x'.repeat(CREATE_PROCESS_LIMIT)
+    const claude = (system: string, prompt: string) => getAgent('claude')!.invoke(system, prompt, { permissionMode: 'auto', shell: 'cmd.exe' }).args
+    const tooLong = /не укладывается в лимит 32767 с запасом 2048\. Сократите цель или описание задачи, правила проекта и роли, число приложенных файлов/
+    assert.throws(() => win32Launch(shim, claude('S', huge), { ...node, systemPromptFile: files.env }), tooLong)
+    assert.ok(!existsSync(path.join(tmp, 'sys-1.md')), 'файл system prompt не создан, если и с ним не влезает')
+    assert.throws(() => win32Launch(shim, claude(huge, 'P'), node), tooLong)
+    const exe = bin('codex.exe')
+    const codex = getAgent('codex')!.invoke(huge, 'P', { permissionMode: 'auto', shell: 'cmd.exe' }).args
+    assert.throws(() => win32Launch(exe, codex, { systemPromptFile: files.env }), tooLong)
+    assert.deepEqual(readdirSync(tmp).filter((f) => f.startsWith('sys-')), [])
   })
 })

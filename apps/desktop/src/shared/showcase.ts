@@ -62,6 +62,23 @@ export const SHOWCASE_ASSET_TYPES: Readonly<Record<string, string>> = {
   '.wav': 'audio/wav'
 }
 
+/**
+ * HTML и SVG из вложения открылись бы приложением системы (обычно браузером) со скриптами: SVG может содержать
+ * `<script>`, как HTML, — в `<img>` превью он безопасен, а «Открыть» его уже не изолирует. Такие только показываем в папке.
+ */
+const ATTACHMENT_NOT_OPENABLE = new Set(['.html', '.htm', '.svg'])
+
+/**
+ * Можно ли открыть вложение глобальной задачи приложением системы («Открыть»): расширение (без точки, любой регистр)
+ * из белого списка показа без HTML и SVG. Запускать произвольный файл (`.sh`, `.app`) нельзя — остальным только
+ * «Показать в папке». Один список для main (`globalTasks:openAttachment`) и renderer (кнопка в карточке файла).
+ */
+export function attachmentOpenable(ext: string): boolean {
+  if (!/^[a-z0-9]{1,10}$/i.test(ext)) return false
+  const key = `.${ext.toLowerCase()}`
+  return Object.hasOwn(SHOWCASE_FILE_TYPES, key) && !ATTACHMENT_NOT_OPENABLE.has(key)
+}
+
 /** Больше не читаем в renderer (превью): макеты и скриншоты, не видео. Открыть кнопкой можно и больше. */
 export const SHOWCASE_READ_MAX_BYTES = 10 * 1024 * 1024
 

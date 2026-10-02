@@ -1,6 +1,6 @@
 import type React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { Dispatch, HumanRequest, ImageAttachmentInput, Question, RequestResolution, Task } from '@orca-board/core'
+import type { Dispatch, HumanRequest, AttachmentInput, Question, RequestResolution, Task } from '@orca-board/core'
 import { RequestCard } from './RequestCard'
 import { requestShowcases } from './showcase'
 import { relativeTime } from './GlobalBoard'
@@ -9,8 +9,8 @@ import { ipcErrorCode, ipcErrorMessage } from './useAutoSave'
 import { useNow } from './useNow'
 import { isTypingTarget } from './hotkeys'
 import { useT } from './i18n'
-import { ImageAttachField } from './ImageAttachField'
-import { useImageAttachments } from './imageDrafts'
+import { AttachmentField } from './AttachmentField'
+import { useAttachmentDrafts } from './attachmentDrafts'
 import { onFocusFeed, onRevealInFeed, revealOnBoard, scrollBehavior } from './feedLink'
 import {
   ATTENTION_COLOR, ATTENTION_GLYPH, attentionCountTitle, attentionLabel, attentionSummary, defaultCollapsed, feedItemOfTask, questionAnswerText, questionAsRequest,
@@ -28,7 +28,7 @@ interface Props {
   runId: string
   dispatches: Dispatch[]
   /** Запросы к человеку — тот же колбэк, что у Инбокса и модалки задачи. */
-  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void>
+  onResolveRequest(request: HumanRequest, resolution: RequestResolution, images?: AttachmentInput[]): Promise<void>
   /** Вопрос воркера без запроса — ответ уходит вопросу (`questions.answer`). */
   onAnswerQuestion(questionId: string, answer: string): Promise<void>
   /**
@@ -36,7 +36,7 @@ interface Props {
    * у остановленного этапа — «Повторить мерж» (повтор этапа) / «Вернуть в работу».
    */
   onAcceptTask(taskId: string): Promise<void>
-  onRejectTask(taskId: string, feedback: string, images?: ImageAttachmentInput[]): Promise<void>
+  onRejectTask(taskId: string, feedback: string, images?: AttachmentInput[]): Promise<void>
   onStartTask(task: Task): void | Promise<void>
   onOpenTask(taskId: string): void
   onOpenTerminal(taskId: string): void
@@ -231,7 +231,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
   const [hint, setHint] = useState<string | null>(null)
   const [clarifying, setClarifying] = useState(false)
   const [text, setText] = useState('')
-  const attachments = useImageAttachments()
+  const attachments = useAttachmentDrafts()
   const t = useT()
   const taskTitle = task?.title ?? item.taskId
   const label = attentionLabel(item)
@@ -257,7 +257,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
   }
 
   /** Ответ на вопрос без запроса → `questions.answer`, иначе запрос решается как обычно. */
-  const resolve = (res: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> => {
+  const resolve = (res: RequestResolution, images?: AttachmentInput[]): Promise<void> => {
     if (request) return onResolveRequest(request, res, images)
     const q = item.question as Question
     return onAnswerQuestion(q.id, questionAnswerText(q, res))
@@ -328,7 +328,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
 
       {clarifying ? (
         <div className="act-clarify">
-          <ImageAttachField attachments={attachments} disabled={busy} compact>
+          <AttachmentField attachments={attachments} disabled={busy} compact>
             <textarea
               rows={2}
               autoFocus
@@ -348,7 +348,7 @@ function FeedCard(props: CardProps): React.JSX.Element {
                 }
               }}
             />
-          </ImageAttachField>
+          </AttachmentField>
           <div className="act-row">
             <button type="button" className="btn-sm primary" disabled={busy || attachments.reading || !text.trim()} onClick={sendClarify}>{busy ? '…' : t('shell.feed.send')}</button>
             <button type="button" className="btn-text" disabled={busy} onClick={cancelClarify}>{t('shell.cancel')}</button>

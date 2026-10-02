@@ -1,7 +1,7 @@
 import { motionScrollBehavior } from './appearance'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
-import { globalTaskTitle, type BoardColumn, type Dispatch, type HumanRequest, type ImageAttachmentInput, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
+import { globalTaskTitle, type BoardColumn, type Dispatch, type HumanRequest, type AttachmentInput, type RequestResolution, type Run, type Task, type Workflow } from '@orca-board/core'
 import { RequestCard, requestKindTitle, type RequestCardHandle } from './RequestCard'
 import { Markdown } from './Markdown'
 import { requestShowcases } from './showcase'
@@ -125,7 +125,7 @@ export function InboxPanel({ open, requests, tasks, runs, dispatches, columns, w
     select(visible[Math.min(visible.length - 1, Math.max(0, i + delta))].id)
   }
 
-  async function resolve(r: HumanRequest, resolution: RequestResolution, images?: ImageAttachmentInput[]): Promise<void> {
+  async function resolve(r: HumanRequest, resolution: RequestResolution, images?: AttachmentInput[]): Promise<void> {
     // Следующий — тот, что был ниже (или выше, если решали последний).
     const i = visible.findIndex((x) => x.id === r.id)
     const next = visible[i + 1] ?? visible[i - 1]
