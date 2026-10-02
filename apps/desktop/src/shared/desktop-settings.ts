@@ -1,23 +1,11 @@
-import type { AppLanguage, PermissionMode, NotificationSettings, NotificationSettingsPatch, AppearanceSettings } from '@orca-board/contracts'
-import type { AssistantSettings } from '@orca-board/core'
+import type { PermissionMode, RuntimeSettings, RuntimeSettingsPatch } from '@orca-board/contracts'
 
 /** Глобальные настройки приложения (не проекта). */
-export interface AppSettings {
+export interface AppSettings extends RuntimeSettings {
   /** Закрытие окна не завершает приложение: PTY живут, иконка в трее. По умолчанию true. */
   keepInBackground: boolean
-  /** Язык интерфейса; не выбран — русский (язык системы не угадываем, см. `settingsLocale`). */
-  language?: AppLanguage
-  /** Тема и движение; поле отсутствует у старого main. */
-  appearance?: AppearanceSettings
-  /** Системные уведомления: фильтры по ролям, видам событий, тихие часы. */
-  notifications: NotificationSettings
   /** Автообновление приложения (docs/architecture.md → «Обновление»). */
   updates: UpdateSettings
-  /**
-   * Ассистент доски: агент, модель, effort, инструкции. Не роль типа задачи — ассистент один на приложение.
-   * Применяется к следующему запуску («Новый диалог»), живой ассистент не перезапускается.
-   */
-  assistant: AssistantSettings
 }
 
 /** Настройки автообновления. Дефолты — `DEFAULT_UPDATE_SETTINGS`. */
@@ -36,17 +24,9 @@ export interface UpdateSettings {
 export const DEFAULT_UPDATE_SETTINGS: UpdateSettings = { autoCheck: true, autoDownload: true, installWhenIdle: false }
 
 /** Патч настроек приложения: notifications, updates и assistant мержатся по полям. */
-export interface AppSettingsPatch {
+export interface AppSettingsPatch extends RuntimeSettingsPatch {
   keepInBackground?: boolean
-  language?: AppLanguage
-  appearance?: Partial<AppearanceSettings>
-  notifications?: NotificationSettingsPatch
   updates?: Partial<UpdateSettings>
-  /**
-   * Пустая строка в model/effort/systemPrompt/extraArgs очищает поле; смена агента без model/effort/extraArgs
-   * сбрасывает их. `extraArgs` — строка как введена, невалидную (`parseExtraArgs`) main отвергает.
-   */
-  assistant?: Partial<AssistantSettings>
 }
 
 /** Способ обновления на этой платформе. */

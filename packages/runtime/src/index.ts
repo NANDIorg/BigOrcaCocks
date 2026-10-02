@@ -1,3 +1,6 @@
 export * from './persistence.ts'
 export * from './backup.ts'
 export * from './git.ts'
+export * from './project-messages.ts'
+export * from './extra-args.ts'
+export * from './settings.ts'

@@ -1,10 +1,9 @@
-import { DEFAULT_APPEARANCE, mergeAppearance, normalizeAppearance } from '../shared/appearance'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  TaskStore, assertStoreFormat, isAgentKind, DEFAULT_ASSISTANT_SETTINGS, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
+  TaskStore, assertStoreFormat, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
   WORKFLOW_VERSION, defaultWorkflow, migrateWorkflow, validateWorkflow, validateNodeTemplate, prepareWorkflow,
   GENERAL_TASK_TYPE_ID, presetTaskType, presetTaskTypes,
   resolveRunType, resolveTaskType, runTypeInput, snapshotTaskType,
@@ -18,15 +17,16 @@ import { jsonPersistence, quarantineCorrupt, readJsonFile, writeFileAtomic, writ
 import { OrcaError, mt, type MText } from './i18n'
 import { guessTaskType } from './task-type-detect'
 import { PROJECTS_FILE_VERSION, libraryDefaultTypeId, migrateAssistant, migrateProjectsFile, migrateTypeWorkflows, type LegacyProjectsFile } from './task-types-migration'
-import { DEFAULT_UPDATE_SETTINGS, ONBOARDING_VERSION } from '../shared/ipc'
+import { ONBOARDING_VERSION } from '../shared/ipc'
 import type { OnboardingCompleteInput, OnboardingState, ProjectGroup } from '../shared/ipc'
 import type {
-  AppLanguage, AppSettings, AppSettingsPatch, UpdateSettings, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
+  AppSettings, AppSettingsPatch, ProjectTaskTypesInput, TaskTypeDetection, TaskTypeInput,
   TaskTypesState, NodeTemplateInput, TaskTypePatch
 } from '../shared/ipc'
-import { DEFAULT_NOTIFICATION_SETTINGS, mergeNotificationSettings, normalizeNotificationSettings } from '../shared/notifications'
 import { runImagesRoot, removeRunImagesDir } from './run-images'
-import { loadedAssistantSettings, mergedAssistantSettings } from './assistant'
+import { desktopProjectSettings } from './project-settings'
+import type { StoredRuntimeSettings } from '@orca-board/runtime'
+export { DEFAULT_APP_SETTINGS } from './project-settings'
 import { extraArgsProblem, withoutExtraArgs } from './launch-extra-args'
 import { removeShowcaseDir, showcaseSnapshotsRoot } from './showcase-snapshot'
 
@@ -96,7 +96,7 @@ export interface ProjectsFile {
    */
   nodeTemplates?: WfNodeTemplate[]
   /** Глобальные настройки приложения; незаданные поля — DEFAULT_APP_SETTINGS. */
-  settings?: Partial<AppSettings>
+  settings?: StoredRuntimeSettings
   /**
    * Версия приложения последнего запуска. По ней `backupOnVersionChange` (`backup.ts`) решает, делать ли бэкап
    * состояния перед миграциями. Лежит здесь, а не в `settings`: это не настройка человека и в renderer не уходит.
@@ -154,28 +154,6 @@ interface RawProjectsFile extends Omit<LegacyProjectsFile, 'templates'> {
   defaults?: Record<string, unknown>
   /** Шаблоны проектов: в файле — с колонками и агентами, после `normalizeLegacy` — уже типы. */
   templates?: unknown
-}
-
-function isAppLanguage(v: unknown): v is AppLanguage {
-  return v === 'ru' || v === 'en'
-}
-
-export const DEFAULT_APP_SETTINGS: AppSettings = {
-  keepInBackground: true,
-  appearance: { ...DEFAULT_APPEARANCE },
-  notifications: DEFAULT_NOTIFICATION_SETTINGS,
-  updates: DEFAULT_UPDATE_SETTINGS,
-  assistant: DEFAULT_ASSISTANT_SETTINGS
-}
-
-const UPDATE_SETTING_KEYS = Object.keys(DEFAULT_UPDATE_SETTINGS) as (keyof UpdateSettings)[]
-
-/** Настройки обновления из файла: незаданные и не-boolean поля — дефолты. */
-function normalizeUpdateSettings(raw: unknown): UpdateSettings {
-  const r = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
-  const out = { ...DEFAULT_UPDATE_SETTINGS }
-  for (const k of UPDATE_SETTING_KEYS) if (typeof r[k] === 'boolean') out[k] = r[k] as boolean
-  return out
 }
 
 /** Имя бэкапа projects.json старого формата: откат на старую версию приложения прочтёт проекты без ролей. */
@@ -896,46 +874,11 @@ export class ProjectManager {
 
   /** Настройки приложения; незаданные и некорректные поля — дефолты. */
   settings(): AppSettings {
-    const s = this.data.settings ?? {}
-    return {
-      keepInBackground: typeof s.keepInBackground === 'boolean' ? s.keepInBackground : DEFAULT_APP_SETTINGS.keepInBackground,
-      ...(isAppLanguage(s.language) ? { language: s.language } : {}),
-      appearance: normalizeAppearance(s.appearance),
-      notifications: normalizeNotificationSettings(s.notifications),
-      updates: normalizeUpdateSettings(s.updates),
-      assistant: loadedAssistantSettings(s.assistant)
-    }
+    return desktopProjectSettings.load(this.data.settings ?? {})
   }
 
   setSettings(patch: AppSettingsPatch): AppSettings {
-    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw new Error('настройки приложения: ожидается объект')
-    const next: Partial<AppSettings> = { ...(this.data.settings ?? {}) }
-    if (patch.keepInBackground !== undefined) {
-      if (typeof patch.keepInBackground !== 'boolean') throw new Error('keepInBackground должен быть boolean')
-      next.keepInBackground = patch.keepInBackground
-    }
-    if (patch.language !== undefined) {
-      if (!isAppLanguage(patch.language)) throw new Error(`language: неизвестный язык «${String(patch.language)}», ожидается ru или en`)
-      next.language = patch.language
-    }
-    if (patch.notifications !== undefined) {
-      next.notifications = mergeNotificationSettings(this.settings().notifications, patch.notifications)
-    }
-    if (patch.appearance !== undefined) {
-      next.appearance = mergeAppearance(normalizeAppearance(next.appearance), patch.appearance)
-    }
-    if (patch.updates !== undefined) {
-      if (typeof patch.updates !== 'object' || patch.updates === null || Array.isArray(patch.updates)) throw new Error('updates: ожидается объект')
-      const merged = this.settings().updates
-      for (const k of UPDATE_SETTING_KEYS) {
-        const v = patch.updates[k]
-        if (v === undefined) continue
-        if (typeof v !== 'boolean') throw new Error(`updates.${k} должен быть boolean`)
-        merged[k] = v
-      }
-      next.updates = merged
-    }
-    if (patch.assistant !== undefined) next.assistant = mergedAssistantSettings(this.settings().assistant, patch.assistant)
+    const next = desktopProjectSettings.merge(this.data.settings ?? {}, patch)
     const previous = this.data.settings
     this.data.settings = next
     // Не оставляем несохранённый выбор в памяти: следующий getSettings обязан вернуть подтверждённое состояние.

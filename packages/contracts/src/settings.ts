@@ -1,3 +1,23 @@
+import type { AssistantSettings } from '@orca-board/core'
+import type { AppearanceSettings } from './appearance.ts'
+import type { NotificationSettings, NotificationSettingsPatch } from './notifications.ts'
+
+/** Общие настройки владельца данных; поведение окна и обновления добавляет хост. */
+export interface RuntimeSettings {
+  language?: AppLanguage
+  appearance?: AppearanceSettings
+  notifications: NotificationSettings
+  assistant: AssistantSettings
+}
+
+/** Вложенные разделы объединяются по полям; пустые строки ассистента очищают поле. */
+export interface RuntimeSettingsPatch {
+  language?: AppLanguage
+  appearance?: Partial<AppearanceSettings>
+  notifications?: NotificationSettingsPatch
+  assistant?: Partial<AssistantSettings>
+}
+
 /** Язык интерфейса (renderer/src/i18n). */
 export type AppLanguage = 'ru' | 'en'
 
