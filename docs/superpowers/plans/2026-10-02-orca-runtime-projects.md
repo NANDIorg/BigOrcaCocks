@@ -96,7 +96,20 @@
 - [x] Финальная проверка задачи через task-done: `pnpm verify`.
   Expected: PASS — git-flow, strict typecheck, все тесты и production build.
 - [x] Commit: `test: закрепить совместимость общего менеджера проектов`.
-- [ ] Выполнить одно итоговое fresh-context ревью диапазона c103ca9..HEAD, исправить Critical/Important через RED→GREEN, minor записать.
-- [ ] Run: `pnpm --filter @orca-board/desktop run pack`, проверить подпись и реальный app.asar, открыть актуальный `apps/desktop/release/local/mac/orca-board.app`.
+- [x] Выполнить одно итоговое fresh-context ревью диапазона c103ca9..HEAD, исправить Critical/Important через RED→GREEN, minor записать.
+- [x] Run: `pnpm --filter @orca-board/desktop run pack`, проверить подпись и реальный app.asar, открыть актуальный `apps/desktop/release/local/mac/orca-board.app`.
   Expected: локальный рабочий билд 1.1.3 с новым runtime, без bare workspace imports.
 - [ ] Push своей ветки, обновить PR #59 и дождаться CI на точном HEAD; без merge или релиза.
+
+## Результат локального выполнения
+
+Реализация: `323053c`, `328d8c5`, `cf16dc1`. Полный `pnpm verify` прошёл:
+3225 тестов без failures/skips, strict typecheck и production build. Отдельное итоговое
+ревью подтвердило сохранение алгоритмов, ошибок и миграций; новых замечаний нет.
+Mac x64 pack 1.1.3 собран и открыт; проверены codesign и реальный app.asar.
+Точный текущий результат CI — в [PR #59](https://github.com/NANDIorg/BigOrcaCocks/pull/59).
+
+Границы этого среза: owner/multi-client и Web/CLI ещё не готовы. Прежняя
+нетранзакционность add/групп/шаблонов нод/удаления проекта сохранена; при I/O-ошибке
+этих операций возможна рассинхронизация памяти и файлов. Исправление следует учесть
+в подготовке серверных services. Проверку поведения интерфейса выполняет пользователь.
