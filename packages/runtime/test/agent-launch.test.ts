@@ -141,4 +141,23 @@ describe('поиск бинарников runtime', () => {
     assert.equal(lookup.isCmdScript(join(root, 'tool')), false)
     assert.ok(lookup.extraPathDirs().includes(join(root, '.local', 'bin')))
   })
+
+  it('Windows учитывает регистр ключей переданного env при поиске и добавлении каталогов', () => {
+    const appData = join(root, 'AppData')
+    const localData = join(root, 'Local')
+    const npm = join(appData, 'npm')
+    const programs = join(localData, 'Programs')
+    const localBin = join(root, '.local', 'bin')
+    mkdirSync(npm, { recursive: true }); mkdirSync(programs, { recursive: true })
+    for (const [dir, name] of [[root, 'tool'], [npm, 'addon'], [programs, 'helper']]) {
+      writeFileSync(join(dir, `${name}.cmd`), '', { mode: 0o700 })
+    }
+    const lookup = createBinaryLookup({ home: root, platform: 'win32', env: {
+      Path: `${root};${localBin}`, Pathext: '.CMD', Appdata: appData, Localappdata: localData
+    } })
+    assert.equal(lookup.findBin('tool'), join(root, 'tool.cmd'))
+    assert.equal(lookup.findBin('addon'), join(npm, 'addon.cmd'))
+    assert.equal(lookup.findBin('helper'), join(programs, 'helper.cmd'))
+    assert.equal(lookup.extraPathDirs().includes(localBin), false)
+  })
 })

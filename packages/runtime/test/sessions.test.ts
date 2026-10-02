@@ -12,11 +12,12 @@ class TestPty {
   writes: string[] = []
   sizes: [number, number][] = []
   killed = false
+  killExitCode?: number
   onData(listener: (data: string) => void): void { this.data = listener }
   onExit(listener: (event: { exitCode: number }) => void): void { this.exit = listener }
   write(data: string): void { this.writes.push(data) }
   resize(cols: number, rows: number): void { this.sizes.push([cols, rows]) }
-  kill(): void { this.killed = true }
+  kill(): void { this.killed = true; if (this.killExitCode !== undefined) this.finish(this.killExitCode) }
   output(data: string): void { this.data(data) }
   finish(code: number): void { this.exit({ exitCode: code }) }
 }
@@ -101,6 +102,35 @@ it('при естественном выходе exit предшествует �
   assert.deepEqual(events, [{ type: 'exit', ptyId: id, exitCode: 8 }, { type: 'changed', terminals: [] }])
   assert.deepEqual(exited, [id, 8])
   assert.equal(registry.isAlive(id), false)
+})
+
+it('команда из observer доставляет вложенные изменения после исходного события всем клиентам', () => {
+  const { registry, spawn } = setup()
+  registry.subscribe(event => {
+    if (event.type === 'changed' && event.terminals.length) registry.killPty(event.terminals[0].ptyId)
+  })
+  const snapshots: string[][] = []
+  registry.subscribe(event => { if (event.type === 'changed') snapshots.push(event.terminals.map(info => info.ptyId)) })
+  const id = spawn()
+  assert.deepEqual(snapshots, [[id], []])
+  assert.deepEqual(registry.listTerminals(), [])
+})
+
+it('немедленный kill из первого changed не теряет синхронный exit и callback запуска', () => {
+  const proc = new TestPty()
+  proc.killExitCode = 9
+  const registry = createSessionRegistry({ spawn: () => proc })
+  registry.subscribe(event => {
+    if (event.type === 'changed' && event.terminals.length) registry.killPty(event.terminals[0].ptyId)
+  })
+  const events: SessionEvent[] = []
+  registry.subscribe(event => events.push(event))
+  let exited: [string, number] | undefined
+  const id = registry.spawnPty({ command: 'agent', cols: 80, rows: 24, meta: { role: 'shell', label: 'shell' } },
+    (ptyId, code) => { exited = [ptyId, code] })
+  assert.deepEqual(exited, [id, 9])
+  assert.deepEqual(events.map(event => event.type), ['changed', 'changed', 'exit'])
+  assert.deepEqual(registry.listTerminals(), [])
 })
 
 it('kill немедленно удаляет запись; поздний exit не дублирует changed', () => {

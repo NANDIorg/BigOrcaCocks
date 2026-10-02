@@ -90,6 +90,8 @@ function mergeEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>): Recor
 export function createSessionRegistry(host: SessionHost) {
   const sessions = new Map<string, Session>()
   const observers = new Set<(event: SessionEvent) => void>()
+  const pendingEvents: SessionEvent[] = []
+  let emitting = false
 
   const subscribe = (observer: (event: SessionEvent) => void): (() => void) => {
     observers.add(observer)
@@ -97,16 +99,27 @@ export function createSessionRegistry(host: SessionHost) {
   }
 
   const emit = (event: SessionEvent): void => {
-    for (const observer of [...observers]) {
-      try {
-        // Подписчики не разделяют mutable payload друг с другом или реестром.
-        observer(event.type === 'changed'
-          ? { ...event, terminals: event.terminals.map(info => ({ ...info })) }
-          : { ...event })
-      } catch (error) {
-        // Сломанный транспорт и его logger не должны менять lifecycle агента.
-        try { host.onObserverError?.(error) } catch { /* Ошибка reporter изолирована так же. */ }
+    pendingEvents.push(event)
+    if (emitting) return
+    emitting = true
+    try {
+      // Команда из callback создаёт следующее событие, не обгоняя текущее у других клиентов.
+      while (pendingEvents.length) {
+        const next = pendingEvents.shift()!
+        for (const observer of [...observers]) {
+          try {
+            // Подписчики не разделяют mutable payload друг с другом или реестром.
+            observer(next.type === 'changed'
+              ? { ...next, terminals: next.terminals.map(info => ({ ...info })) }
+              : { ...next })
+          } catch (error) {
+            // Сломанный транспорт и его logger не должны менять lifecycle агента.
+            try { host.onObserverError?.(error) } catch { /* Ошибка reporter изолирована так же. */ }
+          }
+        }
       }
+    } finally {
+      emitting = false
     }
   }
 
@@ -142,7 +155,6 @@ export function createSessionRegistry(host: SessionHost) {
       size
     }
     sessions.set(id, session)
-    emitChanged()
     const attach = (proc: PtyProcess, last: boolean): void => {
       proc.onData((data) => {
         session.tail = (session.tail + data).slice(-TAIL_LIMIT)
@@ -173,6 +185,7 @@ export function createSessionRegistry(host: SessionHost) {
       })
     }
     attach(session.proc, !opts.before)
+    emitChanged()
     return id
   }
 

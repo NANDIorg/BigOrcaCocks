@@ -10,19 +10,28 @@ export interface BinaryLookupOptions {
 
 /** Поиск в окружении хоста; defaults читаются при вызове, чтобы refresh видел новый PATH. */
 export function createBinaryLookup(options: BinaryLookupOptions = {}) {
+  /** Переданный env — обычный объект; Windows-регистр нельзя поручить process.env. */
+  function envValue(name: string): string | undefined {
+    const env = options.env ?? process.env
+    if ((options.platform ?? process.platform) !== 'win32') return env[name]
+    const key = Object.keys(env).find(key => key.toUpperCase() === name)
+    return key === undefined ? undefined : env[key]
+  }
+
   /**
    * Папки, где обычно лежат CLI-агенты, но которых может не быть в PATH приложения:
    * Electron, запущенный из Finder, получает урезанный PATH без настроек шелла.
    */
   function extraPathDirs(): string[] {
     const home = options.home ?? homedir()
-    const env = options.env ?? process.env
+    const appData = envValue('APPDATA')
+    const localAppData = envValue('LOCALAPPDATA')
     const dirs =
       (options.platform ?? process.platform) === 'win32'
         ? [
             // npm i -g кладёт shim-ы claude.cmd и т.п. в %APPDATA%\npm.
-            ...(env.APPDATA ? [join(env.APPDATA, 'npm')] : []),
-            ...(env.LOCALAPPDATA ? [join(env.LOCALAPPDATA, 'Programs')] : []),
+            ...(appData ? [join(appData, 'npm')] : []),
+            ...(localAppData ? [join(localAppData, 'Programs')] : []),
             join(home, '.local', 'bin'),
             join(home, '.cargo', 'bin'),
             join(home, '.bun', 'bin')
@@ -35,7 +44,7 @@ export function createBinaryLookup(options: BinaryLookupOptions = {}) {
             join(home, '.cargo', 'bin'),
             join(home, '.bun', 'bin')
           ]
-    const current = new Set((env.PATH ?? '').split((options.platform ?? process.platform) === 'win32' ? ';' : delimiter).filter(Boolean))
+    const current = new Set((envValue('PATH') ?? '').split((options.platform ?? process.platform) === 'win32' ? ';' : delimiter).filter(Boolean))
     return dirs.filter((d) => !current.has(d))
   }
 
@@ -55,7 +64,7 @@ export function createBinaryLookup(options: BinaryLookupOptions = {}) {
    */
   function binSuffixes(): string[] {
     if ((options.platform ?? process.platform) !== 'win32') return ['']
-    const exts = ((options.env ?? process.env).PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    const exts = (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
     return [...exts.map((e) => e.toLowerCase()), '']
   }
 
@@ -66,7 +75,7 @@ export function createBinaryLookup(options: BinaryLookupOptions = {}) {
 
   /** Полный путь к бинарнику: PATH процесса плюс стандартные папки. */
   function findBin(bin: string): string | undefined {
-    const dirs = [...((options.env ?? process.env).PATH ?? '').split((options.platform ?? process.platform) === 'win32' ? ';' : delimiter).filter(Boolean), ...extraPathDirs()]
+    const dirs = [...(envValue('PATH') ?? '').split((options.platform ?? process.platform) === 'win32' ? ';' : delimiter).filter(Boolean), ...extraPathDirs()]
     const suffixes = binSuffixes()
     for (const dir of dirs) {
       for (const suffix of suffixes) {

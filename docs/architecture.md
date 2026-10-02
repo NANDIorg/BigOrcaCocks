@@ -90,7 +90,8 @@ Windows. Существующие JSONC, MCP, permissions, quoting и лимит
 Cleanup принадлежит экземпляру launcher: exit, ошибка spawn и dispose удаляют
 его файлы. Desktop вызывает dispose при выходе main; импорт runtime не добавляет
 обработчик process.exit. Общий `createBinaryLookup` принимает home/platform/env;
-defaults читают текущее окружение. Обнаружение версий/моделей и их кэш пока в Desktop.
+defaults читают текущее окружение. На Windows ключи переданного env читаются
+без учёта регистра, включая Path/PATHEXT/APPDATA. Обнаружение версий/моделей и их кэш пока в Desktop.
 
 `createSessionRegistry({ spawn, onObserverError? })` владеет PTY lifecycle,
 input/resize, метаданными и ограниченным хвостом вывода (256×1024 единиц UTF-16,
@@ -98,6 +99,8 @@ input/resize, метаданными и ограниченным хвостом 
 Отписка не останавливает процесс; новые подписчики читают terminalSnapshots.
 Snapshots содержат последние 200 строк без ANSI; это не точное восстановление TUI.
 Ошибки подписчика изолированы, host может регистрировать их через onObserverError.
+Если подписчик вызывает команду реестра, вложенные события доставляются после
+текущего всем клиентам. Lifecycle callbacks PTY подключаются до первого changed.
 
 Native node-pty и его ABI выбирает host. Desktop передаёт node-pty.spawn и доставляет
 прежние IPC каналы текущему окну; закрытие/пересоздание окна сохраняет процессы и tail.
