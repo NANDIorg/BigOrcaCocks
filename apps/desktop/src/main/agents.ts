@@ -2,9 +2,9 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { findBin, isCmdScript } from '@orca-board/runtime'
-import { AGENTS, AGENT_IDS, DEFAULT_ROLES, getAgent, parseCodexModelsCache, type AgentInfo, type AgentKind, type AgentSpec, type ModelOption, type Role } from '@orca-board/core'
-import { OrcaError, mtIn, type MText } from './i18n'
+import { findBin, isCmdScript, missingRoleText, type RoleSource } from '@orca-board/runtime'
+import { AGENTS, AGENT_IDS, getAgent, parseCodexModelsCache, type AgentInfo, type AgentKind, type AgentSpec, type ModelOption, type Role } from '@orca-board/core'
+import { OrcaError, mtIn } from './i18n'
 
 /** Реестр как список общего типа: у элементов union'а опциональные поля вроде versionArgs недоступны. */
 const SPECS: readonly AgentSpec[] = AGENTS
@@ -149,11 +149,8 @@ export function assertAgentUsable(agents: AgentInfo[], id: string): asserts id i
   }
 }
 
-/** Роли типа задачи и его название — для текста ошибки «роли нет» (`ResolvedRunType` подходит как есть). */
-export interface RoleSource {
-  title: string
-  roles: readonly Role[]
-}
+export { missingRoleText } from '@orca-board/runtime'
+export type { RoleSource } from '@orca-board/runtime'
 
 /**
  * Текст ошибки «роли нет в типе задачи»: какие роли у типа прогона, как их посмотреть агенту (`roles list`)
@@ -163,19 +160,6 @@ export interface RoleSource {
 export function missingRoleMessage(roleId: string, type: RoleSource): string {
   const m = missingRoleText(roleId, type)
   return mtIn('ru', m.key, m.params)
-}
-
-/** То же сообщение непереведённым — для `OrcaError`: в UI оно покажется на языке интерфейса. */
-export function missingRoleText(roleId: string, type: RoleSource): MText {
-  const ids = type.roles.map((r) => r.id).join(', ')
-  const system = DEFAULT_ROLES.some((r) => r.id === roleId)
-  return {
-    key: 'role.missing',
-    params: {
-      role: roleId, type: type.title, ids: ids || { key: 'common.none' },
-      hint: system ? { key: 'role.missing.systemHint', params: { type: type.title } } : { key: 'role.missing.hint' }
-    }
-  }
 }
 
 /**

@@ -1,4 +1,4 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Картинки глобальной задачи на диске: настоящий TaskStore и
+// Запуск: pnpm --filter @orca-board/runtime test. Картинки глобальной задачи на диске: настоящий TaskStore и
 // временная папка вместо userData (electron не нужен).
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
@@ -6,12 +6,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, ATTACHMENT_LIMITS, validateAttachments, type RunImage } from '@orca-board/core'
-import {
+const {
   runImagesRoot, runImagesDir, runImageFile, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage,
   removeRunImagesDir, coordinatorImages, readRunImages, revealTaskAttachment, openTaskAttachment
-} from './run-images'
-import { OrcaError } from './i18n'
-import { writeAttachments } from './attachments'
+} = resources()
+import { HostError as OrcaError, resources } from './execution-test-host.ts'
+const { writeAttachments } = resources()
 
 const png = (size = 16, fill = 0): Uint8Array => {
   const b = new Uint8Array(size).fill(fill)
@@ -83,7 +83,7 @@ describe('создание задачи с картинками', () => {
   it('сбой записи файлов — задача не остаётся', () => {
     // Вместо папки проекта лежит файл: mkdir внутри неё упадёт.
     blockProjectDir(join(root, PROJECT))
-    assert.throws(() => createTaskWithImages(store, root, PROJECT, { title: 'G' }, valid(20)), /не удалось сохранить вложения/)
+    assert.throws(() => createTaskWithImages(store, root, PROJECT, { title: 'G' }, valid(20)), /global\.imagesSaveFailed/)
     assert.equal(store.listGlobalTasks().length, 0)
   })
 })
@@ -106,7 +106,7 @@ describe('addImages / removeImage', () => {
 
   it('пустой список и неизвестная задача — OrcaError', () => {
     const g = createTaskWithImages(store, root, PROJECT, { title: 'G' }, [])
-    assert.throws(() => addTaskImages(store, root, PROJECT, g.id, []), /нет вложений для добавления/)
+    assert.throws(() => addTaskImages(store, root, PROJECT, g.id, []), /global\.imagesEmpty/)
     assert.throws(() => addTaskImages(store, root, PROJECT, 'run_нет', valid(16)), /run_нет/)
   })
 
@@ -134,16 +134,16 @@ describe('image: чтение байтов', () => {
   it('imageId другой задачи и path traversal не читаются', () => {
     const a = createTaskWithImages(store, root, PROJECT, { title: 'A' }, valid(16))
     const b = createTaskWithImages(store, root, PROJECT, { title: 'B' }, valid(17))
-    assert.throws(() => loadTaskImage(store, root, PROJECT, a.id, b.images![0].id), /нет вложения/)
-    assert.throws(() => loadTaskImage(store, root, PROJECT, a.id, '../' + a.images![0].id), /нет вложения/)
+    assert.throws(() => loadTaskImage(store, root, PROJECT, a.id, b.images![0].id), /global\.imageNotFound/)
+    assert.throws(() => loadTaskImage(store, root, PROJECT, a.id, '../' + a.images![0].id), /global\.imageNotFound/)
     assert.throws(() => loadTaskImage(store, root, PROJECT, '../x', a.images![0].id), /../)
-    assert.throws(() => loadTaskImage(store, root, PROJECT, a.id, 42 as unknown as string), /нет вложения/)
+    assert.throws(() => loadTaskImage(store, root, PROJECT, a.id, 42 as unknown as string), /global\.imageNotFound/)
   })
 
   it('файл пропал с диска — понятная ошибка', () => {
     const g = createTaskWithImages(store, root, PROJECT, { title: 'G' }, valid(16))
     rmSync(runImageFile(runImagesDir(root, PROJECT, g.id), g.images![0]))
-    assert.throws(() => loadTaskImage(store, root, PROJECT, g.id, g.images![0].id), /не найден на диске/)
+    assert.throws(() => loadTaskImage(store, root, PROJECT, g.id, g.images![0].id), /global\.imageFileMissing/)
   })
 })
 

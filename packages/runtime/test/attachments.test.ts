@@ -1,4 +1,4 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Картинки к замечаниям при возврате в работу: запись файлов в cwd читателя,
+// Запуск: pnpm --filter @orca-board/runtime test. Картинки к замечаниям при возврате в работу: запись файлов в cwd читателя,
 // откат при ошибке, вырезание чужих путей из решения, маршрут «воркер / координатор» и путь до промптов агентов.
 // Настоящий TaskStore и временные папки; PTY и electron не участвуют.
 import { describe, it, beforeEach, afterEach } from 'node:test'
@@ -8,14 +8,14 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, ATTACHMENT_LIMITS, DEFAULT_ATTACHMENT_OBJECTIVE, coordinatorPrompt, getAgent, agentSystemPrompt, presetTaskTypes, resolveTaskType, workerTaskPrompt, validateAttachments, presetTaskType, runTypeInput, type ImageAttachmentInput } from '@orca-board/core'
-import { OrcaError } from './i18n'
-import { resumeObjective } from './coordinator-resume'
-import { ARGV_LINE_MARGIN, CMD_LINE_LIMIT, CREATE_PROCESS_LIMIT, argvCommandLine, win32Launch } from './win32-launch'
-import {
+import { HostError as OrcaError, resources } from './execution-test-host.ts'
+const { resumeObjective } = resources()
+import { ARGV_LINE_MARGIN, CMD_LINE_LIMIT, CREATE_PROCESS_LIMIT, argvCommandLine, win32Launch } from '../src/win32-launch.ts'
+const {
   ATTACHMENTS_DIR, attachmentCapabilities, clearStartImages, coordinatorImagesPlace, coordinatorObjective, discardReturnImages, hasImageInput, imagesReferenced, pruneAttachments,
   rejectWithImages, resolveWithImages, returnRunWithImages, saveReturnImages, stripResolutionImages, withReturnImages, workerImagesPlace,
   writeAttachments
-} from './attachments'
+} = resources()
 
 const PNG_HEAD = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const png = (extra = 0): ImageAttachmentInput => ({ mime: 'image/png', data: Uint8Array.from([...PNG_HEAD, 1, 2, 3, extra]) })
@@ -428,7 +428,7 @@ describe('Windows: стартовый промпт координатора с 8
   const paths = Array.from({ length: ATTACHMENT_LIMITS.maxCount }, (_, i) =>
     `${cwd}\\${ATTACHMENTS_DIR}\\run_mqx1y2z3abcd\\file-${i + 1}-${'x'.repeat(40)}.${'e'.repeat(10)}`)
   const prompt = coordinatorPrompt(DEFAULT_ATTACHMENT_OBJECTIVE, paths)
-  const skill = readFileSync(new URL('../../../../skills/coordinator.md', import.meta.url), 'utf8')
+  const skill = readFileSync(new URL('../../../skills/coordinator.md', import.meta.url), 'utf8')
 
   /**
    * argv claude координатора, как в `startCoordinator` (worker.ts): настоящий skill, правила типа и роль coordinator

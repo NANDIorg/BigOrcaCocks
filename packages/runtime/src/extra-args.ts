@@ -1,11 +1,16 @@
 import { EXTRA_ARGS_MAX_COUNT, EXTRA_ARGS_MAX_LENGTH, parseExtraArgs, type ExtraArgsParse } from '@orca-board/core'
 import type { ProjectMessage } from './project-messages.ts'
 
+export interface ExtraArgsMessage extends ProjectMessage {
+  key: `extraArgs.${Extract<ExtraArgsParse, { ok: false }>['error']}`
+  params: Record<string, string | number>
+}
+
 /** Сколько символов чужого токена показываем в ошибке: строка флагов бывает до `EXTRA_ARGS_MAX_LENGTH`. */
 const DETAIL_LIMIT = 40
 
 /** Причина отказа `parseExtraArgs` непереведённой — параметр `{reason}` ошибок `*.extraArgsInvalid`. */
-export function extraArgsReason(parse: Extract<ExtraArgsParse, { ok: false }>): ProjectMessage {
+export function extraArgsReason(parse: Extract<ExtraArgsParse, { ok: false }>): ExtraArgsMessage {
   const detail = parse.detail ?? ''
   const max = parse.error === 'length' ? EXTRA_ARGS_MAX_LENGTH : EXTRA_ARGS_MAX_COUNT
   return {

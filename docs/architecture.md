@@ -114,7 +114,22 @@ ConPTY в долгоживущем owner; lifecycle native adapter нужно п
 Node package smoke использует тестовый PTY port: установленный headless с реальным
 Linux PTY и раздельными install roots ещё предстоит проверить.
 
-Это часть этапа исполнения. Worker/coordinator orchestration, prompts/attachments,
+### Общие ресурсы исполнения
+
+`createExecutionResources({ messages, git, logger })` объединяет прежние операции
+веток прогонов, возобновления координатора и вложений. Ветки параллельных прогонов,
+восстановление worktree, legacy-прогоны без ветки, guards возврата и rollback записи
+сохраняют прежнее поведение. Файлы старта и возврата разделены: отказ запуска не
+удаляет вложения, на которые уже ссылается store. Открытие вложения возвращает
+проверенный путь; системное действие по нему выполняет Desktop host.
+
+Флаги роли/ассистента проверяются общей launch policy; сообщения имеют typed codes
+и вложенные параметры. Desktop передаёт OrcaError, Git facade и logger и сохраняет
+прежние именованные exports. Чистые функции окружения/cwd ассистента и missingRoleText
+также общие. Suites attachments/run-images перенесены в runtime; Desktop integration
+проверяет прежние ошибки, возвраты и review/merge через совместимые facades.
+
+Это часть этапа исполнения. Worker/coordinator orchestration, bundled prompts,
 dialog drivers и AssistantSession пока в Desktop. Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
