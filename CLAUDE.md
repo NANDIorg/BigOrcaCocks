@@ -2,7 +2,7 @@
 
 Монорепо pnpm: `apps/desktop` (Electron: main / preload / renderer / shared), `packages/core`
 (модель, store, промпты — TypeScript без сборки), `packages/contracts` (общие DTO и чистые функции),
-`packages/runtime` (Node: запись состояния, резервные копии; private bundle без Electron),
+`packages/runtime` (Node: запись состояния, резервные копии и Git; private bundle без Electron),
 `packages/cli` (голый JS, `bin/orca-board.js`),
 `skills/` (инструкции координатора и воркера, вшиваются в сборку), `docs/` (архитектура и решения).
 Полная картина — `docs/architecture.md`. Комментарии в коде, документация и коммиты — на русском;
@@ -41,7 +41,7 @@ orca-board; `skills/*.md` — инструкции самого продукта
 - **Не класть в payload событий длинный текст целиком.** Ответ урезается до `EVENT_ANSWER_LIMIT` (2000)
   с флагом `answerTruncated` (`eventAnswer()` в `packages/core/src/store.ts`). Полный текст отдаётся
   отдельной командой (`task answer`, `request get`, `question get`) — фикс 7b1fa05.
-- **Не вызывать `git` через shell.** Только `execFileSync('git', [...])` (`apps/desktop/src/main/git.ts`),
+- **Не вызывать `git` через shell.** Только `execFileSync`/`execFile('git', [...])` (`packages/runtime/src/git.ts`),
   иначе ломаются Windows и экранирование.
 - **Не хардкодить `:`, `/bin/zsh`, `~/.orca-board/orca.sock`.** Используй `path.delimiter`, `defaultShell()`
   (`src/main/pty.ts`), `defaultSocketPath()`. Всё платформозависимое — ветки `process.platform === 'win32'`
@@ -96,6 +96,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).
   В contracts чистые функции и границы проверяются через `test/*.test.ts`; перенесённые suites
   запускаются командой `pnpm --filter @orca-board/contracts test` и входят в корневой `pnpm test`.
+  Runtime suites — `packages/runtime/test/*.test.ts`, `pnpm --filter @orca-board/runtime test`;
+  AST-страж проверяет production graph, entrypoint работает под Node 24 без Electron loader.
 - **Новый UI-текст в renderer — только через `t()`, ключ сразу в ru и en.** Словари — по областям:
   `renderer/src/i18n/ru/<область>.ts` и `i18n/en/<область>.ts` (`common`, `settings`, `board`, `shell`, `global`,
   `config`, `builtin`). В компоненте — `const t = useT()`, в `.ts`-модулях — `t()` из `./i18n`. Числа, даты и

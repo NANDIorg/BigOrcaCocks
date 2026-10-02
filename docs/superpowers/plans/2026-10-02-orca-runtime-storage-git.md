@@ -45,14 +45,14 @@
 - Produces: прежние `BACKUPS_KEEP`, `UNKNOWN_VERSION`, `compareVersions`, `readLastRunVersion`, `copyStateTo`, `pruneBackups`, `backupOnVersionChange(dataDir, currentVersion): VersionBackupResult`.
 - Desktop only: `rememberUpdate(result): void`, `getJustUpdatedFrom(): string | null` и их модульное UI-состояние. Backup entrypoint runtime их не экспортирует.
 
-- [ ] Step 1: Перенести существующие behavioral suites на будущие relative `.ts` imports runtime; оставить тест UI-флага в Desktop. Сохранить все проверки реального I/O и TaskStore roundtrip.
-- [ ] Step 2: Запустить `node --test packages/runtime/test/{persistence,backup}.test.ts` под Node 24.
+- [x] Step 1: Перенести существующие behavioral suites на будущие relative `.ts` imports runtime; оставить тест UI-флага в Desktop. Сохранить все проверки реального I/O и TaskStore roundtrip.
+- [x] Step 2: Запустить `node --test packages/runtime/test/{persistence,backup}.test.ts` под Node 24.
   Expected: FAIL из-за отсутствующего runtime-модуля; сохранить RED log.
-- [ ] Step 3: Перенести реализации без изменений алгоритмов/формата; relative imports с `.ts`. Создать private package с core dependency, TypeScript и существующей версией `@types/node` в devDependencies; `test` запускает `test/*.test.ts`. Desktop persistence — именованный реэкспорт; backup — реэкспорт дисковых функций плюс прежний UI-флаг. Добавить workspace dependency, TS path и main alias/externalize exclusion; runtime не добавлять в renderer/preload.
-- [ ] Step 4: Обновить архитектуру и инженерные правила для реально перенесённых модулей.
-- [ ] Step 5: Выполнить итоговую проверку задачи: `pnpm --filter @orca-board/runtime typecheck`, `pnpm --filter @orca-board/desktop typecheck`, `pnpm --filter @orca-board/runtime test`, Desktop backup test и core tests.
+- [x] Step 3: Перенести реализации без изменений алгоритмов/формата; relative imports с `.ts`. Создать private package с core dependency, TypeScript и существующей версией `@types/node` в devDependencies; `test` запускает `test/*.test.ts`. Desktop persistence — именованный реэкспорт; backup — реэкспорт дисковых функций плюс прежний UI-флаг. Добавить workspace dependency, TS path и main alias/externalize exclusion; runtime не добавлять в renderer/preload.
+- [x] Step 4: Обновить архитектуру и инженерные правила для реально перенесённых модулей.
+- [x] Step 5: Выполнить итоговую проверку задачи: `pnpm --filter @orca-board/runtime typecheck`, `pnpm --filter @orca-board/desktop typecheck`, `pnpm --filter @orca-board/runtime test`, Desktop backup test и core tests.
   Expected: PASS всех команд; сбой I/O и future state всё ещё защищены прежними suites.
-- [ ] Step 6: Коммит `refactor: вынести хранение и резервные копии в общий runtime`.
+- [x] Step 6: Коммит `refactor: вынести хранение и резервные копии в общий runtime`.
 
 ## Task 2: Общие Git-операции с Desktop-адаптером сообщений
 
@@ -68,14 +68,14 @@
 - Produces: прежние `MergeError`, `GitOpError`, `ReviewInfo`; классы вне factory и совместимо реэкспортируются Desktop.
 - Desktop adapter: один экземпляр с `error: (key, params) => new OrcaError(key, params)` и `untrackedLabel: () => mt('review.untracked')`; именованные function exports из него сохраняют старых потребителей. Lazy callbacks сохраняют смену языка после запуска.
 
-- [ ] Step 1: Написать runtime Git tests с настоящими временными репозиториями: unborn/initial empty commit сохраняет staged и рабочие файлы; no-commits/notRepo/dirty errors принадлежат host; review untracked подписи двух hosts не смешиваются; branch/worktree/commit/merge/remove roundtrip; gitCheckIgnore с пробелами; неизменённые MergeError/GitOpError для отказов. Добавить неудачный hook и проверить `git.opFailed` с причиной.
-- [ ] Step 2: Запустить `node --test packages/runtime/test/git.test.ts`.
+- [x] Step 1: Написать runtime Git tests с настоящими временными репозиториями: unborn/initial empty commit сохраняет staged и рабочие файлы; no-commits/notRepo/dirty errors принадлежат host; review untracked подписи двух hosts не смешиваются; branch/worktree/commit/merge/remove roundtrip; gitCheckIgnore с пробелами; неизменённые MergeError/GitOpError для отказов. Добавить неудачный hook и проверить `git.opFailed` с причиной.
+- [x] Step 2: Запустить `node --test packages/runtime/test/git.test.ts`.
   Expected: FAIL из-за отсутствующего Git runtime; сохранить RED log.
-- [ ] Step 3: Перенести исходный Git код внутрь factory, заменить создание OrcaError на messages.error, единственный mt на messages.untrackedLabel. Дисковые операции, аргументы git, таймауты, обход EPIPE и очередь по переданному root не менять. Сохранить все функции/классы; не добавлять глобальный язык и не импортировать Desktop.
-- [ ] Step 4: Подключить Desktop adapter и runtime entrypoint. Описать текущее ограничение sync Git и root queues; не заявлять готовую серверную надёжность.
-- [ ] Step 5: Выполнить typecheck runtime/Desktop, все runtime tests, перечисленные Desktop regression suites и core tests.
+- [x] Step 3: Перенести исходный Git код внутрь factory, заменить создание OrcaError на messages.error, единственный mt на messages.untrackedLabel. Дисковые операции, аргументы git, таймауты, обход EPIPE и очередь по переданному root не менять. Сохранить все функции/классы; не добавлять глобальный язык и не импортировать Desktop.
+- [x] Step 4: Подключить Desktop adapter и runtime entrypoint. Описать текущее ограничение sync Git и root queues; не заявлять готовую серверную надёжность.
+- [x] Step 5: Выполнить typecheck runtime/Desktop, все runtime tests, перечисленные Desktop regression suites и core tests.
   Expected: PASS; существующие `instanceof OrcaError`/error keys и русские сообщения проходят без переписывания expectations.
-- [ ] Step 6: Коммит `refactor: вынести Git-операции в общий runtime`.
+- [x] Step 6: Коммит `refactor: вынести Git-операции в общий runtime`.
 
 ## Task 3: Проверяемые границы runtime и итоговая сборка
 
@@ -87,11 +87,11 @@
 - Consumes: runtime production graph, core/contracts dependencies, созданные в Tasks 1–2, разрешённые Node builtins.
 - Produces: `auditRuntimeImports(root: string): RuntimeBoundaryIssue[]`, тестовый AST-аудит всех production `.ts`, включая неэкспортируемые файлы, type-only/reexports/dynamic import, транзитивные зависимости и canonical paths. Допустимы только runtime/core/contracts и Node; Electron/прочие apps/неявный require/вычисленный импорт запрещены. Это dev utility, не экспорт production package.
 
-- [ ] Step 1: Написать fixtures: allowed Node/core/contracts; прямой и type-only Desktop/Electron; транситивный core→Desktop; неэкспортируемый файл; computed import/require; относительный выход за allowed roots. Проверить настоящий production graph.
-- [ ] Step 2: Запустить `node --test packages/runtime/test/import-boundaries.test.ts`.
+- [x] Step 1: Написать fixtures: allowed Node/core/contracts; прямой и type-only Desktop/Electron; транситивный core→Desktop; неэкспортируемый файл; computed import/require; относительный выход за allowed roots. Проверить настоящий production graph.
+- [x] Step 2: Запустить `node --test packages/runtime/test/import-boundaries.test.ts`.
   Expected: FAIL из-за отсутствующего аудитора; сохранить RED log.
-- [ ] Step 3: Реализовать тестовый AST traversal с realpath, без новых production dependencies; запретить Electron types в compiler runtime (`types: ["node"]`, `lib: ["ES2022"]`).
-- [ ] Step 4: Выполнить `pnpm verify` из worktree; сохранить полный log, изучить ошибки/итоги.
+- [x] Step 3: Реализовать тестовый AST traversal с realpath, без новых production dependencies; запретить Electron types в compiler runtime (`types: ["node"]`, `lib: ["ES2022"]`).
+- [x] Step 4: Выполнить `pnpm verify` из worktree; сохранить полный log, изучить ошибки/итоги.
   Expected: PASS git-flow, typecheck, все тесты и build; built main не содержит внешнего runtime import.
 - [ ] Step 5: Коммит `test: закрепить границы общего runtime`; fresh-context review всего нового переноса. Critical/Important — один проверенный RED→GREEN fix pass; Minor — явно отложить.
 - [ ] Step 6: Push своей feature-ветки, обновить PR #59 по финальному diff и проверить CI на текущем HEAD. Собрать `pnpm --filter @orca-board/desktop run pack`, проверить отсутствие внешнего runtime import в app.asar и открыть local mac app; путь указать пользователю.
@@ -99,4 +99,4 @@
 
 ## Статус
 
-План проверен против утверждённой архитектуры. Исполнение: в работе; переносы ProjectManager, owner и async/commonDir Git остаются отдельными следующими планами.
+План проверен против утверждённой архитектуры. Tasks 1–3 реализованы; `pnpm verify` проходит: 3211 tests, 0 failures/skips, typecheck и build зелёные. Итоговые review/pack/CI фиксируются в PR. переносы ProjectManager, owner и async/commonDir Git остаются отдельными следующими планами.

@@ -54,6 +54,12 @@ MergeError/GitOpError общие, поэтому существующие про
 готовности требуется async Git, сериализация по canonical commonDir и EffectToken
 после await. Runtime не задаёт язык клиентов и не импортирует Desktop dictionaries.
 
+Границы runtime проверяются `test/import-boundaries.test.ts`: AST проходит все
+production modules и транзитивные общие зависимости, включая type-only и dynamic
+imports; canonical paths не позволяют скрыть Desktop за symlink. Compiler использует
+только Node types/ES2022 lib. Отдельная проверка запускает package entrypoint обычным
+Node 24 без Electron loader. Все runtime suites входят в корневой `pnpm test`/CI.
+
 ## Процессы
 
 ```
