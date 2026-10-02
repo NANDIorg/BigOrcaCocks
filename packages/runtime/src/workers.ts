@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { delimiter } from 'node:path'
+import { posix, win32 } from 'node:path'
 import { existsSync, mkdirSync } from 'node:fs'
 import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt,
   type AgentSpec, type AgentLanguage, type BuiltinPrompts, type AssistantSettings, type TaskStore,
@@ -77,7 +77,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     const env = host.env ?? process.env
     const key = platform === 'win32' ? Object.keys(env).find(key => key.toUpperCase() === 'PATH') : 'PATH'
     const path = key === undefined ? '' : env[key] ?? ''
-    const sep = platform === 'win32' ? ';' : delimiter
+    const sep = platform === 'win32' ? win32.delimiter : posix.delimiter
     return [host.cliBinDir, ...path.split(sep).filter(Boolean), ...host.extraPathDirs()].join(sep)
   }
 

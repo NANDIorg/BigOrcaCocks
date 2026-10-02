@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, validateAttachments, type Role } from '@orca-board/core'
+import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, validateAttachments, type AgentKind, type Role } from '@orca-board/core'
 import * as runtime from '../src/index.ts'
 import type { PtyFactory, PtyProcess } from '../src/sessions.ts'
 import type { WorkerHostContext } from '../src/workers.ts'
@@ -252,3 +252,41 @@ it('возврат в работу останавливает старый те�
   assert.equal(f.sessions.isAlive(resumed.ptyId), true)
   assert.ok(argsOf(f.processes.at(-1)!).some(arg => arg.includes('FIX_THIS')))
 })
+
+for (const kind of ['worker', 'coordinator', 'assistant'] as const) {
+  function launch(f: ReturnType<typeof fixture>, agent: AgentKind) {
+    const ctx = { ...f.ctx, roles: f.ctx.roles.map(role => ({ ...role, agent, extraArgs: '--label "two words"' })) }
+    if (kind === 'assistant') return f.services.startAssistant({ socketPath: f.ctx.socketPath, settings: { agent, extraArgs: '--label "two words"' } })
+    if (kind === 'coordinator') return f.services.startCoordinator(f.store, repo, ctx, 'Goal')
+    const task = f.store.createTask({ title: 'Task', roleId: 'developer', agent })
+    return f.services.startWorker(f.store, repo, ctx, task.id)
+  }
+
+  it(`${kind}: язык читается на каждом запуске, флаги и cleanup настроек Amp сохраняются`, () => {
+    let language: 'ru' | 'en' = 'ru'
+    const f = fixture({ platform: 'linux', language: () => language })
+    const first = launch(f, 'amp')
+    const args = argsOf(f.processes[0])
+    assert.ok(args.includes('--label')); assert.ok(args.includes('two words'))
+    assert.ok(args.every(arg => !arg.includes('The person uses the app in English')))
+    const settings = args[args.indexOf('--settings-file') + 1]
+    const config = JSON.parse(readFileSync(settings, 'utf8')) as Record<string, unknown>
+    assert.equal(config['amp.dangerouslyAllowAll'], false)
+    f.sessions.killPty(first.ptyId)
+    assert.equal(existsSync(settings), false)
+    language = 'en'
+    launch(f, 'amp')
+    assert.ok(argsOf(f.processes.at(-1)!).some(arg => arg.includes('The person uses the app in English')))
+    f.sessions.killAll(); f.launcher.dispose()
+  })
+
+  it(`${kind}: окружение permissions OpenCode проходит через launcher в PTY`, () => {
+    const f = fixture({ platform: 'linux' })
+    launch(f, 'opencode')
+    const env = f.processes[0].options.env
+    const permissions = JSON.parse(env.OPENCODE_PERMISSION) as { edit: Record<string, string>; bash: Record<string, string> }
+    assert.equal(permissions.edit['*'], 'ask')
+    assert.equal(permissions.bash['*'], 'ask')
+    f.sessions.killAll()
+  })
+}

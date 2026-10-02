@@ -144,6 +144,14 @@ launcher и session registry используются те же, что оста
 Язык читается callback при запуске, поэтому смена настроек сохраняет прежнее
 поведение. Другой host передаёт собственный язык и доступную shell.
 
+Package smoke запускает сервис обычным Node без Electron loader/DISPLAY, сохраняет
+результат и повторно открывает доску. Native integration использует общий сервис,
+настоящие Git и node-pty, безопасную Node-программу вместо платного провайдера:
+координатор → воркер → detach/вывод → результат → review/merge → проверка прогона.
+Native backend импортируется только тестовым host Desktop; тестовый fixture owner
+завершается после assertions с ненулевым кодом при ошибке. Это проверка исполнения
+без окна, а не установленного Linux артефакта или native cleanup долгоживущего owner.
+
 Это часть этапа исполнения. Workflow/review executors и wiring main/index.ts,
 обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
 Single-owner lifecycle, writer leases,

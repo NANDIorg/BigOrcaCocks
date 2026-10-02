@@ -80,7 +80,8 @@
 ## Task 3: Интеграция без окна и совместимость Desktop
 
 **Files:**
-- Modify: `packages/runtime/test/core-entry.test.ts`, `apps/desktop/src/main/pty.test.ts`, `docs/architecture.md`, этот план.
+- Modify: `packages/runtime/test/core-entry.test.ts`, `workers.test.ts`, `docs/architecture.md`, этот план.
+- Replace: Desktop `agent-language.test.ts` source guards → behavioral runtime tests языка/флагов/окружения/cleanup.
 - Create: `apps/desktop/src/main/worker-runtime.test.ts` (native test host использует существующий node-pty, не меняя dependency runtime).
 
 **Interfaces:**
@@ -88,12 +89,12 @@
 - Produces: Node smoke без Electron loader/DISPLAY и сценарий coordinator → worker → результат/review на общем сервисе, detach → output/exit, ошибки fixture дают ненулевой exit.
 - Native scenario выполняется в дочернем fixture owner с явным timeout/cleanup; Windows conout worker не удерживает родительский test runner.
 
-- [ ] Добавить package smoke, который создаёт общий сервис под обычным Node без Electron и проверяет реальные изменения store; native fixture запускает безопасную тестовую команду вместо платного LLM, проверяет вывод/exit и состояние задачи.
-- [ ] Run: targeted Node/native tests.
+- [x] Добавить package smoke, который создаёт общий сервис под обычным Node без Electron и проверяет реальные изменения store; native fixture запускает безопасную тестовую команду вместо платного LLM, проверяет вывод/exit и состояние задачи.
+- [x] Run: targeted Node/native tests.
   Expected: FAIL при отсутствии соответствующего host wiring/assertions; затем PASS после подключения.
-- [ ] Run: `pnpm verify`.
+- [x] Run: `pnpm verify`.
   Expected: PASS всех пакетов, guards, typecheck и build.
-- [ ] Commit: `test: проверить общие воркеры без окна Electron`.
+- [x] Commit: `test: проверить общие воркеры без окна Electron`.
 - [ ] Одно итоговое независимое ревью диапазона этого плана, исправления Important/Critical через RED→GREEN, pnpm verify после исправлений.
 - [ ] Записать результат и оставшиеся рубежи в план/docs; сохранить ledger и проверки вне scratch, удалить только workspace этого плана.
 - [ ] Собрать и открыть Desktop; проверить упакованный runtime, push/update PR #59 и CI точного HEAD. Не сливать PR и не выпускать релиз.
