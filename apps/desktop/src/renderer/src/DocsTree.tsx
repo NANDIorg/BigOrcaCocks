@@ -7,9 +7,8 @@ import {
   buildTree, chainLabel, highlight, isTreeKey, navigate, recentFiles, RECENT_LIMIT, sameDoc, searchFiles, shortTime, treeRows,
   type DocRef, type FileHit, type PathMatch, type TaskMark, type TreeNode, type TreeRow
 } from './docTree'
-import { docIconOf } from './docView'
 import type { TextMatch } from './docFind'
-import { DocIcon } from './docsIcons'
+import { DocFileIcon, DocIcon } from './docsIcons'
 import { useT } from './i18n'
 import { formatInteger } from './i18n/format'
 
@@ -44,11 +43,9 @@ function searchGroup(g: DocGroup | undefined, query: string): { hits: SourceHit[
   return { hits: hits.map((h) => ({ ...h, source: g.source })), more: total - hits.length }
 }
 
-/** Значок файла по виду (`docIconOf`, без IPC); цвет — по `data-kind` в styles.css. */
+/** Общий значок файла: язык, служебное имя и категория, без IPC. */
 export function FileKindIcon({ path }: { path: string }): React.JSX.Element {
-  const kind = docIconOf(path)
-  const Icon = DocIcon[kind]
-  return <span className="docs-fi" data-kind={kind}><Icon /></span>
+  return <DocFileIcon path={path} />
 }
 
 /** Пометка симлинка: куда он ведёт, выяснится при открытии (`docs:view`). */

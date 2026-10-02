@@ -1,4 +1,7 @@
 import type React from 'react'
+import type { DocViewKind } from '../../shared/docs-view'
+import { docFileIconOf, MONO_FILE_LOGOS } from './docFileIcons'
+import { fileLogoAssets } from './fileLogoAssets'
 
 /** Мелкие (14px) иконки окна «Документы» — как в макете docs/mockups/docs-viewer/concept-a.html. */
 const s = { className: 'docs-i', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
@@ -31,6 +34,14 @@ export const DocIcon = {
   pdf: (): React.JSX.Element => <svg {...s}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M8.5 17v-4h1.5a1.3 1.3 0 0 1 0 2.6H8.5M13 13v4h1a2 2 0 0 0 0-4z" /></svg>,
   binary: (): React.JSX.Element => <svg {...s}><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8.5 9v6M15.5 9v6M11 9h2v6h-2z" /></svg>,
   env: (): React.JSX.Element => <svg {...s}><circle cx="8" cy="15" r="4" /><path d="M10.8 12.2 20 3M17 6l3 3M15 8l2 2" /></svg>,
+  archive: (): React.JSX.Element => <svg {...s}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M10 4v2M12 6v2M10 8v2M12 10v2" /><rect x="10" y="14" width="3" height="4" rx="1" /></svg>,
+  audio: (): React.JSX.Element => <svg {...s}><path d="M9 18V6l11-3v12M9 9l11-3" /><ellipse cx="6" cy="18" rx="3" ry="2.5" /><ellipse cx="17" cy="15" rx="3" ry="2.5" /></svg>,
+  video: (): React.JSX.Element => <svg {...s}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M10 8l6 4-6 4zM3 9h3M3 15h3M18 9h3M18 15h3" /></svg>,
+  font: (): React.JSX.Element => <svg {...s}><path d="M3 19 9 5l6 14M5.5 14h7M16 10h6M19 10v9" /></svg>,
+  database: (): React.JSX.Element => <svg {...s}><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0" /></svg>,
+  table: (): React.JSX.Element => <svg {...s}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M3 15h18M9 4v16M15 10v10" /></svg>,
+  terminal: (): React.JSX.Element => <svg {...s}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9l4 3-4 3M13 16h4" /></svg>,
+  diff: (): React.JSX.Element => <svg {...s}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 12h6M12 9v6M9 18h6" /></svg>,
   lock: (): React.JSX.Element => <svg {...s}><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>,
   copy: (): React.JSX.Element => <svg {...s}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>,
   more: (): React.JSX.Element => <svg {...s}><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg>,
@@ -38,4 +49,17 @@ export const DocIcon = {
   fit: (): React.JSX.Element => <svg {...s}><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" /></svg>,
   findIn: (): React.JSX.Element => <svg {...s}><path d="M4 6h12M4 11h7M4 16h5" /><circle cx="16" cy="15" r="3.2" /><path d="M18.4 17.4 21 20" /></svg>,
   warn: (): React.JSX.Element => <svg {...s}><path d="M12 4 2.8 19a1 1 0 0 0 .9 1.5h16.6a1 1 0 0 0 .9-1.5z" /><path d="M12 10v4M12 17h.01" /></svg>
+}
+
+/** Один значок для дерева, выдачи и крошек: категории остаются общими, логотипы уточняют язык. */
+export function DocFileIcon({ path, kind }: { path: string; kind?: DocViewKind }): React.JSX.Element {
+  const info = docFileIconOf(path, kind)
+  const Icon = DocIcon[info.glyph ?? info.kind]
+  return (
+    <span className="docs-fi" data-kind={info.kind} data-glyph={info.glyph} aria-hidden="true">
+      {info.logo
+        ? <img className="docs-i docs-file-logo" src={fileLogoAssets[info.logo]} alt="" data-mono={MONO_FILE_LOGOS.has(info.logo) || undefined} width={16} height={16} />
+        : <Icon />}
+    </span>
+  )
 }

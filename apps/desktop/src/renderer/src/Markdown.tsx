@@ -7,7 +7,9 @@ import { assignHeadingIds, DOC_ID_PREFIX, findDocHeading, type DocHeading } from
 import { t, useLocale } from './i18n'
 import { docKindOf } from '../../shared/docs-view'
 import { resolveMarkdownLink, showcaseImageSrc, type MarkdownAssets } from './markdownAssets'
+import { createSyntaxBudget, syntaxHtml } from './syntaxHighlight'
 import './docs-markdown.css'
+import './syntax-highlight.css'
 
 /** Сейчас санитизируется документ, а не чат: только в документе `#якорь` становится переходом. */
 let sanitizingDoc = false
@@ -86,31 +88,35 @@ function escapeHtml(s: string): string {
 
 // Документ: жёсткие переносы строк в исходнике не рвут абзац (breaks: false), у h2/h3 — id и якорь,
 // у блока кода — шапка с языком и «Копировать», таблица в обёртке с рамкой и своей прокруткой.
-const docMarked = new Marked({
-  gfm: true,
-  breaks: false,
-  renderer: {
-    heading(token) {
-      const inner = this.parser.parseInline(token.tokens)
-      const id = (token as DocHeading).docId
-      if (!id) return `<h${token.depth}>${inner}</h${token.depth}>\n`
-      const slug = escapeHtml(id.slice(DOC_ID_PREFIX.length))
-      return `<h${token.depth} id="${escapeHtml(id)}"><a class="doc-anchor" href="#${slug}" aria-hidden="true">#</a>${inner}</h${token.depth}>\n`
-    },
-    code({ text, lang }) {
-      const language = (lang ?? '').match(/^\S*/)?.[0] ?? ''
-      const cls = language ? ` class="language-${escapeHtml(language)}"` : ''
-      return (
-        `<div class="doc-code"><div class="doc-code-head"><span>${escapeHtml(language)}</span>` +
-        `<button type="button" class="doc-copy">${escapeHtml(t('board.markdown.copy'))}</button></div>` +
-        `<pre><code${cls}>${escapeHtml(text.replace(/\n$/, ''))}</code></pre></div>\n`
-      )
+function createDocMarked(): Marked {
+  const budget = createSyntaxBudget()
+  return new Marked({
+    gfm: true,
+    breaks: false,
+    renderer: {
+      heading(token) {
+        const inner = this.parser.parseInline(token.tokens)
+        const id = (token as DocHeading).docId
+        if (!id) return `<h${token.depth}>${inner}</h${token.depth}>\n`
+        const slug = escapeHtml(id.slice(DOC_ID_PREFIX.length))
+        return `<h${token.depth} id="${escapeHtml(id)}"><a class="doc-anchor" href="#${slug}" aria-hidden="true">#</a>${inner}</h${token.depth}>\n`
+      },
+      code({ text, lang }) {
+        const language = (lang ?? '').match(/^\S*/)?.[0] ?? ''
+        const cls = ` class="syntax-highlight${language ? ` language-${escapeHtml(language)}` : ''}"`
+        return (
+          `<div class="doc-code"><div class="doc-code-head"><span>${escapeHtml(language)}</span>` +
+          `<button type="button" class="doc-copy">${escapeHtml(t('board.markdown.copy'))}</button></div>` +
+          `<pre><code${cls}>${syntaxHtml(text.replace(/\n$/, ''), language, budget)}</code></pre></div>\n`
+        )
+      }
     }
-  }
-})
+  })
+}
 
 /** Markdown-документ → безопасный HTML для окна «Документы» и просмотрщика показа. Id заголовков совпадают с buildDocToc. */
 export function renderDocMarkdown(text: string, assets?: MarkdownAssets): string {
+  const docMarked = createDocMarked()
   const tokens = docMarked.lexer(text)
   assignHeadingIds(tokens)
   const html = docMarked.parser(tokens).replace(/<table>/g, '<div class="doc-table"><table>').replace(/<\/table>/g, '</table></div>')
