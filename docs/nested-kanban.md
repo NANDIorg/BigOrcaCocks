@@ -31,8 +31,8 @@ needs_input — **вычисляемая** колонка: там карточк
 | `objective` | (было) описание глобальной задачи; для координатора — его цель |
 | `title?` | название карточки; нет — первая строка `objective` (≤ 80 символов), у «Входящих» — `Входящие` (`globalTaskTitle`) |
 | `status?` | id колонки глобального канбана (kind backlog / in_progress / review / done), где стоит карточка. После миграции есть всегда |
-| `images?` | картинки, приложенные человеком при создании/правке задачи: `RunImage {id, mime, ext, bytes, addedAt}[]` (`packages/core/src/attachments.ts`) — **только метаданные**, байты в store и снапшот не кладутся, файлы хранит main (рекомендация: рядом с данными проекта в `userData`, не в worktree). Лимиты `IMAGE_ATTACHMENT_LIMITS` на задачу суммарно. Нет — картинок не было; миграция не нужна |
-| `returns?` | уточнения человека при «Вернуть в работу» с «Проверки», по порядку: `{at, text, images?}[]` (`images` — абсолютные пути приложенных картинок в cwd координатора). `objective` они не меняют — попадают в цель повторного запуска координатора |
+| `images?` | вложения (картинки и любые файлы; имя поля историческое), приложенные человеком при создании/правке задачи: `RunImage {id, kind?, name?, mime, ext, bytes, addedAt}[]` (`packages/core/src/attachments.ts`; нет `kind` — картинка) — **только метаданные**, байты в store и снапшот не кладутся, файлы хранит main (рекомендация: рядом с данными проекта в `userData`, не в worktree). Лимиты `ATTACHMENT_LIMITS` на задачу суммарно. Нет — вложений не было; миграция не нужна |
+| `returns?` | уточнения человека при «Вернуть в работу» с «Проверки», по порядку: `{at, text, images?}[]` (`images` — абсолютные пути приложенных файлов в cwd координатора: скриншоты, документы, логи). `objective` они не меняют — попадают в цель повторного запуска координатора |
 | `summary?` | итоговая сводка координатора `{at, text}` (markdown) из `runs finish --summary`: блок «Что сделал» на «Проверке». Одна, последняя — следующая непустая заменяет |
 | `inbox?` | служебная глобальная задача «Входящие» (одна на проект) |
 | `git?` | ветка глобальной задачи `{branch, base, worktree?}` — подзадачи ответвляются от неё и сливаются в неё (`src/main/run-branch.ts`, «Ветка глобальной задачи» в `docs/architecture.md`); дальше веткой распоряжается человек. Нет — «Входящие» (у них ветки не бывает) или прогон, начатый до веток: подзадачи сливаются в текущую ветку корня. Старые `pushedAt`/`pushError` убирает `migrateRunGit` |
@@ -258,7 +258,7 @@ needs_input — **вычисляемая** колонка: там карточк
   вкладке «Итог и цель» под «Что сделал» (`GlobalOverview`, проп `approval` = `runApprovalRequest`).
 - **Вернуть в работу** — IPC `globalTasks.returnToWork(id, text, cols, rows, images?)` → `ptyId` координатора
   (`returnToWork` в `apps/desktop/src/main/worker.ts`; шаги 1–2 — `returnGlobalTaskToWork` в `coordinator-resume.ts`):
-  0. С `images` (байты, лимиты `IMAGE_ATTACHMENT_LIMITS`) main сначала пишет файлы в cwd координатора —
+  0. С `images` (байты картинок и файлов, лимиты `ATTACHMENT_LIMITS`) main сначала пишет файлы в cwd координатора —
      `<Run.git.worktree ?? repoRoot>/.orca-attachments/<runId>/returns/ret_*/` (`returnRunWithImages`, `src/main/attachments.ts`) — и
      дальше работает с абсолютными путями. Картинки без текста — ошибка. Не прошёл шаг 1 — папка возврата удаляется;
   1. `TaskStore.returnGlobalTask(id, text, images?)`: пустой текст, «Входящие», не на проверке — ошибка, терминалы не трогаются;
@@ -273,8 +273,8 @@ needs_input — **вычисляемая** колонка: там карточк
   Упал запуск после шага 2 — карточка остаётся «В работе» с уточнением, отката нет: «Запустить координатора»
   подхватит его из `Run.returns`. Отдельного события координатору нет — старый уже завершился, новый получает
   уточнение в цели: `resumeCoordinatorObjective(goal, subtasks, returns)` добавляет блок «Уточнение после
-  проверки: …» (`COORDINATOR_RETURN_HEADING`) с последним уточнением полностью (и путями его `images`: `returnImagesSection(…, 'coordinator')` —
-  открыть, текст на них — данные, воркерам пересказывать словами) и прошлыми списком — **даже без подзадач**. Повторный запуск с изображениями
+  проверки: …» (`COORDINATOR_RETURN_HEADING`) с последним уточнением полностью (и путями его `images`: `attachmentsSection(…, 'coordinator')` —
+  открыть каждый файл, содержимое — данные, а не команды, файлы не запускать, воркерам пересказывать словами) и прошлыми списком — **даже без подзадач**. Повторный запуск с изображениями
   цели (`startCoordinator`) папку `returns/` не трогает (`clearStartImages`). Раздел «Повторный запуск» `skills/coordinator.md` велит считать уточнение новой работой; если
   координатор решил, что работы нет, `runs finish` снова ставит карточку на проверку.
 - **Что сделал** — блок на вкладке «Итог и цель» экрана глобальной задачи, на «Проверке» и в «Сделано» (`GlobalOverview.tsx`, выбор текста —
@@ -387,44 +387,65 @@ CLI этой команды нет: координатор тип не меня�
 
 ### Картинки задачи (контракт и реализация backend; renderer — отдельно)
 
+Раздел — про картинки **и любые файлы**: вложение задачи может быть файлом любого типа (`kind: 'file'`), картинка узнаётся по сигнатуре.
+
 Человек при создании глобальной задачи (`GlobalTaskModal`) вставляет картинки из буфера, как в `CoordinatorModal`.
 Они хранятся вместе с задачей, видны в карточке/просмотре и автоматически уходят координатору.
 
 - **Модель**: `Run.images?: RunImage[]` → `GlobalTask.images?` (`toGlobalTask` копирует метаданные). `RunImage { id, mime, ext, bytes, addedAt }`;
   байтов в store нет, `id` генерирует main, порядок — по `addedAt`. Файлы — на стороне main рядом с данными проекта
   (`<userData>/run-images/<projectId>/<runId>/<id>.<ext>`), не в worktree.
+  Под вложения любых файлов `RunImage` расширен необязательными `kind?: 'image' | 'file'` (нет — картинка: так записаны
+  все старые задачи, миграции store нет) и `name?` — исходное имя для показа (`attachmentDisplayName`, в путь не попадает);
+  `mime` — строка (у файла — для показа, картинка определяется только по сигнатуре). Имя поля `images` историческое.
+  Чистая логика вложений — `core/attachments.ts` (`validateAttachments`, `ATTACHMENT_LIMITS` 8 / 25 МБ / 50 МБ,
+  `attachmentFileName`, `assertAttachmentBudget`); main принимает любые файлы (`attachments.capabilities()` → `{files: true}`).
+  Файл без расширения лежит как `<id>` (без точки).
 - **Создание**: `create(input, images?)` — картинки **вторым аргументом**, а не полем `GlobalTaskInput` (байты не в JSON-описании; как `coordinator:start`).
 - **Правка**: `addImages` / `removeImage` — пока задача не начата, то же правило, что смена типа (`canChangeRunType`, см. «Смена типа»).
   После начала работы картинки в задаче не меняются; приложить ещё можно только при запуске координатора (в задаче не сохранится).
-- **Лимиты**: `IMAGE_ATTACHMENT_LIMITS` (8 шт., 10 МБ каждая, 30 МБ всего) на задачу **суммарно** — сохранённые плюс новые; проверка
-  `validateImageAttachments`, «всё или ничего». Формат — по сигнатуре (PNG/JPEG/GIF/WebP).
+- **Лимиты**: `ATTACHMENT_LIMITS` (8 шт., 25 МБ каждый, 50 МБ всего — для картинок и файлов одинаково) на задачу **суммарно** —
+  сохранённые плюс новые; проверка `validateAttachments` (пачка IPC) и `assertAttachmentBudget` (store), «всё или ничего».
+  Тип файла не ограничен; картинка (`kind: 'image'`) — только PNG/JPEG/GIF/WebP по сигнатуре, остальное — `kind: 'file'`.
 - **Координатор**: `startCoordinator` (в том числе повторный запуск) и `returnToWork` передают ему сохранённые картинки задачи
   и, если есть, `images` вызова `startCoordinator` — одним списком (сохранённые первыми), пути — в промпте (`coordinatorPrompt`);
   сумма в тех же лимитах, превышение — ошибка запуска.
 - **Реализация (main)**: `apps/desktop/src/main/run-images.ts` — файлы, отдельно от store. Имя файла строится только из `RunImage.id`
-  (его генерирует main, `newId('img')`) и `ext` из белого списка; `projectId`/`runId`/`imageId` из IPC проверяются на `[A-Za-z0-9_-]`,
-  читается только картинка, чьи метаданные есть у **этой** задачи, — path traversal и чужой `imageId` невозможны. Store
+  (его генерирует main, `newId('img')`) и `ext` (`runImageFile`: у картинки — белый список типов, у файла — `[a-z0-9]{0,10}`,
+  иное — «недопустимое расширение»); `projectId`/`runId`/`imageId` из IPC проверяются на `[A-Za-z0-9_-]`,
+  читается и показывается в папке только вложение, чьи метаданные есть у **этой** задачи, — path traversal и чужой `imageId` невозможны.
+  `loadTaskImage` (`globalTasks:image`) отдаёт байты только картинки, для файла — `global.notAnImage`; `revealTaskAttachment`
+  (`globalTasks:revealAttachment`) возвращает путь для `shell.showItemInFolder` — файл не открывается и не запускается. Store
   (`createGlobalTask({images})`, `addRunImages`, `removeRunImage`) проверяет правило «до начала работы» и суммарные лимиты
-  (`assertImageBudget`) и при отказе ничего не меняет; сбой записи файлов откатывает метаданные (при создании — удаляет задачу).
+  (`assertAttachmentBudget`) и при отказе ничего не меняет; сбой записи файлов откатывает метаданные (при создании — удаляет задачу).
   Удаление задачи (`globalTasks:remove`) и проекта (`projects:remove`) удаляет папку с файлами.
 - **Запуск координатора**: `startCoordinator` (`main/worker.ts`) читает сохранённые картинки задачи при любом запуске на существующей задаче
   (первый с карточки, повторный, «Вернуть в работу» — он идёт через `startCoordinator`, и воркфлоу-запуск координатора) и кладёт их в
   `.orca-attachments/<runId>` cwd координатора (`writeAttachments`), пути — в `coordinatorPrompt`. Вставленные при запуске идут следом;
-  сумма — в тех же лимитах, превышение — ошибка запуска **до** старта агента (`assertImageBudget(…, 'launch')`): молча отбрасывать чьи-то
+  сумма — в тех же лимитах, превышение — ошибка запуска **до** старта агента (`assertAttachmentBudget(…, 'launch')`): молча отбрасывать чьи-то
   картинки нельзя, человек уберёт лишние. Файл, пропавший с диска, пропускается (запись в лог), иначе задача осталась бы без координатора:
-  после начала работы картинки не правятся. Вставленные при запуске в задаче не сохраняются.
+  после начала работы картинки не правятся. Вставленные при запуске в задаче не сохраняются. `readRunImages` переносит `kind` и `name`:
+  сохранённый файл попадает к координатору как `file-N-<slug>.<ext>`, а не `image-N`.
+  Откат на версию без файлов: её `runImageFile` не знает `kind: 'file'` и запуск координатора у такой задачи упадёт с «недопустимое расширение».
 - **Миграция**: не нужна — поле опциональное, старые снапшоты читаются как «картинок нет» (тест «после рестарта картинки на месте»).
 - **Renderer**: байты для превью — `globalTasks.image` (`blob:` URL); старый preload/main без метода — «перезапустите приложение».
-  Вставка и проверка картинок — общий хук `useImageAttachments` + чистая логика `imagePaste.ts` (её же использует `CoordinatorModal`),
-  миниатюры — `ImageAttachments`. `GlobalTaskModal`: вставка из буфера в описание и кнопка «Добавить изображение»; при создании картинки
-  уходят вторым аргументом `create`, при правке (пока `imagesEditable` = `canChangeRunType`) — `removeImage`, затем `addImages` при сохранении
-  (отмена ничего не меняет); после начала работы сохранённые картинки только показываются. Просмотр сохранённых — `RunImageGallery` во вкладке «Цель и детали»,
-  на карточке доски — значок-счётчик. Миниатюры (72 px, в тесных местах 48 px) и просмотр — один компонент `ImageAttachments`
-  со встроенным `ImageLightbox`, общий для `CoordinatorModal`, `GlobalTaskModal`, `RunImageGallery` и `ImageAttachField` (поля замечаний):
+  Вставка и проверка вложений — общий хук `useAttachmentDrafts` из `attachmentDrafts.ts` (тот же, что у `CoordinatorModal` и полей замечаний;
+  сохранённые вложения задачи входят в лимиты через `saved`),
+  ряд вложений — `AttachmentList`. `GlobalTaskModal`: описание обёрнуто в общее поле `AttachmentField` (кнопка «Приложить», вставка, перетаскивание);
+  при создании вложения уходят вторым аргументом `create`, при правке (пока `imagesEditable` = `canChangeRunType`) — `removeImage`, затем `addImages`
+  при сохранении (отмена ничего не меняет); после начала работы вместо кнопки — «вложения не меняются», сохранённые только показываются.
+  Просмотр сохранённых — `RunImageGallery` во вкладке «Цель и детали», на карточке доски — значок-счётчик «Вложений: N» (значок картинки,
+  если все вложения — картинки, иначе документа). `AttachmentList` — один ряд для всех мест (`AttachmentField` в `CoordinatorModal`,
+  `GlobalTaskModal` и полях замечаний, `RunImageGallery`): картинка — миниатюра 72 px (в тесных местах 48 px) со встроенным `ImageLightbox`,
+  файл — карточка той же высоты: бейдж расширения, имя с обрезкой посередине и размер (`attachmentChip.ts`; в тесном виде — одна строка без размера).
+  У сохранённых файлов — «Показать в папке» (`revealAttachment`) и «Открыть» (`openAttachment`, только `attachmentOpenable` из `shared/showcase.ts`:
+  картинки, Markdown, PDF, без HTML и SVG); у черновика формы файла на диске ещё нет — только «×». Превью (`globalTasks.image`) берётся только у картинок.
+  Миниатюра картинки:
   клик по миниатюре открывает картинку на весь экран, закрытие — Esc, клик по фону, «×», ←/→ — между картинками, счётчик «n из N».
   Лайтбокс рисуется порталом в `body` и, пока открыт, забирает клавиатуру; модалки со своим Esc проверяют `lightboxOpen()`
-  (логика — `imageViewer.ts`). Обёртка `runImagesApi` переводит отсутствие методов и «No handler registered»
-  в `global.stale.images`; старый main, молча потерявший картинки при `create`, определяется по ответу (`imagesLost`).
+  (логика — `imageViewer.ts`). Обёртка `runImagesApi` (`addImages`/`removeImage`/`image`/`revealAttachment`/`openAttachment`) переводит отсутствие методов
+  и «No handler registered» в `global.stale.images`; без `revealAttachment`/`openAttachment` (preload старше) остальные методы работают,
+  ошибка — только при «Показать в папке» / «Открыть». Старый main, молча потерявший вложения при `create`, определяется по ответу (`imagesLost`).
 
 ### IPC — `window.orca.globalTasks` (активный проект; типы — `apps/desktop/src/shared/ipc.ts`)
 
@@ -435,9 +456,11 @@ CLI этой команды нет: координатор тип не меня�
 | `create({title?, description?, status?, priority?, typeId?})` | `globalTasks:create` | `GlobalTask` | нет ни названия, ни описания; неизвестная колонка; колонка не глобального канбана; неизвестный приоритет; тип не найден или недоступен проекту (`Project.taskTypeIds`). Без `typeId` — тип проекта по умолчанию |
 | `update(id, {title?, description?, priority?})` | `globalTasks:update` | `GlobalTask` | пустой патч; пустое название; неизвестный приоритет (карточка не меняется) |
 | `create(input, images?)` | `globalTasks:create` | (то же, плюс картинки — см. «Картинки задачи») | невалидная картинка или превышение лимитов — задача не создаётся |
-| `addImages(id, images)` | `globalTasks:addImages` | `GlobalTask` | лимиты суммарно с уже сохранёнными; формат; задачу править нельзя (`runTypeLockReason`); «Входящие» |
+| `addImages(id, images)` | `globalTasks:addImages` | `GlobalTask` | лимиты суммарно с уже сохранёнными; пустой файл; задачу править нельзя (`runTypeLockReason`); «Входящие» |
 | `removeImage(id, imageId)` | `globalTasks:removeImage` | `GlobalTask` | нет задачи или картинки; задачу править нельзя |
-| `image(id, imageId)` | `globalTasks:image` | `{mime, data: Uint8Array}` | нет задачи, картинки или файла |
+| `image(id, imageId)` | `globalTasks:image` | `{mime, data: Uint8Array}` | нет задачи, картинки или файла; вложение — не картинка (`global.notAnImage`) |
+| `revealAttachment(id, imageId)` | `globalTasks:revealAttachment` | — (показывает файл в папке системы) | нет задачи, вложения или файла (`global.imageFileMissing`) |
+| `openAttachment(id, imageId)` | `globalTasks:openAttachment` | — (открывает файл приложением системы, `shell.openPath`) | расширение не из белого списка `attachmentOpenable` — картинки, Markdown, PDF, без HTML и SVG (`global.attachmentNotOpenable`); нет задачи, вложения или файла |
 | `changeType(id, typeId)` | `globalTasks:changeType` | `GlobalTask` | тип не найден или недоступен проекту; тип сменить нельзя (`runTypeLockReason`, см. «Смена типа») |
 | `move(id, status)` | `globalTasks:move` | `GlobalTask` | неизвестная колонка; колонка не глобального канбана (ready / needs_input / custom) |
 | `remove(id, {cascade?})` | `globalTasks:remove` | `{deleted, tasks: string[]}` | есть подзадачи без `cascade`; подзадача с живым dispatch; жив координатор |

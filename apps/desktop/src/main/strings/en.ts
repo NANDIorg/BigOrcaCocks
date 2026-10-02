@@ -177,11 +177,11 @@ export default {
   'coordinator.alreadyRunning': 'the coordinator of this global task is already running (terminal {pty})',
   'coordinator.finishing': 'the coordinator of this global task is still finishing — try again in a few seconds',
 
-  'attachments.noWorktree': 'the task has no worktree on disk — nowhere to save the images for the feedback (the task is already accepted or its worktree was removed)',
-  'attachments.saveFailed': 'could not save the images: {error}',
-  'attachments.invalid': 'the images were not accepted: {error}',
-  'attachments.needText': 'the images need feedback text: describe what to fix',
-  'attachments.notForAction': 'images can only be attached to “Clarify” and “Return”',
+  'attachments.noWorktree': 'the task has no worktree on disk — nowhere to save the attachments for the feedback (the task is already accepted or its worktree was removed)',
+  'attachments.saveFailed': 'could not save the attachments: {error}',
+  'attachments.invalid': 'the attachments were not accepted: {error}',
+  'attachments.needText': 'the attachments need feedback text: describe what to fix',
+  'attachments.notForAction': 'files can only be attached to “Clarify” and “Return”',
 
   'workflow.runFinished': 'the global task workflow has already finished — no coordinator is needed',
   'workflow.coordinatorNotRunning': 'your notes are saved, but the coordinator did not start — start it from the global task card (“Start coordinator”)',
@@ -189,10 +189,12 @@ export default {
   'global.coordinatorAlive': 'the coordinator of this global task is still running — close its terminal first',
   'global.typeRequired': 'choose a task type',
   'global.subtaskTitleEmpty': 'the subtask title cannot be empty',
-  'global.imageNotFound': 'the global task has no image {imageId}',
-  'global.imageFileMissing': 'the file of image {imageId} was not found on disk — remove the image and attach it again',
-  'global.imagesEmpty': 'no images to add',
-  'global.imagesSaveFailed': 'could not save the task images: {reason}',
+  'global.imageNotFound': 'the global task has no attachment {imageId}',
+  'global.imageFileMissing': 'the file of attachment {imageId} was not found on disk — remove the attachment and attach the file again',
+  'global.notAnImage': 'attachment {imageId} is not an image: it has no preview, but it can be shown in its folder',
+  'global.attachmentNotOpenable': 'attachment {imageId} cannot be opened from the app — it can be shown in its folder',
+  'global.imagesEmpty': 'no attachments to add',
+  'global.imagesSaveFailed': 'could not save the task attachments: {reason}',
   'global.approvalAmbiguous': {
     one: '{count} review request of the global task is waiting ({titles}) — resolve it in the Inbox',
     other: '{count} review requests of the global task are waiting ({titles}) — the card cannot tell which path to decide: resolve each one in the Inbox'

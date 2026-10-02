@@ -1,4 +1,4 @@
-// Логика просмотра приложенных изображений (ImageAttachments + ImageLightbox) без DOM и React — под тестом.
+// Логика просмотра приложенных изображений (AttachmentList + ImageLightbox) без DOM и React — под тестом.
 
 /** Миниатюра: `url` нет — ещё грузится (или `failed`). */
 export interface ViewerThumb {

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { join, resolve, delimiter } from 'node:path'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { app } from 'electron'
-import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentInvocation, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type ImageAttachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt, type AgentInvocation, type AgentSpec, type AssistantSettings, type TaskStore, type Role, type Attachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { BUILTIN_PROMPTS } from './prompts'
 import { defaultShell, isAlive, killPty, spawnPty, type PtyCommand } from './pty'
 import { addTaskWorktree, assertHasCommits, projectBranchInfo, setupCommand, taskWorktreePath } from './git'
@@ -54,12 +54,45 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
+/** Временные файлы запуска агентов на Windows (system prompt claude, `win32Launch`): в userData, не в репозитории. */
+function launchTempDir(): string {
+  return join(app.getPath('userData'), 'tmp', 'system-prompts')
+}
+
 /**
  * Запуск агента на Windows (`win32Launch`, сборка командной строки — `win32-launch.ts`): Node для JS-точки входа
- * npm-шима в собранном приложении — Node из Electron.
+ * npm-шима в собранном приложении — Node из Electron. Длинный system prompt claude уходит в файл `launchTempDir()`
+ * с уникальным именем — его удаляет `withTempCleanup` после выхода агента.
  */
 function launchOnWin32(inv: AgentInvocation): Win32Launch {
-  return win32Launch(inv.command, inv.args, { electronNode: app.isPackaged ? process.execPath : undefined })
+  return win32Launch(inv.command, inv.args, {
+    electronNode: app.isPackaged ? process.execPath : undefined,
+    systemPromptFile: () => {
+      mkdirSync(launchTempDir(), { recursive: true })
+      return join(launchTempDir(), `${randomUUID()}.md`)
+    }
+  })
+}
+
+function removeTempFiles(files: readonly string[] | undefined): void {
+  for (const f of files ?? []) rmSync(f, { force: true })
+}
+
+/** onExit PTY, который сначала удаляет временные файлы запуска: агент их уже прочитал и больше не откроет. */
+function withTempCleanup(files: readonly string[] | undefined, onExit?: (id: string, code: number) => void): ((id: string, code: number) => void) | undefined {
+  if (!files?.length) return onExit
+  return (id, code) => {
+    removeTempFiles(files)
+    onExit?.(id, code)
+  }
+}
+
+/**
+ * Хвосты временных файлов запуска от прошлой сессии приложения (выход по сбою, kill): при старте агентов этого
+ * экземпляра ещё нет, а агенты прошлого умерли вместе с его PTY — папку можно очистить целиком.
+ */
+export function pruneLaunchTempFiles(): void {
+  if (process.platform === 'win32') rmSync(launchTempDir(), { recursive: true, force: true })
 }
 
 /**
@@ -164,19 +197,25 @@ export function startWorker(
         }
       : { command: inv.command, args: inv.args }
 
-  const ptyId = spawnPty(
-    {
-      meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
-      cwd: worktree,
-      command,
-      args,
-      ...(win32 && setup ? { before: win32Setup(setup) } : {}),
-      cols,
-      rows,
-      env: { ...baseEnv(ctx), ...win32?.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
-    },
-    (id, code) => store.ptyExited(id, code)
-  )
+  let ptyId: string
+  try {
+    ptyId = spawnPty(
+      {
+        meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
+        cwd: worktree,
+        command,
+        args,
+        ...(win32 && setup ? { before: win32Setup(setup) } : {}),
+        cols,
+        rows,
+        env: { ...baseEnv(ctx), ...win32?.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
+      },
+      withTempCleanup(win32?.tempFiles, (id, code) => store.ptyExited(id, code))
+    )
+  } catch (e) {
+    removeTempFiles(win32?.tempFiles)
+    throw e
+  }
   store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
   return { ptyId, dispatchId, worktree, branch }
 }
@@ -186,7 +225,7 @@ export function startWorker(
  * глобальной задачи (`ensureRunBranch`), а без неё — в корне репозитория.
  * Без `runId` запуск создаёт новый прогон = глобальную задачу; с `runId` — повторный запуск на существующей
  * (цель — её описание и список подзадач, см. `resumeObjective`). Id прогона уходит координатору в ORCA_RUN_ID.
- * `images` (уже проверенные `validateImageAttachments`) сохраняются файлами на время прогона,
+ * `images` — вложения любого типа (уже проверенные `validateAttachments`): сохраняются файлами на время прогона,
  * в промпт уходят только их пути — содержимое через терминал не передаётся.
  */
 /**
@@ -207,7 +246,7 @@ export function startCoordinator(
   objective: string,
   cols = 120,
   rows = 30,
-  images: ImageAttachment[] = [],
+  images: Attachment[] = [],
   runId?: string
 ): { ptyId: string; runId: string } {
   // Роль coordinator можно удалить из типа задачи («Настройки» → «Типы задач»); молча запускать claude вместо неё нельзя — человек её убрал.
@@ -219,12 +258,12 @@ export function startCoordinator(
   const extraArgs = roleLaunchExtraArgs(role, 'coordinator.cannotStart')
   const resume = runId !== undefined ? resumeObjective(store, runId, isAlive) : undefined
   if (resume) objective = resume.objective
-  // Картинки, сохранённые у задачи, идут координатору при каждом запуске (первом, повторном и «Вернуть в работу»):
-  // сохранённые первыми, потом вставленные при запуске. Сумма — в тех же лимитах: превышение — ошибка до старта
-  // агента (молча отбрасывать чьи-то картинки нельзя). Пришедшие в `images` в задаче не сохраняются.
+  // Вложения, сохранённые у задачи, идут координатору при каждом запуске (первом, повторном и «Вернуть в работу»):
+  // сохранённые первыми, потом приложенные при запуске. Сумма — в тех же лимитах: превышение — ошибка до старта
+  // агента (молча отбрасывать чьи-то файлы нельзя). Пришедшие в `images` в задаче не сохраняются.
   if (resume && ctx.runImagesRoot) {
     const merged = coordinatorImages(ctx.runImagesRoot, ctx.projectId, resume.run, images)
-    if (merged.missing.length > 0) console.error(`[orca] у задачи ${runId} нет на диске сохранённых изображений: ${merged.missing.map((m) => m.id).join(', ')}`)
+    if (merged.missing.length > 0) console.error(`[orca] у задачи ${runId} нет на диске сохранённых вложений: ${merged.missing.map((m) => m.id).join(', ')}`)
     images = merged.images
   }
   // Репозиторий без коммитов — отказ до `createRun`: иначе карточка создалась бы и тут же закрылась пустой.
@@ -232,13 +271,14 @@ export function startCoordinator(
   const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
   let ptyId: string
   let root: string | undefined
+  let launch: Win32Launch | undefined
   const sessionId = agentSessionId(spec)
   try {
     // Ветка фичи заводится до координатора: он декомпозирует по коду этой ветки, воркеры ответвятся от неё.
     const cwd = ensureRunBranch(store, repoRoot, run.id)?.worktree ?? repoRoot
     root = images.length > 0 ? attachmentsRoot(cwd) : undefined
     if (root) pruneAttachments(store, root, isAlive)
-    // Изображения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны. Возвраты
+    // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны. Возвраты
     // в работу (`returns/`) остаются: на них ссылаются `Run.stageInput.images` и `Run.returns`.
     if (root && resume) clearStartImages(root, run.id)
     const paths = root ? writeAttachments(root, run.id, images) : []
@@ -250,7 +290,7 @@ export function startCoordinator(
       sessionId,
       extraArgs
     })
-    const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
+    launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
     ptyId = spawnPty({
       meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
       cwd,
@@ -267,11 +307,12 @@ export function startCoordinator(
         BASH_DEFAULT_TIMEOUT_MS: '1800000',
         BASH_MAX_TIMEOUT_MS: '3600000'
       }
-    }, (id) => {
+    }, withTempCleanup(launch.tempFiles, (id) => {
       store.coordinatorExited(run.id, id)
       escalateAfterCoordinator(store, run.id)
-    })
+    }))
   } catch (e) {
+    removeTempFiles(launch?.tempFiles)
     // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
     // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
     if (!resume) store.closeRun(run.id)
@@ -339,21 +380,26 @@ export function startAssistant(ctx: AssistantContext, cols = 120, rows = 30, onE
   })
   const cwd = assistantCwd(app.getPath('userData'))
   mkdirSync(cwd, { recursive: true })
-  const launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
-  const ptyId = spawnPty(
-    {
-      meta: { role: 'assistant', label: 'ассистент' },
-      cwd,
-      command: launch.command,
-      args: launch.args,
-      cols,
-      rows,
-      env: {
-        ...assistantEnv({ socketPath: ctx.socketPath, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
-        ...launch.env
-      }
-    },
-    onExit
-  )
-  return { ptyId, sessionId }
+  const launch: Win32Launch = process.platform === 'win32' ? launchOnWin32(inv) : { ...inv, env: {} }
+  try {
+    const ptyId = spawnPty(
+      {
+        meta: { role: 'assistant', label: 'ассистент' },
+        cwd,
+        command: launch.command,
+        args: launch.args,
+        cols,
+        rows,
+        env: {
+          ...assistantEnv({ socketPath: ctx.socketPath, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
+          ...launch.env
+        }
+      },
+      withTempCleanup(launch.tempFiles, onExit)
+    )
+    return { ptyId, sessionId }
+  } catch (e) {
+    removeTempFiles(launch.tempFiles)
+    throw e
+  }
 }

@@ -37,6 +37,17 @@ export function formatDateTime(ts: number | Date, opts: Intl.DateTimeFormatOptio
   return new Intl.DateTimeFormat(intlLocale(), opts).format(ts)
 }
 
+/**
+ * Размер файла: «512 Б», «48 КБ», «1,2 МБ» / «1.2 MB». Основание 1024, как у лимитов вложений (`ATTACHMENT_LIMITS`),
+ * чтобы «25 МБ» в подсказке и размер файла считались одинаково. Дробная часть — только у чисел меньше 10.
+ */
+export function formatBytes(bytes: number): string {
+  const n = Number.isFinite(bytes) && bytes > 0 ? bytes : 0
+  if (n < 1024) return t('common.unit.byte', { n: formatInteger(n) })
+  const [value, key] = n < 1024 * 1024 ? [n / 1024, 'common.unit.kb'] as const : [n / (1024 * 1024), 'common.unit.mb'] as const
+  return t(key, { n: formatShort(value, value < 10 ? 1 : 0) })
+}
+
 const MIN = 60_000
 const HOUR = 60 * MIN
 const DAY = 24 * HOUR

@@ -1,27 +1,30 @@
 /**
- * Картинки глобальной задачи на диске (контракт — docs/nested-kanban.md → «Картинки задачи»).
+ * Вложения глобальной задачи на диске — картинки и любые файлы (контракт — docs/nested-kanban.md → «Картинки задачи»;
+ * имена `image*` исторические).
  *
- * Файлы лежат рядом с данными проекта: `<userData>/run-images/<projectId>/<runId>/<imageId>.<ext>` — не в worktree и
+ * Файлы лежат рядом с данными проекта: `<userData>/run-images/<projectId>/<runId>/<imageId>[.<ext>]` — не в worktree и
  * не в репозитории пользователя, чтобы не попасть в `git status`. Метаданные (`RunImage`) — в store (`Run.images`),
  * байты в store и снапшот не попадают. Имя файла строится только из `RunImage.id` (его генерирует main) и `ext`
- * из белого списка типов: то, что прислал renderer, в путь не попадает. Читать можно только картинку, чьи метаданные
- * есть у задачи, поэтому `imageId` из IPC не даёт выйти из папки задачи.
+ * (у картинки — из белого списка типов, у файла — `[a-z0-9]{0,10}`): исходное имя файла хранится только в метаданных
+ * (`RunImage.name`) и в путь не попадает. Читать и показывать в папке можно только вложение, чьи метаданные есть
+ * у задачи, поэтому `imageId` из IPC не даёт выйти из папки задачи.
  *
  * Функции принимают корень явно (без electron), чтобы тестироваться в временной папке.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  IMAGE_ATTACHMENT_TYPES, assertImageBudget, newId,
-  type GlobalTask, type ImageAttachment, type Run, type RunImage, type TaskStore
+  IMAGE_ATTACHMENT_TYPES, assertAttachmentBudget, newId,
+  type Attachment, type GlobalTask, type Run, type RunImage, type TaskStore
 } from '@orca-board/core'
+import { attachmentOpenable } from '../shared/showcase'
 import { OrcaError } from './i18n'
 
 const ROOT_DIR = 'run-images'
-/** Идентификаторы проекта, прогона и картинки в путях — только такие символы (см. `newId`). */
+/** Идентификаторы проекта, прогона и вложения в путях — только такие символы (см. `newId`). */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
 
-/** Корень хранилища картинок: `<userData>/run-images`. */
+/** Корень хранилища вложений: `<userData>/run-images`. */
 export function runImagesRoot(userData: string): string {
   return join(userData, ROOT_DIR)
 }
@@ -31,30 +34,51 @@ function safe(id: string, what: string): string {
   return id
 }
 
-/** Папка картинок задачи: `<root>/<projectId>/<runId>`. */
+/** Папка вложений задачи: `<root>/<projectId>/<runId>`. */
 export function runImagesDir(root: string, projectId: string, runId: string): string {
   return join(root, safe(projectId, 'проект'), safe(runId, 'задача'))
 }
 
-/** Путь файла картинки; расширение — только из белого списка типов, иначе метаданные повреждены. */
+/** Нет `kind` — картинка: так записаны вложения до появления файлов. */
+function isImage(meta: Pick<RunImage, 'kind'>): boolean {
+  return (meta.kind ?? 'image') === 'image'
+}
+
+/** Расширение файла-вложения: как у `sanitizeAttachmentName` (может быть пустым); точек и разделителей нет. */
+const FILE_EXT = /^[a-z0-9]{0,10}$/
+
+/**
+ * Путь файла вложения: `<id>.<ext>`, у файла без расширения — `<id>`. Расширение картинки — только из белого списка
+ * типов, файла — `[a-z0-9]{0,10}`; иное (и неизвестный `kind`) — метаданные повреждены.
+ */
 export function runImageFile(dir: string, meta: RunImage): string {
-  const known = (Object.values(IMAGE_ATTACHMENT_TYPES) as string[]).includes(meta.ext)
-  if (!known) throw new Error(`изображение ${meta.id}: недопустимое расширение «${meta.ext}»`)
-  return join(dir, `${safe(meta.id, 'изображение')}.${meta.ext}`)
+  const id = safe(meta.id, 'вложение')
+  const ext = typeof meta.ext === 'string' ? meta.ext : ''
+  const known = isImage(meta)
+    ? (Object.values(IMAGE_ATTACHMENT_TYPES) as string[]).includes(ext)
+    : meta.kind === 'file' && FILE_EXT.test(ext)
+  if (!known) throw new Error(`вложение ${meta.id}: недопустимое расширение «${ext}»`)
+  return join(dir, ext ? `${id}.${ext}` : id)
 }
 
-/** Проверенные вложения → метаданные (id генерирует main) и байты для записи. Порядок сохраняется. */
-export function prepareRunImages(valid: readonly ImageAttachment[], now = Date.now()): Array<{ meta: RunImage; data: Uint8Array }> {
-  return valid.map((v) => ({ meta: { id: newId('img'), mime: v.mime, ext: v.ext, bytes: v.data.byteLength, addedAt: now }, data: v.data }))
+/** Проверенные вложения → метаданные (id генерирует main; `kind` и имя — для UI) и байты для записи. Порядок сохраняется. */
+export function prepareRunImages(valid: readonly Attachment[], now = Date.now()): Array<{ meta: RunImage; data: Uint8Array }> {
+  return valid.map((v) => ({
+    meta: {
+      id: newId('img'), kind: v.kind, ...(v.name ? { name: v.name } : {}),
+      mime: v.mime, ext: v.ext, bytes: v.data.byteLength, addedAt: now
+    },
+    data: v.data
+  }))
 }
 
-/** Пишет файлы картинок (`wx` — существующий файл не перезаписывается). При сбое сам ничего не откатывает. */
+/** Пишет файлы вложений (`wx` — существующий файл не перезаписывается). При сбое сам ничего не откатывает. */
 export function writeRunImages(dir: string, prepared: ReadonlyArray<{ meta: RunImage; data: Uint8Array }>): void {
   mkdirSync(dir, { recursive: true })
   for (const { meta, data } of prepared) writeFileSync(runImageFile(dir, meta), data, { flag: 'wx', mode: 0o600 })
 }
 
-/** Удаляет файл картинки; нет файла — не ошибка. */
+/** Удаляет файл вложения; нет файла — не ошибка. */
 export function removeRunImageFile(dir: string, meta: RunImage): void {
   rmSync(runImageFile(dir, meta), { force: true })
 }
@@ -68,17 +92,18 @@ export function removeRunImagesDir(root: string, projectId: string, runId?: stri
     const dir = runId === undefined ? join(root, safe(projectId, 'проект')) : runImagesDir(root, projectId, runId)
     rmSync(dir, { recursive: true, force: true })
   } catch (e) {
-    console.error(`[orca] не удалось удалить изображения ${runId ?? projectId}:`, (e as Error).message)
+    console.error(`[orca] не удалось удалить вложения ${runId ?? projectId}:`, (e as Error).message)
   }
 }
 
 /**
- * Читает картинки для запуска координатора. Файл, которого нет на диске (удалили руками), пропускается и
- * возвращается в `missing`: ошибка запуска оставила бы задачу без координатора навсегда, ведь картинки после
+ * Читает вложения для запуска координатора. `kind` и `name` переносятся: по ним файл получит в папке координатора
+ * имя `file-N-<slug>.ext`, а не `image-N`. Файл, которого нет на диске (удалили руками), пропускается и
+ * возвращается в `missing`: ошибка запуска оставила бы задачу без координатора навсегда, ведь вложения после
  * начала работы не правятся.
  */
-export function readRunImages(dir: string, metas: readonly RunImage[]): { images: ImageAttachment[]; missing: RunImage[] } {
-  const images: ImageAttachment[] = []
+export function readRunImages(dir: string, metas: readonly RunImage[]): { images: Attachment[]; missing: RunImage[] } {
+  const images: Attachment[] = []
   const missing: RunImage[] = []
   for (const meta of [...metas].sort((a, b) => a.addedAt - b.addedAt)) {
     const file = runImageFile(dir, meta)
@@ -86,26 +111,26 @@ export function readRunImages(dir: string, metas: readonly RunImage[]): { images
       missing.push(meta)
       continue
     }
-    images.push({ mime: meta.mime, ext: meta.ext, data: new Uint8Array(readFileSync(file)) })
+    images.push({ kind: isImage(meta) ? 'image' : 'file', mime: meta.mime, ext: meta.ext, name: meta.name ?? '', data: new Uint8Array(readFileSync(file)) })
   }
   return { images, missing }
 }
 
 /**
- * Картинки для запуска координатора: сохранённые у задачи (`Run.images`) первыми, затем вставленные при запуске
- * (`pasted`, уже проверенные `validateImageAttachments`). Сумма — в тех же лимитах `IMAGE_ATTACHMENT_LIMITS`:
- * превышение — ошибка (`assertImageBudget`, контекст `launch`) до старта агента, а не молчаливая потеря чьих-то
- * картинок. Пропавшие с диска файлы — в `missing` (см. `readRunImages`).
+ * Вложения для запуска координатора: сохранённые у задачи (`Run.images`) первыми, затем приложенные при запуске
+ * (`pasted`, уже проверенные `validateAttachments`). Сумма — в тех же лимитах `ATTACHMENT_LIMITS`:
+ * превышение — ошибка (`assertAttachmentBudget`, контекст `launch`) до старта агента, а не молчаливая потеря чьих-то
+ * файлов. Пропавшие с диска файлы — в `missing` (см. `readRunImages`).
  */
 export function coordinatorImages(
-  root: string, projectId: string, run: Run, pasted: readonly ImageAttachment[]
-): { images: ImageAttachment[]; missing: RunImage[] } {
+  root: string, projectId: string, run: Run, pasted: readonly Attachment[]
+): { images: Attachment[]; missing: RunImage[] } {
   const saved = run.images && run.images.length > 0 ? readRunImages(runImagesDir(root, projectId, run.id), run.images) : { images: [], missing: [] }
-  assertImageBudget(saved.images, pasted, 'launch')
+  assertAttachmentBudget(saved.images, pasted, 'launch')
   return { images: [...saved.images, ...pasted], missing: saved.missing }
 }
 
-/** Метаданные картинки задачи по данным из IPC (не доверенным): нет задачи или картинки — `OrcaError`. */
+/** Метаданные вложения задачи по данным из IPC (не доверенным): нет задачи или вложения — `OrcaError`. */
 function findImage(store: TaskStore, runId: unknown, imageId: unknown): RunImage {
   const run = typeof runId === 'string' ? store.getRun(runId) : undefined
   if (!run) throw new OrcaError('global.notFound', { id: String(runId) })
@@ -114,10 +139,10 @@ function findImage(store: TaskStore, runId: unknown, imageId: unknown): RunImage
   return meta
 }
 
-/** Создаёт задачу с картинками. Сбой записи файлов — задача не остаётся (метаданные без файлов не оставляем). */
+/** Создаёт задачу с вложениями. Сбой записи файлов — задача не остаётся (метаданные без файлов не оставляем). */
 export function createTaskWithImages(
   store: TaskStore, root: string, projectId: string,
-  input: Parameters<TaskStore['createGlobalTask']>[0], valid: readonly ImageAttachment[]
+  input: Parameters<TaskStore['createGlobalTask']>[0], valid: readonly Attachment[]
 ): GlobalTask {
   const prepared = prepareRunImages(valid)
   const task = store.createGlobalTask({ ...input, ...(prepared.length > 0 ? { images: prepared.map((p) => p.meta) } : {}) })
@@ -134,11 +159,11 @@ export function createTaskWithImages(
 }
 
 /**
- * Добавляет картинки к задаче: store проверяет правило «до начала работы» и суммарные лимиты (ничего не
+ * Добавляет вложения к задаче: store проверяет правило «до начала работы» и суммарные лимиты (ничего не
  * меняя при отказе), затем пишутся файлы; сбой записи откатывает метаданные и уже записанные файлы.
  */
 export function addTaskImages(
-  store: TaskStore, root: string, projectId: string, runId: string, valid: readonly ImageAttachment[]
+  store: TaskStore, root: string, projectId: string, runId: string, valid: readonly Attachment[]
 ): GlobalTask {
   if (valid.length === 0) throw new OrcaError('global.imagesEmpty')
   if (!store.getRun(runId)) throw new OrcaError('global.notFound', { id: String(runId) })
@@ -165,22 +190,53 @@ export function addTaskImages(
   return task
 }
 
-/** Удаляет картинку: метаданные (с проверкой правила и существования) и файл. */
+/** Удаляет вложение: метаданные (с проверкой правила и существования) и файл. */
 export function removeTaskImage(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): GlobalTask {
   const meta = findImage(store, runId, imageId)
   const task = store.removeRunImage(runId, meta.id)
   try {
     removeRunImageFile(runImagesDir(root, projectId, runId), meta)
   } catch (e) {
-    console.error(`[orca] не удалось удалить файл изображения ${meta.id}:`, (e as Error).message)
+    console.error(`[orca] не удалось удалить файл вложения ${meta.id}:`, (e as Error).message)
   }
   return task
 }
 
-/** Байты картинки для превью. Только картинка из метаданных задачи; нет задачи, картинки или файла — `OrcaError`. */
-export function loadTaskImage(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): { mime: string; data: Uint8Array } {
+/** Файл вложения из метаданных задачи, который есть на диске; нет задачи, вложения или файла — `OrcaError`. */
+function existingFile(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): { meta: RunImage; file: string } {
   const meta = findImage(store, runId, imageId)
   const file = runImageFile(runImagesDir(root, projectId, runId), meta)
   if (!existsSync(file)) throw new OrcaError('global.imageFileMissing', { imageId: meta.id })
+  return { meta, file }
+}
+
+/**
+ * Байты картинки для превью (`<img>` из blob). Только картинка из метаданных задачи: файл (`kind: 'file'`) превью
+ * не имеет — `global.notAnImage`, его байты в renderer не отдаём. Нет задачи, вложения или файла — `OrcaError`.
+ */
+export function loadTaskImage(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): { mime: string; data: Uint8Array } {
+  const meta = findImage(store, runId, imageId)
+  if (!isImage(meta)) throw new OrcaError('global.notAnImage', { imageId: meta.id })
+  const { file } = existingFile(store, root, projectId, runId, imageId)
   return { mime: meta.mime, data: new Uint8Array(readFileSync(file)) }
+}
+
+/**
+ * Абсолютный путь вложения для «Показать в папке» (`shell.showItemInFolder`). Только вложение из метаданных этой
+ * задачи (`imageId` из IPC путь не задаёт), идентификаторы проверены `safe`. Файл не открывается и не запускается.
+ */
+export function revealTaskAttachment(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): string {
+  return existingFile(store, root, projectId, runId, imageId).file
+}
+
+/**
+ * Абсолютный путь вложения для «Открыть» (`shell.openPath`) — только расширение из белого списка
+ * (`attachmentOpenable`: картинки, Markdown, PDF; без HTML и SVG). Остальное приложение не открывает и не запускает —
+ * `global.attachmentNotOpenable`, его можно только показать в папке. Как и `revealTaskAttachment`, путь строится из
+ * метаданных этой задачи.
+ */
+export function openTaskAttachment(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): string {
+  const meta = findImage(store, runId, imageId)
+  if (!attachmentOpenable(meta.ext)) throw new OrcaError('global.attachmentNotOpenable', { imageId: meta.id })
+  return existingFile(store, root, projectId, runId, imageId).file
 }

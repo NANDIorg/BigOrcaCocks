@@ -96,8 +96,9 @@ interface HumanRequest {
 | `decision` + `answer` | `optionId` обязателен и должен быть среди `options` (иначе ошибки `запрос <id>: выбери вариант — optionId обязателен` / `варианта «<x>» у запроса <id> нет`), запрос решён; движок прогона (`handleRunRequest` → `runDecisionResolved`) ведёт граф по ребру варианта, если прогон всё ещё на развилке, и пишет `StageDecision {by: 'human', fallback, agentNote, reason: text}` в историю; варианта уже нет в графе — `workflow_blocked` | `request_resolved {runId, kind: 'decision', action: 'answer', nodeId, optionId, decision?}` (`decision` = `text`, без `taskId`) |
 | не `pending` | ошибка «уже решено: запрос … решён/отменён» | — |
 
-**Картинки к «Уточнить» / «Вернуть».** IPC `requests:resolve(id, resolution, images?)` принимает байты картинок (PNG/JPEG/GIF/WebP, лимиты
-`IMAGE_ATTACHMENT_LIMITS`) только для `clarify` и `reject` — к остальным действиям они дают ошибку `attachments.notForAction`, а без текста — `attachments.needText`.
+**Картинки к «Уточнить» / «Вернуть».** Раздел — про картинки **и любые файлы**: правила одинаковы для вложений любого типа (поле `images` — историческое имя).
+IPC `requests:resolve(id, resolution, images?)` принимает байты вложений (любой тип файла, `validateAttachments`, лимиты
+`ATTACHMENT_LIMITS`: 8 шт., 25 МБ каждый, 50 МБ всего; имена на диске — `image-N.<ext>` / `file-N-<slug>.<ext>`) только для `clarify` и `reject` — к остальным действиям они дают ошибку `attachments.notForAction`, а без текста — `attachments.needText`.
 Main пишет файлы в cwd читателя (`resolveWithImages`, `src/main/attachments.ts`): запрос на задаче — в worktree воркера, approval прогона (без `taskId`) — в cwd
 координатора — и ставит `resolution.images` (абсолютные пути). `resolution.images`, присланные renderer-ом или сокетом (`request resolve` картинок не принимает),
 вырезаются. Пути идут дальше вместе с текстом: `task.feedbackImages` (воркер видит их в промпте под замечаниями/уточнением), `stageInput.images` и `stage_started.images`
@@ -131,8 +132,8 @@ Payload короткие: строка события в мониторе коо
 | `question` | `taskId, dispatchId, questionId, question` (≤ 300), `forHuman?: true, options` (метки) | `orca-board question get --question <id>` |
 | `question_answered` | `taskId, dispatchId, questionId, requestId?, question, answer, workerLive, status` | — |
 | `answer_accepted` | `taskId, decision?, summary?, requestId?, dispatchId, answerFor, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
-| `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId`, `images?` (пути картинок к уточнению) | `orca-board request get --request <id>` (`resolution.text`) |
-| `request_resolved` | `taskId` (у approval и decision прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`/`answer`), `requestId, kind, dispatchId?, nodeId?` (approval, decision), `optionId` (decision — выбранный вариант), `decision` (≤ 2000, текст решения по approval, обоснование по decision), `decisionTruncated?`, `images?` (пути картинок к замечаниям `reject`) | `orca-board request get --request <id>` (`resolution.text`) |
+| `answer_clarified` | `taskId, feedback` (≤ 300), `requestId, dispatchId`, `images?` (пути приложенных к уточнению файлов — скриншоты, документы, логи; читает воркер) | `orca-board request get --request <id>` (`resolution.text`) |
+| `request_resolved` | `taskId` (у approval и decision прогона вместо него `runId`), `action` (`restart`/`dismiss`/`accept`/`reject`/`answer`), `requestId, kind, dispatchId?, nodeId?` (approval, decision), `optionId` (decision — выбранный вариант), `decision` (≤ 2000, текст решения по approval, обоснование по decision), `decisionTruncated?`, `images?` (пути приложенных к замечаниям `reject` файлов) | `orca-board request get --request <id>` (`resolution.text`) |
 | `worker_done` | `taskId, dispatchId, summary, files, answerFor?, gateFor?, requestId?, answer` (≤ 2000), `answerTruncated?` | `orca-board task answer --task <id>` |
 
 Уведомление «нужен ваш ответ» (`notifyKind`, `notify.ts`) приходит только на `request_created` (вопрос / ответ
