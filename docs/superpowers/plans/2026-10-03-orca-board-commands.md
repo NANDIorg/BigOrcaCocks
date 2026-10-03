@@ -40,14 +40,14 @@
 - Produces contracts `ProjectCommandContext { projectId, clientId, actor: { kind: 'operator'|'agent'|'system', id } }`, `TaskCreateInput`, `BoardCommandName`, `BoardCommands` (get/createTask/updateTask/moveTask/removeTask), `BoardCommandErrorData`.
 - Produces runtime `BoardCommandError` с `code/details/cause`; `createBoardCommands({ project(id), authorize(context, command), selection }) : BoardCommands`.
 - `project(id)` возвращает `{ store: TaskStore, roles(): RoleSource, agents(): AgentInfo[] } | undefined`; никогда не activeStore. `selection: AgentSelectionServices`. authorize возвращает строго true для разрешённого вызова, иначе отказ.
-- Results: get → BoardSnapshot DTO с tasks/dispatches/events/questions/runs/requests и optional formatVersion; create/update/move → Task; remove → void. Возвращённые структуры клонированы.
+- Results: get → BoardSnapshot DTO с tasks/dispatches/events/questions/runs и optional requests/formatVersion; create/update/move → Task; remove → void. Возвращённые структуры клонированы.
 - Errors: `command.invalidContext`, `command.forbidden`, `command.invalidInput`, `command.projectNotFound`, `command.taskNotFound`, `command.rejected`; details содержат поле/идентификаторы/причину, без stack и store.
 
-- [ ] Написать tests реальных TaskStore и файловых persistence: два проекта/клиента, host policy deny до project lookup, неизвестные context/project/task, payload schema и лишние поля, role/agent guards, история operator→human/agent→cli/system→app, неизвестная колонка и in_progress, мутации копий, reload, throw политики/selection/store.
-- [ ] RED: `node --test packages/runtime/test/board-commands.test.ts`; ожидается assertion отсутствующего runtime factory.
-- [ ] Реализовать contracts/service. Payload копируется и проверяется до effects; whitelist исключает массовое присваивание runId/agent/gateFor. Source действует только в синхронной операции; существующие listeners не меняются.
-- [ ] GREEN: тот же targeted command, затем typecheck contracts/runtime, suites contracts/runtime/core; ожидается exit 0, все assertions проходят.
-- [ ] Commit `refactor: выполнять команды доски через общий runtime`; task-done targeted suite.
+- [x] Написать tests реальных TaskStore и файловых persistence: два проекта/клиента, host policy deny до project lookup, неизвестные context/project/task, payload schema и лишние поля, role/agent guards, история operator→human/agent→cli/system→app, неизвестная колонка и in_progress, мутации копий, reload, throw политики/selection/store.
+- [x] RED: `node --test packages/runtime/test/board-commands.test.ts`; ожидается assertion отсутствующего runtime factory.
+- [x] Реализовать contracts/service. Payload копируется и проверяется до effects; whitelist исключает массовое присваивание runId/agent/gateFor. Source действует только в синхронной операции; существующие listeners не меняются.
+- [x] GREEN: тот же targeted command, затем typecheck contracts/runtime, suites contracts/runtime/core; ожидается exit 0, все assertions проходят.
+- [x] Commit `refactor: выполнять команды доски через общий runtime`; task-done targeted suite.
 
 ### Task 2: Desktop compatibility adapter и итоговая поставка
 
@@ -60,15 +60,40 @@
 - Context: projectId из legacy selection в начале запроса, clientId из доверенного sender, actor `{kind:'operator', id:'local-user'}`. Runtime policy разрешает только этот текущий Desktop client/operator. Серверные clients будут задавать собственный явный контекст, без такого fallback.
 - Адаптер сохраняет перевод OrcaError причины, прежний текст core rejection; новые boundary ошибки переводит ru/en через OrcaError.
 
-- [ ] Написать integration tests с настоящим runtime/TaskStore через зарегистрированные IPC callbacks: прежние параметры/результаты, пустая доска, недоверенный sender/actor, переключение выбранного проекта, null patch → {}, сохранение core guard и перевода role/boundary ошибок.
-- [ ] RED: Desktop node:test с существующим ts-resolve loader; ожидается отсутствие adapter factory/регистрации.
-- [ ] Реализовать adapter; initializeDesktop создаёт один service, registerIpc подключает его вместо пяти прямых store handlers; mainFrame проверяется до чтения/изменения данных.
-- [ ] GREEN: Desktop targeted suite, typecheck, Node ABI rebuild и полный `pnpm verify`; ожидается exit 0.
-- [ ] Commit `refactor: подключить Desktop к общим командам доски`; task-done targeted suite.
-- [ ] Одно fresh review increment от baseline `330292464de50158510886dc366f9ff3d26250c5`, Important/Critical — один RED→GREEN fix pass, Minor — ledger/final без исправлений.
-- [ ] Актуализировать docs, при docs changes core suite; собрать `pnpm --filter @orca-board/desktop run pack`, открыть app, проверить packaged imports/code signing/main и renderer без автоматического UI обхода.
-- [ ] Обновить собственный PR 59, push, дождаться exact HEAD CI. Evidence архивировать с hash, удалить только scratch этого плана; app/worktree сохранить.
+- [x] Написать integration tests с настоящим runtime/TaskStore через зарегистрированные IPC callbacks: прежние параметры/результаты, пустая доска, недоверенный sender/actor, переключение выбранного проекта, null patch → {}, сохранение core guard и перевода role/boundary ошибок.
+- [x] RED: Desktop node:test с существующим ts-resolve loader; ожидается отсутствие adapter factory/регистрации.
+- [x] Реализовать adapter; initializeDesktop создаёт один service, registerIpc подключает его вместо пяти прямых store handlers; mainFrame проверяется до чтения/изменения данных.
+- [x] GREEN: Desktop targeted suite, typecheck, Node ABI rebuild и полный `pnpm verify`; ожидается exit 0.
+- [x] Commit `refactor: подключить Desktop к общим командам доски`; task-done targeted suite.
+- [x] Одно fresh review increment от baseline `330292464de50158510886dc366f9ff3d26250c5`, Important/Critical — один RED→GREEN fix pass, Minor — ledger/final без исправлений.
+- [x] Актуализировать docs, при docs changes core suite; собрать `pnpm --filter @orca-board/desktop run pack`, открыть app, проверить packaged imports/code signing/main и renderer без автоматического UI обхода.
+Финальная передача после итогового docs commit: обновить собственный PR 59, push, проверить exact HEAD CI; evidence архивировать с hash, удалить только scratch этого плана. Фактические SHA/CI runs, статусы и archive manifest записываются в delivery evidence вне Git. App/worktree сохраняются.
 
 ## Проверка покрытия и границы
 
 План покрывает первый пять-методный участок раздела 4 и explicit context из раздела 12.5. Все пять Review Focus имеют конкретные tests. Собственный HTTP/WS/operator endpoint, actor sequencing/revision/retry, глобальные задачи/workflow/files/settings, socket handlers и общий client/UI не реализуются этим переносом. Прямой вызов service является host API, не аутентификацией пользователя по произвольному JSON actor.
+
+
+## Результат реализации
+
+Runtime и Desktop задачи завершены, production commit `c052dfc`. Новые suites прошли
+RED→GREEN: runtime31/31 и Desktop6/6. Полный `pnpm verify` — 3537/3537, без
+fail/skip/cancel: scripts49, core943, CLI38, contracts50, runtime585, Desktop1872;
+strict types, Git Flow и build прошли. После итогового docs-only изменения нужен
+core repeat; полный CI проверяется на exact HEAD при передаче.
+
+Один fresh reviewer подтвердил все пять Review Focus, Critical0/Important0.
+Отложен один Minor: sparse `deps` проходит `every`, превращается в пустой список
+и создаёт задачу. Штатный UI передаёт плотные массивы; следующий validator pass
+должен проверять нормализованную копию до lookup. Повторного ревью/fix pass не было.
+
+Локальный mac x64 pack1.1.3 собран из актуального production и открыт; ASAR содержит
+общие команды и остальные runtime factories без bare workspace imports, strict deep
+codesign прошёл. Новый main/renderer и read-only profile identity probe подтверждены.
+Ручную UI-проверку выполняет пользователь; автоматических кликов/обхода экранов нет.
+
+Сервис пока синхронный, legacy selection остаётся только у Desktop adapter.
+Rollback persistence/listener и lifecycle delete работающего worker остаются прежними
+core semantics. Полный headless host, остальные command services, agent socket,
+request revisions/idempotency/actors/replay, async Git/reconciliation, общий client/UI
+и независимые поставки остаются следующими обязательными участками фундамента.
