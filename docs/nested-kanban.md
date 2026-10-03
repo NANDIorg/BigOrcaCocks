@@ -13,6 +13,10 @@ needs_input — **вычисляемая** колонка: там карточк
 (см. «Проверка»). Отдельный kind не заводится — `review` есть в каждом проекте (`validateColumns`), миграция
 колонок не нужна. Готовы (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
 
+Файловые sources и показы извлекаются в runtime services: источник задачи — её
+разрешённый worktree либо снимок dispatch. Project/file DTO сохраняются, backend
+root остаётся внутренним; подключение scoped commands/IPC — следующий шаг.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime

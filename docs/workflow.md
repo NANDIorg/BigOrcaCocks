@@ -21,6 +21,10 @@
 `apps/desktop/src/main/workflow.ts`; git-часть мержа — `mergeTaskBranch` в `apps/desktop/src/main/review.ts`.
 Подробности по слоям — `docs/architecture.md` («Воркфлоу: модель», «Воркфлоу: состояние в store», «Ревью и мерж»).
 
+Планирование/запись снимка показа и чтение showcase теперь доступны как общие
+runtime factories с прежними лимитами и prepared commit/discard. Desktop ещё
+использует старый facade; его подключение вместе с FileCommands — следующий шаг.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

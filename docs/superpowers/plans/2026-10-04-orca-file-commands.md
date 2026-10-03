@@ -30,21 +30,23 @@
 
 ### Task 1: Общие services и preview policy
 
-**Files:** create runtime path-safety.ts, project-files.ts, docs.ts, docs-view.ts, showcase.ts, showcase-snapshot.ts, preview.ts и соответствующие runtime tests/fixtures/file-services.ts; modify runtime/index.ts, четыре docs/dashboard. Старые Desktop modules пока сохраняются.
+**Files:** create runtime file-messages.ts, path-safety.ts, project-files.ts, docs.ts, docs-view.ts, showcase.ts, showcase-snapshot.ts, preview.ts и соответствующие runtime tests/fixtures/file-services.ts; modify runtime/index.ts, четыре docs/dashboard. Старые Desktop modules пока сохраняются.
 
 **Interfaces:**
 - `isInside(root,target)` чистый общий helper.
 - `createProjectFileServices({messages,gitCheckIgnore})` → splitSafeSegments/resolveProjectPath/listProjectDir; export прежних directory/noise constants.
-- `createDocServices({messages,projectFiles})` → resolveDocPath/readDoc/listProjectFiles/listWorktreeDocs/docTasks/docSourceRoot/listDocGroups; messages.Error + text('docs.project'). Export DOC_MAX_BYTES/PROJECT_SOURCE/DocTask/ProjectFileList.
+- `createDocServices({messages})` → resolveDocPath/readDoc/listProjectFiles/listWorktreeDocs/docTasks/docSourceRoot/listDocGroups; messages.Error + text('docs.project'). Export DOC_MAX_BYTES/PROJECT_SOURCE/DocTask/ProjectFileList.
 - `PreviewAddress { cspSource; base(token); urlFor(token,segments); parse(url): {token,path}|undefined }`; `createSchemePreviewAddress(scheme)` сохраняет ручной разбор без URL normalization; `createPreviewServices(address)` → previewBase/previewUrlFor/previewSegments/CSP/headers/resolvePreviewRequest/handlePreviewRequest/range/navigation. PreviewTokens/типы и limit экспортируются; host owns each registry.
 - `createDocViewServices({messages,files,preview})` → resolveDocFile/viewDoc/viewResolved/readDocBytes/docsPreviewUrl/docsOpenPath/docsRevealPath/sniffText.
 - `createShowcaseServices({messages,preview})` → прежние root/source/resolve/read/previewUrl/base, snapshot path из runtime/execution-resources. `createShowcaseSnapshotServices()` → plan/write/snapshotDispatch/markdownRefs с прежними алгоритмами и ошибками.
 
-- [ ] **Step 1:** Перенести unit cases в runtime с factory fixtures и error-key assertions: реальные repo/ignore/strange names/UTF-8/growing file/symlink/FIFO/snapshot overwrite/cleanup/range/CSP. Desktop locale и mixed UI integration tests остаются на Desktop. Добавить два independent registries и injected address fixture; public URL не содержит root.
-- [ ] **Step 2:** `node --test packages/runtime/test/{project-files,docs,docs-view,showcase,showcase-snapshot,preview}.test.ts`; Expected FAIL missing factory при успешных imports.
-- [ ] **Step 3:** Извлечь алгоритмы, разорвать cycle, внедрить trusted messages/ports/address; сохранить whitelist/limits и native scheme adapter.
-- [ ] **Step 4:** Targeted suite, runtime/contracts import guards, runtime/Desktop typecheck; Expected PASS.
-- [ ] **Step 5:** Четыре docs/dashboard/plan, diff/staged diff, commit точных paths; task-done targeted suite.
+- [x] **Step 1:** Перенести unit cases в runtime с factory fixtures и error-key assertions: реальные repo/ignore/strange names/UTF-8/growing file/symlink/FIFO/snapshot overwrite/cleanup/range/CSP. Desktop locale и mixed UI integration tests остаются на Desktop. Добавить два independent registries и injected address fixture; public URL не содержит root.
+- [x] **Step 2:** `node --test packages/runtime/test/{project-files,docs,docs-view,showcase,showcase-snapshot,preview}.test.ts`; Expected FAIL missing factory при успешных imports.
+- [x] **Step 3:** Извлечь алгоритмы, разорвать cycle, внедрить trusted messages/ports/address; сохранить whitelist/limits и native scheme adapter.
+- [x] **Step 4:** Targeted suite, runtime/contracts import guards, runtime/Desktop typecheck; Expected PASS.
+- [x] **Step 5:** Четыре docs/dashboard/plan, diff/staged diff, commit точных paths; task-done targeted suite.
+
+Task1: targeted116/116 + HTTPS-address regression1/1, runtime/contracts import guards38/38, runtime/Desktop typecheck PASS, fail/cancel/skip0.
 
 ### Task 2: FileCommands и guards async effects
 

@@ -40,6 +40,10 @@ project/store/dispatch. Полномочия отвечать человеку �
 Desktop stats IPC использует общий API и переводит Promise rejection в прежний
 локализованный IPC code; rules IPC и agent project.rules.* используют одну factory.
 
+Общая preview policy ограничивает недоверенную страницу root её grant и прежним
+sandbox/CSP. Проектные документы не получают network, показы — лишь со snapshot.
+Эти file services не решают и не потребляют pending-запросы; IPC подключается далее.
+
 ## Модель
 
 ```ts

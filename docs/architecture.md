@@ -333,6 +333,22 @@ Sync/Promise ошибки переводятся одинаково через �
 `main/rules.ts`/`stats.ts` — compatibility facades; socket project.rules.* читает
 и пишет через тот же rules service, HELP/envelope и agent policy прежние.
 
+### Общие файловые services и preview policy
+
+Runtime содержит factories project-files/docs/docs-view/showcase/showcase-snapshot и
+preview policy. `path-safety.ts` разрывает прежний цикл docs/project-files. Messages
+и Git ignore внедряются хостом; импорт не читает profile и не запускает приложение.
+Сохранены bounded reads, UTF-8/BOM/stubs, whitelist, hidden/.git/symlink guards,
+пределы каталогов, снимки показа и cleanup подготовленного snapshot.
+
+`PreviewTokens` принадлежит хосту экземпляра runtime: limit100/LRU, отдельный grant
+для network. `PreviewAddress` задаёт URL/CSP source/parser; scheme adapter сохраняет
+ручной разбор percent/dot paths и orca-preview совместимость. Factory проверяет
+positive integer limit; private root не попадает в public preview URL/DTO. Project
+preview без сети, сеть показа разрешена лишь на snapshot. HTTP hosting не реализован.
+Desktop ещё использует прежние modules; scoped FileCommands и IPC facades подключаются
+следующими задачами [плана](superpowers/plans/2026-10-04-orca-file-commands.md).
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,
