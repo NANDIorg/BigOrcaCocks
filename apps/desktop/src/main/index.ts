@@ -1,6 +1,6 @@
 import type { Workflow } from '@orca-board/core'
-import { buildWorkflowAssistantContext, saveWorkflowDraft } from './assistant-workflow'
-import type { TaskTypePatch, AttachmentCapabilities } from '../shared/ipc'
+import { buildWorkflowAssistantContext } from './assistant-workflow'
+import type { AttachmentCapabilities } from '../shared/ipc'
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, shell, dialog, Notification, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -17,13 +17,14 @@ import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ProjectCommandContext } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
 import { registerDesktopWorkerCommands } from './worker-commands'
 import { registerDesktopReviewRequestCommands } from './review-request-commands'
+import { registerDesktopProfileCommands } from './profile-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities } from './attachments'
@@ -46,7 +47,6 @@ import { mergeTarget, RunBranchSync } from './run-branch'
 import { runImagesRoot, revealTaskAttachment, openTaskAttachment } from './run-images'
 import { startSocketServer, askWaiting } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
-import { exportTaskTypeToFile } from './task-type-export'
 import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
@@ -54,7 +54,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestFocus, PtySpawnOptions, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
+import type { AppSettings, AppSettingsPatch, UpdateInstallWhen, RequestFocus, PtySpawnOptions, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -111,6 +111,8 @@ let workerOperations: ReturnType<typeof createWorkerOperations>
 let reviewCommands: ReviewCommands
 let humanRequestCommands: HumanRequestCommands
 let reviewOperations: ReturnType<typeof createReviewOperations>
+let profileCommands: ProfileCommands<AppSettings, AppSettingsPatch>
+let projectConfigCommands: ProjectConfigCommands
 const taskWorkerLifecycle = createTaskWorkerLifecycle({ isAlive, killPty })
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
@@ -779,19 +781,21 @@ function registerIpc(): void {
       if (pending) win.webContents.send('app:menuAction', pending)
     } else if (ready === false) menuActions.disconnect()
   })
-  handle('app:getSettings', () => projects.settings())
-  handle('app:setSettings', (_e, patch: AppSettingsPatch) => {
-    const settings = projects.setSettings(patch ?? {})
-    // Язык меняется без перезапуска: трей пересобирается сразу, диалоги и уведомления берут его при показе.
-    setMainLocale(settings.language)
-    refreshApplicationMenu()
-    refreshTray()
-    updater.settingsChanged()
-    return settings
+  registerDesktopProfileCommands(handle, {
+    commands: profileCommands, config: projectConfigCommands,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null,
+    activeProject: () => projects.active(), setActive: id => projects.setActive(id),
+    chooseFolder: pickRepoFolder, chooseExportFile: pickExportFile, writeExport: writeFileAtomic,
+    settingsChanged: settings => {
+      // Язык и системные оболочки Desktop обновляются после успешной записи общих настроек.
+      setMainLocale(settings.language)
+      refreshApplicationMenu()
+      refreshTray()
+      updater.settingsChanged()
+    }
   })
   handle('app:testNotification', () => testNotification())
-  handle('onboarding:getState', () => projects.onboardingState())
-  handle('onboarding:complete', (_e, input?: OnboardingCompleteInput) => projects.completeOnboarding(input))
   handle('updates:getState', () => updater.getState())
   handle('updates:check', () => updater.check())
   handle('updates:download', () => updater.download())
@@ -799,14 +803,6 @@ function registerIpc(): void {
   handle('updates:cancelPending', () => updater.cancelPending())
   handle('updates:getJustUpdated', () => updater.getJustUpdated())
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
-  handle('projects:list', () => ({ active: projects.active(), projects: projects.list(), groups: projects.groups() }))
-  handle('projects:createGroup', (_e, name: string) => projects.createGroup(name))
-  handle('projects:renameGroup', (_e, id: string, name: string) => projects.renameGroup(id, name))
-  handle('projects:removeGroup', (_e, id: string) => projects.removeGroup(id))
-  handle('projects:setGroupCollapsed', (_e, id: string, collapsed: boolean) => projects.setGroupCollapsed(id, collapsed))
-  handle('projects:setProjectGroup', (_e, projectId: string, groupId: string | null) => projects.setProjectGroup(projectId, groupId))
-  handle('projects:reorderGroups', (_e, ids: string[]) => projects.reorderGroups(ids))
-  handle('projects:inProgressCounts', () => projects.inProgressCounts())
   // Неизвестный проект (удалён, устаревший id в renderer) — не ошибка IPC, а «не репозиторий»: бейдж просто скрывается.
   handle('projects:branch', (_e, id: string): ProjectBranchInfo => {
     const p = projects.get(id)
@@ -825,39 +821,8 @@ function registerIpc(): void {
   handle('projects:createInitialCommit', (_e, id: string, mode: InitialCommitMode) =>
     createInitialCommit(projectRoot(id), mode === 'snapshot' ? 'snapshot' : 'empty')
   )
-  handle('projects:setActive', (_e, id: string) => projects.setActive(id))
-  // Картинки глобальных задач (userData/run-images) и снимки показа (userData/showcase) удаляет сам
-  // ProjectManager.remove — общий путь с сокетом.
-  handle('projects:remove', (_e, id: string) => projects.remove(id))
-  handle('projects:setEnabledAgents', (_e, id: string, agents: AgentKind[]) => projects.setEnabledAgents(id, agents))
-  handle('projects:setColumns', (_e, id: string, columns: BoardColumn[]) => projects.setColumns(id, columns))
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
   handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
-  handle('projects:add', async (_e, typeId?: string, path?: string) => {
-    const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
-    return dir ? projects.add(dir, typeof typeId === 'string' && typeId ? typeId : undefined) : null
-  })
-  handle('projects:detectTaskType', async (_e, path?: string) => {
-    const dir = typeof path === 'string' && path ? path : await pickRepoFolder()
-    return dir ? projects.detectTaskType(dir) : null
-  })
-  handle('projects:setTaskTypes', (_e, id: string, input: ProjectTaskTypesInput) => projects.setProjectTaskTypes(id, input))
-  handle('taskTypes:list', () => projects.taskTypesState())
-  handle('taskTypes:patch', (_e, id: string, patch: TaskTypePatch) => projects.patchTaskType(id, patch))
-  handle('taskTypes:rename', (_e, id: string, title: string, description: string) => projects.renameTaskType(id, { title, description }))
-  handle('workflowAssistant:save', (_e, id: string, baseline: Workflow, workflow: Workflow | null) => saveWorkflowDraft(projects, id, baseline, workflow))
-  handle('taskTypes:save', (_e, input: TaskTypeInput) => projects.saveTaskType(input))
-  handle('taskTypes:delete', (_e, id: string) => projects.deleteTaskType(id))
-  handle('taskTypes:duplicate', (_e, id: string) => projects.duplicateTaskType(id))
-  handle('taskTypes:setDefault', (_e, id: string) => projects.setDefaultTaskType(id))
-  handle('taskTypes:export', (_e, id: string) => exportTaskTypeToFile({
-    export: (typeId) => projects.exportTaskType(typeId, { appVersion: app.getVersion(), exportedAt: new Date().toISOString() }),
-    chooseFile: pickExportFile,
-    write: writeFileAtomic
-  }, id))
-  handle('nodeTemplates:list', () => projects.nodeTemplates())
-  handle('nodeTemplates:save', (_e, input: NodeTemplateInput) => projects.saveNodeTemplate(input))
-  handle('nodeTemplates:delete', (_e, id: string) => projects.deleteNodeTemplate(id))
 
   registerDesktopBoardCommands(handle, {
     commands: boardCommands,
@@ -1008,8 +973,12 @@ function initializeDesktop(): void {
   // До первого запуска агентов: system prompt прошлых запусков на Windows (`win32Launch`) больше никто не читает.
   pruneLaunchTempFiles()
   projects = new ProjectManager(app.getPath('userData'))
-  const authorize = (context: ProjectCommandContext) => Boolean(win && !win.isDestroyed()
+  const authorize = (context: ClientCommandContext) => Boolean(win && !win.isDestroyed()
     && context.clientId === `desktop:${win.webContents.id}` && context.actor.kind === 'operator' && context.actor.id === 'local-user')
+  profileCommands = createProfileCommands<AppSettings, AppSettingsPatch>({ manager: () => projects, authorize,
+    settingsKeys: ['keepInBackground', 'updates'], workflowAssistant: createWorkflowAssistantServices({ messages: { Error: OrcaError } }),
+    exportMeta: () => ({ appVersion: app.getVersion(), exportedAt: new Date().toISOString() }) })
+  projectConfigCommands = createProjectConfigCommands({ manager: () => projects, authorize })
   const selection = createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
   const removal = {
     resources: executionResources, dataDir: app.getPath('userData'),

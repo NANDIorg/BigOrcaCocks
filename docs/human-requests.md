@@ -30,6 +30,8 @@ guards, rollback orphan файлов и durable feedback после решени
 Библиотека типов и графов теперь также имеет общий profile API; конфигурация проекта
 требует явный project context. Эти команды используют прежние guards ProjectManager
 и не решают pending запросы выбранной в другом клиенте доски.
+Desktop settings/types/templates вызывают этот API через проверенный profile adapter;
+agent socket сохраняет прежние trusted методы и ограничения передачи приватных полей.
 
 ## Модель
 

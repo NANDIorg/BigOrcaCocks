@@ -37,6 +37,8 @@ task scope перезапускает его; failed launch после реше�
 `ProjectConfigCommands` меняет доступные/default типы конкретного project context.
 Запущенные прогоны сохраняют прежние live/snapshot правила менеджера; новые commands
 не подменяют их тип и не выбирают проект соседнего клиента.
+Desktop profile adapter передаёт explicit id при настройке доступных типов/default,
+сохраняя старые IPC DTO; legacy selection после add остаётся только в Desktop.
 
 Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
 channels. UI/preload не меняются, active selection переводится в явный context

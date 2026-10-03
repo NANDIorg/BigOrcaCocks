@@ -48,15 +48,19 @@ contracts/runtime/Desktop PASS, fail/cancel/skip0. Desktop IPC подключа�
 
 ### Task 2: Desktop IPC и совместимость workflow helper
 
-**Files:** create Desktop `profile-commands.ts` и `.test.ts`; modify main/index.ts, `assistant-workflow.ts` как compatibility factory, архитектура/workflow/nested-kanban/human-requests и общий статус.
+**Files:** create Desktop `profile-commands.ts` и `.test.ts`; modify main/index.ts, `project-command-adapter.ts` (общий error translator), `assistant-workflow.ts` как compatibility factory, архитектура/workflow/nested-kanban/human-requests и общий статус.
 
 **Interfaces:**
 - registerDesktopProfileCommands(handle,host) получает общий ProfileCommands и ProjectConfigCommands, verified clientId, explicit legacy active/list selection, native pickFolder/exportFile и settingsChanged ports.
 - app settings/onboarding, groups/projects configuration, taskTypes/nodeTemplates/workflowAssistant прежние IPC вызывают общий API. projects:setActive остаётся только legacy Desktop selection; add/detect/file export выполняют native dialog после caller validation. Project Git — следующий отдельный async перенос.
 - main socket продолжает использовать прежний trusted ProjectManager; его services уже общие, agent command policy/envelope без расширения.
 
-- [ ] **Step 1:** Failing adapter tests verified caller до selection/dialogs, explicit ids, defaults, settings side effects, no-selection onboarding/list, native cancel, workflow errors ru/en и return shapes.
-- [ ] **Step 2:** Desktop targeted node:test; Expected FAIL register factory при успешном импорте scaffold.
-- [ ] **Step 3:** Реальный adapter/main wiring и compatibility helper; четыре docs/статус в том же коммите.
-- [ ] **Step 4:** Desktop typecheck, targeted+affected suites и полный verify под Node ABI; Expected PASS.
-- [ ] **Step 5:** Diff/staged diff, commit точных paths, task-done targeted repetition; продолжить рубеж A (files/docs/rules/stats и remaining lifecycle), без пользовательского handoff.
+- [x] **Step 1:** Failing adapter tests verified caller до selection/dialogs, explicit ids, defaults, settings side effects, no-selection onboarding/list, native cancel, workflow errors ru/en и return shapes.
+- [x] **Step 2:** Desktop targeted node:test; Expected FAIL register factory при успешном импорте scaffold.
+- [x] **Step 3:** Реальный adapter/main wiring и compatibility helper; четыре docs/статус в том же коммите.
+- [x] **Step 4:** Desktop typecheck, targeted+affected suites и полный verify под Node ABI; Expected PASS.
+- [x] **Step 5:** Diff/staged diff, commit точных paths, task-done targeted repetition; продолжить рубеж A (files/docs/rules/stats и remaining lifecycle), без пользовательского handoff.
+
+Task2: adapter10 + прежний helper4 PASS; verify3720/3720 (scripts49, core943,
+CLI38, contracts50, runtime730, Desktop1910), typecheck/build PASS, fail/cancel/skip0.
+Работа продолжается по общему журналу; final reviewer/pack/open — после всех рубежей.

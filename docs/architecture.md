@@ -296,7 +296,15 @@ sparse arrays и чужой project не перенаправляются на �
 выбор файла/папки и запись экспортированного текста — native adapter. Общая factory
 `createWorkflowAssistantServices` сохраняет optimistic baseline guard, роли/название/revision
 из manager и удаление extraArgs из контекста. Ошибка context/conflict переводится host.
-Desktop IPC подключается следующей задачей; selection/native dialogs не входят в этот API.
+Desktop `main/profile-commands.ts` подключает 31 прежний IPC channel к этим factories.
+Caller проверяется до selection/manager/native dialogs; explicit project ids не
+используют active. List сохраняет legacy active DTO, add отдельно выбирает добавленный
+проект только в Desktop; cancel folder/file dialog не изменяет профиль. Export сначала
+готовит общий текст/metadata, затем native adapter сохраняет выбранный файл с прежним
+DTO/error. Settings refresh menu/tray/updater выполняется после успешной записи.
+`main/assistant-workflow.ts` — совместимый factory facade; socket сохраняет прежние
+trusted ProjectManager methods и agent policy. Selection/native dialogs не входят в
+общий API. Git проекта, files/docs/stats/dialog/PTY commands переносятся далее.
 
 ### Общий запуск агентов и терминальные сессии
 

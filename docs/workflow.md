@@ -1325,6 +1325,9 @@ Application API библиотеки workflow общий: `ProfileCommands.workf
 `createWorkflowAssistantServices`. Контекст обсуждения не сохраняет тип; актуальные роли,
 название и revision берёт manager, extraArgs не передаются ассистенту. Native экспорт
 и legacy selection относятся к Desktop adapter; протокол/HELP agent CLI сохраняются.
+Прежний workflowAssistant:save IPC вызывает общий guarded draft через profile adapter,
+а assistantChat контекст и socket используют совместимый facade общей factory.
+Settings/types/templates IPC подключены к тому же manager, UI/preload signatures прежние.
 
 ```
 orca-board workflow show [--run <id>]     # этапы и переходы: снимок прогона (координатору --run из $ORCA_RUN_ID) или граф проекта

@@ -10,6 +10,15 @@ export interface DesktopProjectCommandHost<Event> {
 
 export type DesktopCommandHandle<Event> = <Args extends unknown[]>(channel: string, callback: (event: Event, ...args: Args) => unknown) => void
 
+export function invokeDesktopCommand<T>(operation: () => T): T {
+  try { return operation() } catch (error) {
+    if (!(error instanceof CommandError)) throw error
+    if (error.code === 'command.rejected' && error.cause instanceof Error) throw error.cause
+    if (error.code === 'command.invalidInput' && error.details.field === 'images' && error.cause instanceof Error) throw error.cause
+    throw new OrcaError(error.code, error.details)
+  }
+}
+
 /** Legacy selection существует только на IPC границе; runtime всегда получает явный проект. */
 export function createDesktopProjectCommandAdapter<Event>(host: DesktopProjectCommandHost<Event>) {
   function selected(event: Event): ProjectCommandContext | undefined {
@@ -25,15 +34,6 @@ export function createDesktopProjectCommandAdapter<Event>(host: DesktopProjectCo
       if (!ctx) throw new OrcaError('projects.none')
       return ctx
     },
-    invoke<T>(operation: () => T): T {
-      try { return operation() } catch (error) {
-        if (!(error instanceof CommandError)) throw error
-        // Существующий перевод host ошибок и тексты core guards сохраняются в старом IPC.
-        if (error.code === 'command.rejected' && error.cause instanceof Error) throw error.cause
-        // Старый IPC показывает оператору конкретную причину отказа вложений (лимиты, пустой файл).
-        if (error.code === 'command.invalidInput' && error.details.field === 'images' && error.cause instanceof Error) throw error.cause
-        throw new OrcaError(error.code, error.details)
-      }
-    }
+    invoke: invokeDesktopCommand
   }
 }
