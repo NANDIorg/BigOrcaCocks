@@ -50,15 +50,17 @@ Task1: targeted116/116 + HTTPS-address regression1/1, runtime/contracts import g
 
 ### Task 2: FileCommands и guards async effects
 
-**Files:** create contracts/file-commands.ts; runtime/file-commands.ts, runtime/test/file-commands.test.ts; modify barrels, четыре docs/dashboard/plan.
+**Files:** create contracts/file-commands.ts; runtime/file-commands.ts, runtime/project-scope.ts, runtime/test/file-commands.test.ts; modify runtime/stats-commands.ts (совместимые aliases), docs.ts (single docTask lookup), docs-view.ts (guarded issue callback), contracts/files.ts (host URL docs); modify barrels, четыре docs/dashboard/plan.
 
-**Interfaces:** `FileCommands` context-first методы listDir, listDocs, readDoc, viewDoc, docBytes, docPreview, openDoc, revealDoc, revealFile, readShowcase, showcasePreview, showcaseBase, openShowcase, revealShowcase. Native методы возвращают void, path только injected host.open/reveal. `FileProject {id,root,store,registration}` использует statsProject/isStatsProjectCurrent; createFileCommands(host) принимает services, preview tokens, snapshots, branch, messages, native ports и обязательные authorize/isCurrent. Capture doc task root / showcase dispatch reference до await; validate current identity перед issue grant/native/result; async scope.commit только sync.
+**Interfaces:** `FileCommands` context-first методы listDir, listDocs, readDoc, viewDoc, docBytes, docPreview, openDoc, revealDoc, revealFile, readShowcase, showcasePreview, showcaseBase, openShowcase, revealShowcase. Native методы возвращают void, path только injected host.open/reveal. `RegisteredProject {id,root,store,registration}` использует общие registeredProject/isRegisteredProjectCurrent (stats сохраняет aliases); createFileCommands(host) принимает services, preview tokens, snapshots, branch, native ports и обязательные authorize/isCurrent. Capture doc task root / showcase dispatch reference до await; validate current identity перед issue grant/native/result; async scope.commit только sync.
 
-- [ ] **Step 1:** Failing public tests: real PM A/B, explicit selection independence, forbidden/invalid before lookup/disk, safe options/source/id, detached Uint8Array, private native path, no-network project, network only snapshot, project remove/readd и task root/dispatch replacement during real async read.
-- [ ] **Step 2:** `node --test packages/runtime/test/file-commands.test.ts`; Expected FAIL missing factory.
-- [ ] **Step 3:** Runtime validated explicit commands; native/preview late effects через sync guarded commit; output remains old DTO.
-- [ ] **Step 4:** Targeted + runtime types/guards и contracts tests; Expected PASS.
-- [ ] **Step 5:** Четыре docs/dashboard/plan, diff/staged diff/commit, task-done targeted.
+- [x] **Step 1:** Failing public tests: real PM A/B, explicit selection independence, forbidden/invalid before lookup/disk, safe options/source/id, detached Uint8Array, private native path, no-network project, network only snapshot, project remove/readd и task root/dispatch replacement during real async read.
+- [x] **Step 2:** `node --test packages/runtime/test/file-commands.test.ts`; Expected FAIL missing factory.
+- [x] **Step 3:** Runtime validated explicit commands; native/preview late effects через sync guarded commit; output remains old DTO.
+- [x] **Step 4:** Targeted + runtime types/guards и contracts tests; Expected PASS.
+- [x] **Step 5:** Четыре docs/dashboard/plan, diff/staged diff/commit, task-done targeted.
+
+Task2: file API12/12, affected56/56 (file+stats+docs-view+runtime guards), contracts50/50, runtime typecheck PASS; fail/cancel/skip0.
 
 ### Task 3: Desktop facades и IPC
 

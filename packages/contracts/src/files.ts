@@ -63,10 +63,10 @@ export interface ShowcaseFileData {
 
 /** Адрес страницы показа для изолированного фрейма (`showcase:previewUrl`). */
 export interface ShowcasePreviewUrl {
-  /** `orca-preview://<токен>/<путь>` — renderer ставит его в `src`, только проверив схему. */
+  /** Адрес trusted preview host; Desktop — `orca-preview://<токен>/<путь>`. Клиент проверяет его через platform policy. */
   url: string
   mime: string
-  /** `orca-preview://<токен>/` — корень снимка: к нему разрешаются относительные картинки markdown. */
+  /** База того же preview grant: к ней разрешаются относительные картинки markdown. Backend path не передаётся. */
   base: string
 }
 

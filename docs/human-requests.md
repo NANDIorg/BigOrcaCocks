@@ -42,7 +42,9 @@ Desktop stats IPC использует общий API и переводит Prom
 
 Общая preview policy ограничивает недоверенную страницу root её grant и прежним
 sandbox/CSP. Проектные документы не получают network, показы — лишь со snapshot.
-Эти file services не решают и не потребляют pending-запросы; IPC подключается далее.
+FileCommands требуют явный проект и host policy, не решают и не потребляют
+pending-запросы. После удаления проекта поздний file result/native effect отклонён;
+IPC подключается далее.
 
 ## Модель
 

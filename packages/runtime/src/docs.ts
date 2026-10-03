@@ -281,6 +281,13 @@ export function createDocServices(deps: { messages: FileMessages & { text(key: '
       .map((t) => ({ id: t.id, title: t.title, worktree: t.worktree!, branch: t.branch }))
   }
 
+  /** Одна source без повторного обхода/сортировки всей доски при каждой проверке capture. */
+  function docTask(store: Pick<TaskStore, 'getTask' | 'columnKind'>, id: string): DocTask | undefined {
+    const task = store.getTask(id)
+    if (!task?.worktree || store.columnKind(task.status) === 'done' || !existsSync(task.worktree)) return undefined
+    return { id: task.id, title: task.title, worktree: task.worktree, branch: task.branch }
+  }
+
   /**
    * Корень источника `docs:*`: проект или worktree его задачи в работе (`tasks` — из `docTasks`). Задача в done, без
    * worktree, чужая или несуществующая — `docs.noTaskSource`: читать файлы вне проекта по произвольному id нельзя.
@@ -316,6 +323,6 @@ export function createDocServices(deps: { messages: FileMessages & { text(key: '
     return groups
   }
 
-  return { resolveDocPath, readDoc, listProjectFiles, listWorktreeDocs, docTasks, docSourceRoot, listDocGroups }
+  return { resolveDocPath, readDoc, listProjectFiles, listWorktreeDocs, docTasks, docTask, docSourceRoot, listDocGroups }
 }
 export type DocServices = ReturnType<typeof createDocServices>

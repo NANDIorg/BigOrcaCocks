@@ -15,7 +15,8 @@ needs_input — **вычисляемая** колонка: там карточк
 
 Файловые sources и показы извлекаются в runtime services: источник задачи — её
 разрешённый worktree либо снимок dispatch. Project/file DTO сохраняются, backend
-root остаётся внутренним; подключение scoped commands/IPC — следующий шаг.
+root остаётся внутренним. Общие FileCommands проверяют source/dispatch после await;
+удалённая или заменённая задача не выдаёт поздний preview URL. IPC подключается далее.
 
 ## Модель: глобальная задача = прогон (`Run`)
 

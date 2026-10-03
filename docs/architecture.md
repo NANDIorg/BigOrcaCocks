@@ -346,8 +346,16 @@ preview policy. `path-safety.ts` разрывает прежний цикл docs
 ручной разбор percent/dot paths и orca-preview совместимость. Factory проверяет
 positive integer limit; private root не попадает в public preview URL/DTO. Project
 preview без сети, сеть показа разрешена лишь на snapshot. HTTP hosting не реализован.
-Desktop ещё использует прежние modules; scoped FileCommands и IPC facades подключаются
-следующими задачами [плана](superpowers/plans/2026-10-04-orca-file-commands.md).
+`FileCommands` теперь адресует явный project/client/actor: context/policy/path/source/
+options проверяются до lookup. `RegisteredProject` в project-scope отделяет registration
+identity от hash id/store; stats сохраняет прежние aliases. Capture task/worktree и
+dispatch/root проверяется после async чтения, перед native effect/token issue и перед
+результатом. Single docTask lookup не обходит всю доску на каждую capture проверку.
+Callback выдачи docs preview не создаёт grant устаревшего source.
+Open/reveal передаёт backend path только trusted host и возвращает void; DTO/bytes
+отделены. Native capability устанавливает хост; agent не получает её автоматически.
+Desktop IPC facades подключаются следующим шагом
+[плана](superpowers/plans/2026-10-04-orca-file-commands.md).
 
 ### Общий запуск агентов и терминальные сессии
 

@@ -1,22 +1,13 @@
-import { STATS_RANGES, type TaskStore, type Workflow } from '@orca-board/core'
-import type { Project, StatsCommands, StatsCommandName } from '@orca-board/contracts'
+import { STATS_RANGES, type Workflow } from '@orca-board/core'
+import type { StatsCommands, StatsCommandName } from '@orca-board/contracts'
 import { createAsyncProjectCommandExecutor, type AsyncProjectCommandHost } from './async-project-commands.ts'
 import { commandString } from './command-input.ts'
 import type { createStatsServices, StatsDeps, StatsMessages } from './stats.ts'
 import type { RuntimeProjectManager } from './projects.ts'
 
-export interface StatsProject { id: string; root: string; store: TaskStore; registration: Project }
-type StatsManager = Pick<RuntimeProjectManager, 'get' | 'store' | 'loadedStores'>
-
-export function statsProject(manager: StatsManager, id: string): StatsProject | undefined {
-  const registration = manager.get(id)
-  return registration ? { id, root: registration.root, store: manager.store(id), registration } : undefined
-}
-export function isStatsProjectCurrent(manager: StatsManager, project: StatsProject): boolean {
-  // Id проекта — hash пути: remove + add даёт тот же id и может сохранить старый store.
-  return manager.get(project.id) === project.registration && project.registration.root === project.root
-    && manager.loadedStores().some(([id, store]) => id === project.id && store === project.store)
-}
+import type { RegisteredProject } from './project-scope.ts'
+export { registeredProject as statsProject, isRegisteredProjectCurrent as isStatsProjectCurrent } from './project-scope.ts'
+export type StatsProject = RegisteredProject
 
 export function statsProjectDeps(manager: Pick<RuntimeProjectManager, 'roles' | 'columns'>, project: StatsProject,
   host: Pick<StatsDeps, 'isAlive' | 'now' | 'env' | 'cache'>): StatsDeps {

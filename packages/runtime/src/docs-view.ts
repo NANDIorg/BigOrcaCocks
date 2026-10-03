@@ -174,7 +174,7 @@ export function createDocViewServices(deps: { messages: FileMessages; files: Pro
    * не markdown, путь со скрытым сегментом (`.github/…`, `.env.html`) или цель симлинка другого типа — `docs.noPreview`:
    * такую страницу протокол всё равно не отдал бы.
    */
-  async function docsPreviewUrl(tokens: PreviewTokens, root: string, rel: unknown): Promise<DocPreviewUrl> {
+  async function docsPreviewUrl(tokens: PreviewTokens, root: string, rel: unknown, issue?: () => string): Promise<DocPreviewUrl> {
     const ref = await resolveDocFile(root, rel)
     const k = docKindOf(ref.rel)
     const segments = previewSegments(ref.rel)
@@ -182,7 +182,7 @@ export function createDocViewServices(deps: { messages: FileMessages; files: Pro
     if ((k.kind !== 'html' && k.kind !== 'markdown') || !k.mime || !segments || !served || showcaseServedMime(ref.real) !== served) {
       throw new OrcaError('docs.noPreview', { path: ref.rel })
     }
-    const token = tokens.issue(root, false)
+    const token = issue ? issue() : tokens.issue(root, false)
     return { url: previewUrlFor(token, segments), mime: k.mime, base: previewBase(token) }
   }
 

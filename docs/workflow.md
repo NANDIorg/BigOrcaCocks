@@ -23,7 +23,9 @@
 
 Планирование/запись снимка показа и чтение showcase теперь доступны как общие
 runtime factories с прежними лимитами и prepared commit/discard. Desktop ещё
-использует старый facade; его подключение вместе с FileCommands — следующий шаг.
+использует старый facade; его IPC подключается к FileCommands следующим шагом.
+Общий API проверяет captured task/worktree/dispatch до late effect/result; file
+чтение не держит withStatusSource через await и не повторяет workflow effect.
 
 ## Создание и правка графа через ассистента
 
