@@ -1292,6 +1292,14 @@ G закроется по своему `done`.
 `main/workflow.ts`), а не только по проверке. Колонка «Ревью» не значит «этап проверки»: после `done` задача стоит в
 «Ревью» и на `merge`/`git`/`end`, пока эффект не прошёл.
 
+Public `ReviewCommands`/`HumanRequestCommands` проверяют policy, явный project/client/actor
+и payload до lookup/effects. Общие `ReviewOperations` вызывают прежний workflow router
+для задач и run gate, включая taskless approval/decision; Desktop IPC и agent socket
+используют эту же orchestration. Перед ответом сверяется живость dispatch, вложения
+проверяются по байтам и сохраняют прежний rollback. Public resolution не принимает
+server paths; legacy resolution.images отбрасываются. Workflow engine и guards ниже
+сохраняют прежние переходы.
+
 | Нода задачи | «Принять» | «Вернуть» (замечания) |
 |---|---|---|
 | `gate`, `human` | исход `accept` (на `human` — решение его approval) | исход `reject`, замечания в `feedback` |

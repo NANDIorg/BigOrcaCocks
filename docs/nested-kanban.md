@@ -27,8 +27,11 @@ task scope перезапускает его; failed launch после реше�
 в [architecture.md](architecture.md). Запуск/остановка подзадач идут через общий
 `WorkerCommands` с тем же context; workflow и agent socket используют одну trusted
 `WorkerOperations`. Lifecycle закрывает dispatch до PTY, включая терминалы уже
-закрытых запусков после done. Review/requests/остальные lifecycle команды и transport
-guarantees ещё переносятся отдельно.
+закрытых запусков после done. `ReviewCommands` и `HumanRequestCommands` используют
+тот же context/policy, проверяют task/question/request в выбранном store до effects.
+Общие ReviewOperations сохраняют прежний router run gate и taskless approval/decision,
+живость перед ответом, byte validation/rollback вложений; server paths клиент не задаёт.
+Остальные lifecycle команды и transport guarantees переносятся дальше.
 
 Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
 channels. UI/preload не меняются, active selection переводится в явный context

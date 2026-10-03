@@ -5,13 +5,13 @@
 
 ## Подтверждённая база
 
-Общие contracts, persistence/projects, launcher/sessions/workers, workflow/review services, agent discovery/preflight, assistant transports/dialog registry/history, profile ownership/bootstrap извлечены. Desktop использует общий board/global-task/coordinator/worker command API. Последний завершённый перенос: `f7e429d`, verify3634/3634, CI10/10, локальный Desktop собран и запущен. Его delivery receipt: `/private/tmp/orca-worker-commands-evidence/delivery-final.json`. Перенос service сам по себе не подтверждает готовность headless/client/UI.
+Общие contracts, persistence/projects, launcher/sessions/workers, workflow/review services, agent discovery/preflight, assistant transports/dialog registry/history, profile ownership/bootstrap извлечены. Desktop использует общий board/global-task/coordinator/worker/review/human-request command API. Перенос review/requests: [план и проверки](superpowers/plans/2026-10-04-orca-review-request-commands.md), общий API `68b875b`, IPC/socket подключены следующим коммитом; полный verify3675/3675, typecheck/build PASS. Последняя полная доставка: `f7e429d`, verify3634/3634, CI10/10, локальный Desktop собран и запущен. Её delivery receipt: `/private/tmp/orca-worker-commands-evidence/delivery-final.json`. Перенос service сам по себе не подтверждает готовность headless/client/UI.
 
 ## Оставшиеся рубежи
 
 | Рубеж | Проверяемый результат | Статус |
 | --- | --- | --- |
-| A. Полный application API | Review, вопросы/requests, проекты/settings/types/templates, files/docs/rules/stats, dialogs/PTY; явный client/project и host principal, runtime validation, Desktop/socket вызывают общие операции | Выполняется: review/requests |
+| A. Полный application API | Review, вопросы/requests, проекты/settings/types/templates, files/docs/rules/stats, dialogs/PTY; явный client/project и host principal, runtime validation, Desktop/socket вызывают общие операции | Review/requests перенесены; следующие — проекты/settings/types/templates |
 | B. Async effects | Async Git, очередь по canonical commonDir; независимые repo параллельны, EffectToken после await, отмена/устаревший результат и restart reconciliation | Ожидает A |
 | C. Протокол и клиенты | Handshake/capabilities, revisions/dedup, bounded observer replay с barrier, независимый выбор project/dialog, writer leases; disconnect сохраняет процессы | Ожидает A/B |
 | D. Headless | Общая runtime composition, импорт без старта daemon; local operator endpoint отдельно от agent socket, graceful stop; Node24/Linux без DISPLAY, установленный artifact вне workspace с настоящим PTY | Ожидает A/B/C |

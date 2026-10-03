@@ -7,8 +7,10 @@
 (`isPendingRequest` / `pendingRequestsOf` / `hasPendingRequest`, `packages/core/src/global-tasks.ts`).
 
 Код: типы — `packages/core/src/types.ts` («запросы к человеку»), переходы — `packages/core/src/store.ts`
-(`createRequest`, `resolveRequest`, `cancelRequests`), транспорт — `apps/desktop/src/main/review.ts`
-(`resolveHumanRequest`), `socket.ts` (`request.*`, `worker.ask`), `request-params.ts` (разбор флагов CLI),
+(`createRequest`, `resolveRequest`, `cancelRequests`), общий application API —
+`packages/contracts/src/human-request-commands.ts`, runtime `human-request-commands.ts`
+и `review-operations.ts`. Desktop adapter — `main/review-request-commands.ts`,
+`socket.ts` (`request.*`, `worker.ask`), `request-params.ts` (разбор флагов CLI),
 `notify.ts`. Тесты — `packages/core/src/answers.test.ts`, `requests.test.ts`.
 
 Перед ответом человеку Desktop/socket сверяют живость через общий
@@ -17,7 +19,13 @@ dispatch закрываются только если все активные PT
 переносит колонку; дальнейший переход делает прежний request/question guard.
 Перезапуск после уточнения использует общую `WorkerOperations.start`: preflight
 фактической роли и enterWork предшествуют закрытию старого PTY. Application API
-`WorkerCommands` уже общий; public request/review commands — следующий перенос.
+`WorkerCommands`, `ReviewCommands` и `HumanRequestCommands` общие: policy/context
+и payload проверяются до project lookup/effects, id вопроса/запроса принадлежит
+именно указанному store. Executor сохраняет human/cli/app источник и отделяет DTO.
+Public resolution не принимает server paths; байты вложений идут отдельным input.
+Legacy Desktop/socket отбрасывают resolution.images, пути формируют только общие
+resources. Router сохраняет taskless approval/decision прогона, duplicate/stale
+guards, rollback orphan файлов и durable feedback после решения.
 
 ## Модель
 

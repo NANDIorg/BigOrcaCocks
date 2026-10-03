@@ -15,18 +15,18 @@ import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
 import { createAssistantConversation } from './assistant-conversation'
 import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
-import { getReview } from './review'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ProjectCommandContext } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ProjectCommandContext } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
 import { registerDesktopWorkerCommands } from './worker-commands'
+import { registerDesktopReviewRequestCommands } from './review-request-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
-import { attachmentCapabilities, hasImageInput, rejectWithImages, resolveWithImages } from './attachments'
+import { attachmentCapabilities } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
@@ -44,7 +44,7 @@ import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, RunBranchSync } from './run-branch'
 import { runImagesRoot, revealTaskAttachment, openTaskAttachment } from './run-images'
-import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
+import { startSocketServer, askWaiting } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { exportTaskTypeToFile } from './task-type-export'
 import { writeFileAtomic } from './persistence'
@@ -54,7 +54,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, PtySpawnOptions, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestFocus, PtySpawnOptions, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -108,6 +108,9 @@ let coordinatorCommands: CoordinatorCommands
 let coordinatorOperations: ReturnType<typeof createCoordinatorOperations>
 let workerCommands: WorkerCommands
 let workerOperations: ReturnType<typeof createWorkerOperations>
+let reviewCommands: ReviewCommands
+let humanRequestCommands: HumanRequestCommands
+let reviewOperations: ReturnType<typeof createReviewOperations>
 const taskWorkerLifecycle = createTaskWorkerLifecycle({ isAlive, killPty })
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
@@ -502,12 +505,13 @@ function resumeProjectStages(projectId: string): void {
  */
 function reviewDecision(projectId: string, taskId: string, decision: 'accept' | 'reject', text?: string, images?: unknown): Task | undefined {
   const p = resolveProject(projectId)
-  // Картинки — только к замечаниям «Вернуть»; их сохраняет main (в cwd читателя) и подставляет пути.
-  if (decision === 'accept' && hasImageInput(images)) throw new OrcaError('attachments.notForAction')
-  const workflow = workflowServices.forProject(runWorkflowDeps(p.id))
-  if (decision === 'accept') return workflow.reviewDecision(taskId, decision, text)
-  return rejectWithImages(p.store, p.root, taskId, images, text ?? '', paths =>
-    workflow.reviewDecision(taskId, decision, text, paths))
+  return reviewOperations.decide(reviewProject(p.id)!, taskId, decision, text, images)
+}
+
+/** Явный project port одинаков для IPC и callbacks socket; выбор окна не попадает в runtime. */
+function reviewProject(projectId: string): ReviewProject | undefined {
+  const project = projects.get(projectId)
+  return project ? { store: projects.store(projectId), root: project.root, workflow: runWorkflowDeps(projectId) } : undefined
 }
 
 function runCoordinator(
@@ -678,11 +682,7 @@ function notify(projectId: string, events: OrcaEvent[]): void {
 /** Решение запроса к человеку (IPC и сокет): accept — с git-частью, clarify/restart — сразу старт воркера. */
 function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution, images?: unknown): ResolveOutcome {
   const p = resolveProject(projectId)
-  const request = p.store.getRequest(id)
-  if (request?.taskId) syncWorkerLiveness(p.store, request.taskId)
-  const workflow = workflowServices.forProject(runWorkflowDeps(p.id))
-  // Пути картинок подставляет host после записи; общий service маршрутизирует task/run/decision.
-  return resolveWithImages(p.store, p.root, id, resolution, images, clean => workflow.resolveHumanRequest(id, clean))
+  return reviewOperations.resolve(reviewProject(p.id)!, id, resolution, images)
 }
 
 /** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */
@@ -891,14 +891,12 @@ function registerIpc(): void {
     clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
       ? `desktop:${event.sender.id}` : null
   })
-  handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
-  handle('requests:list', (_e, opts?: RequestListOptions) => {
-    if (!projects.active()) return []
-    const store = projects.activeStore()
-    return store.listRequests().filter((r) => (!opts?.runId || r.runId === opts.runId) && (!opts?.pending || r.status === 'pending'))
+  registerDesktopReviewRequestCommands(handle, {
+    review: reviewCommands, requests: humanRequestCommands,
+    activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
   })
-  // `images` — вложения к «Уточнить»/«Вернуть» (см. returnToWork).
-  handle('requests:resolve', (_e, id: string, resolution: RequestResolution, images?: unknown) => resolveRequest(undefined, id, resolution, images))
 
   handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
     const p = projectId ? projects.get(projectId) : projects.active()
@@ -999,13 +997,6 @@ function registerIpc(): void {
   })
   handle('stats:task', (_e, projectId: string, taskId: string) => collectTaskStats(projectId, taskId))
   handle('stats:global', (_e, projectId: string, runId: string) => collectGlobalTaskStats(projectId, runId))
-  handle('review:info', (_e, taskId: string) => {
-    const p = resolveProject()
-    return getReview(p.store, p.root, taskId)
-  })
-  handle('review:accept', (_e, taskId: string, decision?: string) => void reviewDecision(resolveProject().id, taskId, 'accept', decision))
-  // `images` — вложения к замечаниям (см. returnToWork).
-  handle('review:reject', (_e, taskId: string, feedback: string, images?: unknown) => reviewDecision(resolveProject().id, taskId, 'reject', feedback, images))
 }
 
 function initializeDesktop(): void {
@@ -1054,6 +1045,11 @@ function initializeDesktop(): void {
     preflight: { validate: validateWorkerRole }, lifecycle: taskWorkerLifecycle }
   workerOperations = createWorkerOperations(workerHost)
   workerCommands = createWorkerCommands({ ...workerHost, project: workerProject, authorize })
+  const reviewHost: ReviewOperationHost = { workflow: workflowServices, resources: executionResources,
+    lifecycle: taskWorkerLifecycle, messages: { error: (key, params) => new OrcaError(key, params) } }
+  reviewOperations = createReviewOperations(reviewHost)
+  reviewCommands = createReviewCommands({ ...reviewHost, project: reviewProject, authorize })
+  humanRequestCommands = createHumanRequestCommands({ ...reviewHost, project: reviewProject, authorize })
   syncMainAppearance()
   setMainLocale(projects.settings().language)
   refreshApplicationMenu()
@@ -1134,7 +1130,7 @@ function initializeDesktop(): void {
         store: p.store,
         startWorker: (taskId) => runWorker(taskId, p.id),
         stopWorker: (taskId) => workerOperations.stop(p, taskId),
-        review: (taskId) => getReview(p.store, p.root, taskId),
+        review: (taskId) => reviewOperations.info(reviewProject(p.id)!, taskId),
         accept: (taskId, decision) => void reviewDecision(p.id, taskId, 'accept', decision),
         reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),
         finishStage: (runId, summary, nodeId) => finishRunStage(runWorkflowDeps(p.id), runId, summary, nodeId),

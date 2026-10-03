@@ -14,7 +14,7 @@ import { settingsPatchFromParams } from './settings-params'
 import { withoutExtraArgs } from './launch-extra-args'
 import { runnableWorkflow, WorkflowValidationError, type Project, type PermissionMode } from './projects'
 import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
-import { createTaskWorkerLifecycle } from '@orca-board/runtime'
+import { createTaskWorkerLifecycle, answerQuestionWithLiveness } from '@orca-board/runtime'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -247,9 +247,7 @@ export const syncWorkerLiveness = createTaskWorkerLifecycle({ isAlive, killPty }
 
 /** Ответ на вопрос с учётом живости воркера. */
 export function answerQuestion(store: TaskStore, questionId: string, answer: string): Question {
-  const q = store.getQuestion(questionId)
-  if (q) syncWorkerLiveness(store, q.taskId)
-  return store.answer(questionId, answer)
+  return answerQuestionWithLiveness(store, { syncWorkerLiveness }, questionId, answer)
 }
 
 /** Роль задачи есть в типе её прогона и её агент можно запускать. */

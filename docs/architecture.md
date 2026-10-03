@@ -181,8 +181,8 @@ gateFor клиент не задаёт. Subtask привязывается к п
 удаляется принудительно, ветка остаётся. Ошибки cleanup сохраняют прежние semantics;
 это пока синхронная операция без transaction/reconciliation.
 
-Запуск координатора и accept/return, а также worker start/stop входят в общий API
-ниже. Review, requests и остальные lifecycle команды ещё требуют такого application API.
+Запуск координатора, accept/return, worker start/stop и review/requests входят в
+общий API ниже. Проекты, настройки, файлы и остальные lifecycle команды ещё переносятся.
 Native reveal/open остаются Desktop capabilities.
 
 Desktop `main/global-task-commands.ts` регистрирует прежние 12 globalTasks channels
@@ -221,7 +221,7 @@ application API, без transaction/effect tokens/reconciliation и очеред
 Desktop `main/coordinator-commands.ts` использует общий project adapter: проверенный
 caller прежде единственного capture activeId, старые четыре IPC signatures/defaults
 и ptyId строки сохраняются. Ошибки boundary и host переводятся прежним ru/en путём.
-Самостоятельные Web/CLI transports и auth, остальные lifecycle/review/request commands,
+Самостоятельные Web/CLI transports и auth, остальные lifecycle commands,
 revisions/idempotency/replay остаются дальнейшими этапами.
 
 ### Общие команды и lifecycle воркеров
@@ -249,7 +249,31 @@ Desktop предоставляет реальные isAlive/killPty, native back
 caller проверяется раньше единственного capture activeId. Main оставляет project
 ports, legacy selection и lifecycle subscriptions, socket использует общий sync
 перед ответом человеку. Это ещё синхронные операции: async Git/queues/effect tokens,
-request/review commands, remote PTY leases и полный headless host идут дальше.
+remote PTY leases и полный headless host идут дальше.
+
+### Общие команды review и запросов человека
+
+`ReviewCommands` и `HumanRequestCommands` в contracts, `createReviewCommands` и
+`createHumanRequestCommands` в runtime используют общий executor: host policy,
+явный project/client/actor, whitelist до lookup/effects и отделённые DTO.
+Task, question и request ищутся только в выбранном store; неизвестные id дают
+`command.taskNotFound`, `command.questionNotFound`, `command.requestNotFound`.
+`requests.list` проверяет runId/pending, review принимает только taskId и текст
+решения. Public resolution содержит action/text/optionId; server paths в images
+не принимаются, вложения проходят общий byte/limit validator отдельно.
+
+`createReviewOperations` связывает прежние WorkflowServices, ExecutionResources
+и TaskWorkerLifecycle. Решения обычной задачи и run gate проходят общий router;
+taskless approval/decision сохраняют scope прогона. Перед ответом сверяется живость;
+повторный/устаревший ответ не запускает агента. Ошибки вложений сохраняют rollback
+orphan файлов и durable feedback после уже записанного решения.
+
+Desktop `main/review-request-commands.ts` сохраняет шесть IPC channels, signatures,
+void у accept и пустой requests list без проекта. Caller проверяется до единственного
+capture selection; legacy resolution.images вырезаются без изменения входного DTO.
+Socket callbacks используют те же trusted operations и helper ответа на вопрос,
+с прежним envelope/HELP и локализованными ошибками IPC. Пока операции синхронные;
+async effects, remote transports и restart reconciliation относятся к следующим рубежам.
 
 ### Общий запуск агентов и терминальные сессии
 
@@ -423,7 +447,9 @@ Desktop `main/review.ts` сохраняет прежние функции чер
 `main/workflow-services.ts` передаёт OrcaError/mt и executionResources. Разбор вариантов
 и решений запросов также общий (`request-params.ts`), legacy agent client/HELP не меняются.
 Самостоятельные review/request-params suites перенесены в runtime; Desktop интеграции
-по-прежнему проверяют совместимые входы и сообщения.
+по-прежнему проверяют совместимые входы и сообщения. Public application API выше
+использует эти services через ReviewOperations; main/socket не дублируют router
+или обработку вложений.
 
 ### Общий исполнитель задач workflow
 
