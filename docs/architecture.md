@@ -3971,7 +3971,7 @@ Contracts `DialogRecord` связывает transcript с opaque dialog/project 
 и временем. Чистый `dialogHistory` отдаёт отдельный JSON snapshot только для чтения:
 незавершённый turn → interrupted, старые interactions очищены, running tools →
 cancelled. История не запускает CLI/tools и требует нового разговора. Это общий
-слой рубежа 4; подключение persistence к registry/Desktop ещё предстоит.
+слой рубежа 4; Desktop подключает persistence через общий `DialogRegistry`.
 
 Runtime `createDialogRepository(absoluteFile)` хранит новый изолированный JSON
 `{schemaVersion:1, dialogs:[...]}`. Import/factory/read не создают файл; запись
@@ -3987,11 +3987,16 @@ Runtime `createDialogRepository(absoluteFile)` хранит новый изол�
 Unknown JSON metadata сохраняются при read/update того же DTO и соседних записей.
 Фильтр project id относится только к переданному profile-файлу. Caller уже должен
 владеть profile: revision check не заменяет межпроцессный lock. Backend пока
-синхронный; его подключение к registry/Desktop и async I/O остаются следующим шагом.
+синхронный. Desktop задаёт файл userData/dialogs.json под single-instance lock,
+registry сохраняет record до отправки update observers. Асинхронный backend и
+межпроцессный owner для headless остаются следующими этапами.
 
 Integration проверяет настоящие fixture CLI Claude/Codex в двух profiles и
 завершённый ACP turn: snapshot записывается на диск, процессы закрываются,
 отдельный plain Node читает public repository/history. На reload пути запрещены
 subprocess APIs; DISPLAY/Electron не нужны. Проверяются native ids, все сообщения,
-metadata и неизменные исходные байты. Это проверка общего слоя, а не обещание
-resume или восстановления чата нынешним Desktop.
+metadata и неизменные исходные байты. Дополнительный integration тест проводит
+сохранение через Desktop-совместимый
+`AssistantSession` без ручного save и проверяет restart в отдельном plain Node.
+Desktop восстанавливает последний созданный глобальный диалог только для чтения;
+кнопка «+» создаёт новый разговор. Продолжение provider-сессии требует будущего resume.

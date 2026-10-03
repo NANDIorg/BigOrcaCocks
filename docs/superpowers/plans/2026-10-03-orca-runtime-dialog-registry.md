@@ -93,7 +93,8 @@ Desktop1860, failures/skips/cancelled0, strict typecheck/build PASS. Первы�
 новых0. Whole-app premium compliance не заявляется, UI вручную проверяет пользователь.
 Mac x64 pack1.1.3 собран с production6a350a3 и открыт: main/preload ASAR embedding,
 DialogRegistry/repository/history-only, strict deep codesign и новые main/renderer
-проверены. Финальный commit меняет только этот план, не входящий в app bundle.
+проверены. Финальные docs commits меняют план и архитектурную документацию,
+не входящие в app bundle.
 
 Все решения в порядке принятия:
 
