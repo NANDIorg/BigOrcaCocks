@@ -1,9 +1,9 @@
-import { isTaskPriority, validateAttachments, type TaskStore, type RunTypeInput, type AgentInfo } from '@orca-board/core'
+import { isTaskPriority, type TaskStore, type RunTypeInput, type AgentInfo } from '@orca-board/core'
 import type { GlobalTaskCommands, GlobalTaskCommandName, GlobalTaskInput, GlobalTaskPatch, SubtaskInput } from '@orca-board/contracts'
 import type { AgentSelectionServices } from './agent-selection.ts'
 import type { RoleSource } from './launch-policy.ts'
 import { CommandError, createProjectCommandExecutor, type ProjectCommandHost } from './project-commands.ts'
-import { commandFields, commandString, commandInputError, taskCreateFrom } from './command-input.ts'
+import { commandAttachmentsFrom as imagesFrom, commandFields, commandString, commandInputError, taskCreateFrom } from './command-input.ts'
 import { createGlobalTaskRemoval, type GlobalTaskRemovalDeps } from './global-task-removal.ts'
 
 export interface GlobalTaskCommandProject {
@@ -49,17 +49,6 @@ function subtaskFrom(raw: unknown): SubtaskInput {
     result.answerFor = input.answerFor
   }
   return result
-}
-
-function imagesFrom(raw: unknown) {
-  try {
-    // Core map не посещает holes; на transport границе они равнозначны отсутствующим bytes.
-    if (Array.isArray(raw)) for (let i = 0; i < raw.length; i++) if (!(i in raw)) commandInputError('images')
-    return validateAttachments(raw)
-  } catch (error) {
-    if (error instanceof CommandError) throw error
-    throw new CommandError('command.invalidInput', { field: 'images' }, error)
-  }
 }
 
 /** CRUD и вложения одной глобальной задачи; workflow/PTY запуск живёт в отдельных services. */

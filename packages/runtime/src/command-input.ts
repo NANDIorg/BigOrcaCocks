@@ -1,8 +1,19 @@
-import { isTaskPriority } from '@orca-board/core'
+import { isTaskPriority, validateAttachments } from '@orca-board/core'
 import type { TaskCreateInput, TaskPatch } from '@orca-board/contracts'
 import { CommandError } from './project-commands.ts'
 
 export function commandInputError(field: string): never { throw new CommandError('command.invalidInput', { field }) }
+
+export function commandAttachmentsFrom(raw: unknown) {
+  try {
+    // Core map не посещает holes; на transport границе они равнозначны отсутствующим bytes.
+    if (Array.isArray(raw)) for (let i = 0; i < raw.length; i++) if (!(i in raw)) commandInputError('images')
+    return validateAttachments(raw)
+  } catch (error) {
+    if (error instanceof CommandError) throw error
+    throw new CommandError('command.invalidInput', { field: 'images' }, error)
+  }
+}
 
 export function commandString(raw: unknown, field: string): string {
   if (typeof raw !== 'string' || !raw.trim()) commandInputError(field)
