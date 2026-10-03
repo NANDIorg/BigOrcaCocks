@@ -90,7 +90,7 @@
 - [x] Run: Node/native targeted tests, затем `pnpm verify`. Expected: PASS без пропусков.
 - [x] Commit: `refactor: подключить Desktop к общим workflow services`.
 - [x] Одно fresh-context итоговое ревью диапазона плана; Important/Critical исправить одним RED→GREEN проходом и полным verify, Minor записать как deferred.
-- [ ] Записать результат/оставшиеся рубежи, сохранить ledger/review/проверки вне scratch, удалить только workspace этого плана. Собрать/open Desktop, проверить настоящий app.asar и codesign.
+- [x] Записать результат/оставшиеся рубежи, сохранить ledger/review/проверки вне scratch, удалить только workspace этого плана. Собрать/open Desktop, проверить настоящий app.asar и codesign.
 
 Перед сдачей: push/update PR #59 и CI точного HEAD; без merge/release.
 
@@ -101,3 +101,27 @@
 три factories. Каждый Review Focus закреплён тестами соответствующих задач.
 Owner lifecycle, agent discovery, диалоги, async Git, удалённый протокол, общий UI и
 installed artifacts остаются последующими этапами; готовность всей базы не заявляется.
+
+## Результат переноса
+
+Review/parser, task/run executors и project binding доступны через общий runtime;
+Desktop сохраняет facades и host-проверки. 109 самостоятельных сценариев перенесены,
+32 API/регрессионных теста добавлены. Plain Node и native PTY проходят
+workflow → человек → merge без окна. Форматы/IPC/socket/CLI и версия 1.1.3 сохранены.
+
+Одно независимое итоговое ревью нашло Important: старый done проверки блокировал
+новый dispatch. Регрессии также воспроизвели удаление нового worktree старым exit.
+Оба event routers проверяют optional dispatch identity; четыре регрессии прошли
+RED→GREEN, два legacy controls подтверждают события без dispatchId. После исправления
+pnpm verify: 3312 tests, failures/skips 0, strict types/build PASS. Critical/Important
+не осталось; новых Minor нет. Ledger/review/RED/GREEN/verify сохранены вне scratch
+в `/private/tmp/orca-runtime-workflow-review-evidence`.
+
+Локальный Desktop mac x64 pack 1.1.3 собран/открыт, codesign и настоящий app.asar
+проверены: common пакеты встроены, workflow/review factories присутствуют.
+Ручную проверку UI выполняет пользователь. Назначенный worktree сохраняется.
+
+Следующие рубежи: полное обнаружение агентов/моделей, общие диалоги/observers,
+owner/client context/lock/bootstrap, async Git/commonDir/EffectToken, полный file API,
+общий client/UI и installed/native/product-release проверки. Server Web подключается
+после готовности этих границ; публичный многопользовательский сервис не проектируется.
