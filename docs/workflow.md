@@ -382,7 +382,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 → мерж → `worktree remove --force`, папка удаляется). Конфликт (`git merge --abort` уже выполнен) — исход `conflict`, обычно «Конфликт мержа» (`human`) с текстом git; «Принять»
 повторяет слияние (ветку разрешает человек). Повтор ноды после `workflow_blocked` — `startRunWorkflow` (см. ниже). Платформенных веток нет: только `execFileSync('git', […])` и `os.tmpdir()`.
 
-**Вход и повтор.** `startRunWorkflow(runId)` зовёт `runCoordinator` (`index.ts`) после каждого запуска координатора: граф не начат — `enterRunStage` и эффект первой ноды
+**Вход и повтор.** Общая trusted orchestration `createCoordinatorOperations` вызывает `startRunWorkflow` после запуска координатора. В неё входят owner `CoordinatorCommands` с явным context/policy и старый agent socket через Desktop `runCoordinator`: граф не начат — `enterRunStage` и эффект первой ноды
 (обычно `stage_started`), граф идёт — повтор эффекта текущей ноды. Повтор безопасен: задача-вопрос и проверка этого захода не дублируются (нашлась — при необходимости просто запускается),
 ждущий approval возвращается тот же, слияние и git идемпотентны, «Работа» при живом координаторе ничего не делает. Прогон, дошедший до `end`, координатора не запускает
 (`workflow.runFinished`): запуск переоткрыл бы закрытый прогон.
@@ -404,7 +404,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `worker_done` задачи `ask` | то же | закрыть, `advanceRunStage(next, {answers})`, если прогон стоит на этом заходе ноды |
 | `question_answered` (агент `ask` не жив) | то же | воркер стартует сам |
 | approval `human` решён | IPC `requests:resolve`, сокет `request resolve` → `resolveHumanRequest` → `handleRunRequest` | `accept` → исход `accept` (текст «Принять» → `decision` следующей «Работы»), `reject` → исход `reject` (замечания → `feedback`, приложенные к ним файлы → `images`) |
-| «Подтвердить» / «Вернуть в работу» на карточке | IPC `globalTasks:accept` → `acceptRun`, `globalTasks:returnToWork(…, images?)` → `returnRun` | то же решение approval (файлы к «Вернуть» main пишет в cwd координатора до перехода); «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
+| «Подтвердить» / «Вернуть в работу» на карточке | Desktop compatibility adapter → общие `CoordinatorCommands.accept/returnToWork` → `acceptRun/returnRun` | то же решение approval (файлы к «Вернуть» общий runtime пишет в cwd координатора до перехода); «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
 | Координатор умер, `stage finish` не пришёл | раз в 5 с `watchFinishedCoordinators` → `settleIdleRunStages` | `settleIdleStages`: этап закрывается по `next` без сводки, эффект следующей ноды |
 
 **Путь подзадачи в движке main.** Подзадача этапа «Работа» идёт по своему пути (`Task.stage`), его исполняет **движок по подзадачам** (`main/workflow.ts`: `advance`,
@@ -624,11 +624,14 @@ push ветки прогона — нода `git push` или человек.
 Путь вопроса (main, `apps/desktop/src/main`):
 
 - **Запуск.** `executeSteps` (`workflow.ts`) для ноды `ask` не зовёт `applyWorkRole`: роль ноды едет в запуск параметром
-  `WorkflowDeps.startWorker(taskId, {roleId})` → `runWorker` (`index.ts`) → `startWorker(…, roleId)` (`worker.ts`), а
+  `WorkflowDeps.startWorker(taskId, {roleId})` → Desktop `runWorker` (выбор project ports) → общий
+  `WorkerOperations.start` (`packages/runtime/src/worker-operations.ts`) → `WorkerServices.startWorker(…, roleId)`, а
   `task.roleId` и `task.agent` остаются прежними — иначе следующая «Работа» без своей роли запустилась бы ролью
-  опросника. Проверки роли и агента в `runWorker` идут по роли этапа. `Dispatch.roleId` — роль ноды. Без параметра
+  опросника. Проверки роли и агента в общем preflight идут по роли этапа до enterWork/kill. `Dispatch.roleId` — роль ноды. Без параметра
   (`worker start`, перезапуск, автоперезапуск) роль этапа `runWorker` берёт из графа (`enterWork` из `workflow.ts` возвращает
   `{roleId}` ноды `ask`). `store.enterWork` этап `ask` не сбрасывает: агент входит в него при каждом запуске.
+  IPC `worker:start` вызывает явный project `WorkerCommands`, а socket/workflow — ту же trusted orchestration;
+  `TaskWorkerLifecycle` закрывает старые dispatch до PTY, не создавая эскалацию от обычного kill.
 - **Первый этап.** `ask` сразу после `start`: первый запуск (`worker start`) входит в граф в `ask`; worktree и ветка
   создаются как обычно, после `next` «Работа» идёт в том же worktree.
 - **Адресат.** `worker.ask` (`socket.ts`) спрашивает у store ноду задачи (`taskStageNode`, граф прогона или запасной граф
@@ -1347,3 +1350,30 @@ orca-board request resolve --request <id> --option <id|метка> [--text "..."
   валидации о бесконечных отказах такие циклы не учитывает.
 - Условие `files` не поддерживается. Параллельные этапы — только разветвлением `fork`/`join` графа глобальной задачи
   (раздел «Разветвление»): без вложенности, пути сходятся в одном `join`, ветка прогона у путей общая.
+
+### Предварительный расчёт запуска
+
+`TaskStore.previewEnterWork` и `previewAdvanceStage` вычисляют действие и посещения
+тем же движком, что записывающие методы. Они не меняют этап, stageBlock, историю,
+события, pending requests и persistence. Preview не является резервированием:
+вызывающий код должен применить проверку и переход в одном синхронном вызове;
+будущие асинхронные effects требуют отдельного контроля актуальности.
+
+Runtime `enterWork` принимает optional `validateRole` и role override. Прямой
+запуск/перезапуск проверяет выбранную роль до записи; роль ask остаётся временной,
+роль work применяется после проверки. Если перед воркером Git и нет override,
+исход операции выбирает роль: выполненный Git сохраняется, проверка проходит
+до следующего перехода к work/ask. При отказе задача остаётся на Git без нового
+dispatch; обычный повтор запуска вновь проходит подготовку. Ошибки Git продолжают
+идти по error-ветке, в том числе к человеку. Проверка только выбранной роли
+не требует доступности агентов неиспользованных веток.
+Если подготовительная Git-цепочка проходит через merge, проверка роли также
+выполняется перед переходом из merge к воркеру; уже выполненный мерж и уборка
+сохраняются. Отказ запуска не является откатом Git-истории.
+
+В guarded-входе граф с первым эффектом human/gate/merge/end/blocked исполняет
+этот этап; обычный воркер не запускается мимо него. Если цепочка не пришла
+к work/ask, команда сообщает, что воркер не запущен, а запрос/конец/блокировка
+остаются результатом графа. Повторный заход через условие в ту же ноду
+сохраняет увеличенные visits и stage_changed: attempts учитывает такой повтор,
+а preview соответствует записываемому этапу.

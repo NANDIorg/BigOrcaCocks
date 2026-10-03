@@ -315,6 +315,7 @@ export default {
   "assistant.status.error": "error",
   "assistant.stop": "Stop response",
   "assistant.interrupted": "Response stopped. You can continue the conversation.",
+  'assistant.historyOnly': 'This saved conversation is read-only. Press “+” to start a new conversation.',
   "assistant.scope": "Board assistant",
   "assistant.enterHint": "Enter to send · Shift+Enter for a new line",
   "assistant.latest": "Jump to latest",

@@ -7,13 +7,14 @@ import {
   type RequestResolution, type Run, type RunStageInfo, type StageChange, type WfAction, type RunWorkflowFallback, type Question, type GlobalTask, type ResolvedRunType, type RunTypeInput, type TaskType, type WfNodeTemplate,
   type WorkflowTypeContext, type WorkflowPreparation, type WorkflowSaveResult, type WorkflowCreateInput, type WorkflowRoleSelection
 } from '@orca-board/core'
-import { ptyTail, isAlive } from './pty'
+import { ptyTail, isAlive, killPty } from './pty'
 import { assertAgentUsable, missingRoleMessage, pickRole, type RoleSource } from './agents'
 import { askOptions, resolutionFromParams, singleOption } from './request-params'
 import { settingsPatchFromParams } from './settings-params'
 import { withoutExtraArgs } from './launch-extra-args'
 import { runnableWorkflow, WorkflowValidationError, type Project, type PermissionMode } from './projects'
 import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
+import { createTaskWorkerLifecycle } from '@orca-board/runtime'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -242,10 +243,7 @@ export function withCoordinatorAlive(g: GlobalTask): GlobalTask & { coordinatorA
  * Живость воркера — из реестра PTY: dispatch без endedAt, чей PTY уже мёртв (выход не дошёл до store),
  * закрывается до ответа, иначе store сочтёт воркера живым и не вернёт задачу в ready.
  */
-export function syncWorkerLiveness(store: TaskStore, taskId: string): void {
-  const active = store.activeDispatches().filter((d) => d.taskId === taskId)
-  if (active.length > 0 && active.every((d) => !isAlive(d.ptyId))) store.closeDispatches(taskId)
-}
+export const syncWorkerLiveness = createTaskWorkerLifecycle({ isAlive, killPty }).syncWorkerLiveness
 
 /** Ответ на вопрос с учётом живости воркера. */
 export function answerQuestion(store: TaskStore, questionId: string, answer: string): Question {

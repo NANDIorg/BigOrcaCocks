@@ -10,17 +10,17 @@ if (!releaseNotes) throw new Error(`Описание релиза v${version} п
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@orca-board/core'] })],
-    resolve: { alias: { '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts') } }
+    plugins: [externalizeDepsPlugin({ exclude: ['@orca-board/core', '@orca-board/contracts', '@orca-board/runtime'] })],
+    resolve: { alias: { '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts'), '@orca-board/contracts': resolve(__dirname, '../../packages/contracts/src/index.ts'), '@orca-board/runtime': resolve(__dirname, '../../packages/runtime/src/index.ts') } }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin({ exclude: ['@orca-board/contracts'] })]
   },
   renderer: {
     define: {
       __ORCA_CURRENT_RELEASE__: JSON.stringify({ version, releaseNotes })
     },
     plugins: [react()],
-    resolve: { alias: { '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts') } }
+    resolve: { alias: { '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts'), '@orca-board/contracts': resolve(__dirname, '../../packages/contracts/src/index.ts') } }
   }
 })

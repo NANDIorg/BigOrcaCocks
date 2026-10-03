@@ -205,9 +205,29 @@ Amp/Shell остаются terminal-only: прямые новые CLI коман
 
 ## 3. Двусторонний чат
 
-`main/assistant-conversation.ts` запускает CLI без PTY: Claude — stream-json со stdio control requests, Codex — app-server, Gemini/Cursor/OpenCode/Copilot/Goose — ACP v1. `shared/assistant-conversation.ts` задаёт общий контракт. Amp и Shell сохраняют отдельный терминал по явному выбору пользователя; встроенного xterm в `AssistantPanel` нет. Устаревший CLI показывает ошибку, провайдер не заменяется автоматически.
+Совместимый парсер истории поверх PTY и читатель usage вынесены в
+`packages/runtime/src/assistant-chat.ts` и `transcripts.ts`; Desktop main-файлы
+сохраняют прежние exports. Кэши имеют отдельное состояние на экземпляр. Параллельное
+чтение одного пути в обоих кэшах не дублирует хвост и приросты Codex usage; при новом mtime и прежнем размере файл
+разбирается заново. Незавершённая последняя строка ждёт окончания записи. Чтение истории
+не запускает сохранённые инструменты повторно.
 
-Сессия принадлежит приложению, не проекту. `AssistantSession` хранит текущий экземпляр, проверяет новый агент до закрытия старого, отбрасывает поздние события предыдущего диалога и добавляет монотонную `revision`. Закрытие окна в фоне не завершает сессию; фактический выход и установка обновления вызывают dispose. Подпроцесс получает нейтральный `userData/assistant`, инструкции ассистента, настройки модели/effort, пользовательские `extraArgs` после разбора в argv и окружение из `assistantEnv`. Флаги передаются без shell, перед служебными опциями протокола; подкоманды Goose `acp` и Codex `app-server` всегда идут первыми, чтобы variadic-флаг не поглотил их и не запустил интерактивный терминал. Настройки действуют со следующего диалога; флаги интерактивного терминала должны поддерживаться выбранным native-протоколом, иначе CLI сообщает ошибку. Стартовая папка не является системной песочницей. Приложение не добавляет флагов обхода разрешений: Claude сохраняет `auto` и автоматическое разрешение `Bash(orca-board:*)`, остальные используют штатные правила CLI.
+Общий `createAssistantConversationServices` в `packages/runtime/src/assistant-conversation.ts`
+запускает CLI без PTY: Claude — stream-json со stdio control requests, Codex — app-server,
+Gemini/Cursor/OpenCode/Copilot/Goose — ACP v1. Desktop `main/assistant-conversation.ts`
+сохраняет прежние exports и задаёт messages/env/homeDir/executablePath/platform;
+смена языка переводит следующие сообщения без пересоздания factory. DTO находятся
+в contracts; host-интерфейсы драйвера — в pure runtime leaf без Node imports.
+`shared/assistant-conversation.ts` остаётся совместимым типовым путём.
+Amp и Shell сохраняют отдельный терминал по явному выбору пользователя; встроенного
+xterm в `AssistantPanel` нет. Устаревший CLI показывает ошибку, провайдер не заменяется автоматически.
+
+Сессия принадлежит приложению, не проекту. Общий `AssistantSession` находится в
+`packages/runtime/src/assistant-session.ts`; host задаёт settings, guard, создание
+conversation, terminal callbacks, события и error factories. Desktop subclass
+сохраняет constructor и OrcaError keys для socket/IPC. Каждый экземпляр имеет
+собственное состояние; registry/persistence/reconnect остаются следующим этапом.
+`AssistantSession` хранит текущий экземпляр, проверяет новый агент до закрытия старого, отбрасывает поздние события предыдущего диалога и добавляет монотонную `revision`. Закрытие окна в фоне не завершает сессию; фактический выход и установка обновления вызывают dispose. Подпроцесс получает нейтральный `userData/assistant`, инструкции ассистента, настройки модели/effort, пользовательские `extraArgs` после разбора в argv и окружение из `assistantEnv`. Флаги передаются без shell, перед служебными опциями протокола; подкоманды Goose `acp` и Codex `app-server` всегда идут первыми, чтобы variadic-флаг не поглотил их и не запустил интерактивный терминал. Настройки действуют со следующего диалога; флаги интерактивного терминала должны поддерживаться выбранным native-протоколом, иначе CLI сообщает ошибку. Стартовая папка не является системной песочницей. Приложение не добавляет флагов обхода разрешений: Claude сохраняет `auto` и автоматическое разрешение `Bash(orca-board:*)`, остальные используют штатные правила CLI.
 
 ### IPC
 
@@ -250,3 +270,71 @@ Claude поддерживает `can_use_tool`, `AskUserQuestion`, `control_canc
 Тесты используют реальные fixture-процессы без inference: фрагментация JSONL, разные протоколы, разрешения, вопросы, отмена, старые запросы, запуск, завершение и Windows launcher. Отдельные тесты проверяют lifecycle одной сессии и гонки IPC-снимка, скрытие служебного вывода, краткие описания действий, обновление их статусов и жизненный цикл индикатора ожидания. Пользователь проверяет UI на рабочем билде самостоятельно.
 
 Протоколы: [Claude Code headless](https://code.claude.com/docs/en/headless), [Codex app-server](https://github.com/openai/codex/tree/main/codex-rs/app-server), [ACP schema](https://agentclientprotocol.com/protocol/schema), [Cursor ACP](https://cursor.com/docs/cli/acp), [Gemini CLI ACP](https://geminicli.com/docs/cli/acp-mode/), [OpenCode ACP](https://opencode.ai/docs/acp/), [Copilot CLI ACP](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server).
+
+
+### Сохранённая история и provider binding
+
+Snapshot общего driver содержит optional `providerBinding`: transport и native
+sessionId (Claude configured UUID, Codex thread id, ACP session id после handshake).
+Наличие id не означает поддержку resume; frames/permissions не меняются.
+Contracts `DialogRecord` связывает transcript с opaque dialog/project id, revision
+и временем. Чистый `dialogHistory` отдаёт отдельный JSON snapshot только для чтения:
+незавершённый turn → interrupted, старые interactions очищены, running tools →
+cancelled. История не запускает CLI/tools и требует нового разговора. Это общий
+слой рубежа 4; Desktop подключает persistence через общий реестр.
+
+Runtime `createDialogRepository(absoluteFile)` хранит новый изолированный JSON
+`{schemaVersion:1, dialogs:[...]}`. Import/factory/read не создают файл; запись
+использует atomic rename. `save(record, expectedRevision)` создаёт revision 0
+при `null`, затем принимает только следующий revision; `remove` тоже требует
+текущую ревизию. Перед каждой мутацией перечитывается и проверяется весь документ.
+Удаление атомарно добавляет id в optional `retiredDialogIds` того же schema1-файла;
+повторное создание с этим id запрещено даже после reload. Новый разговор требует
+новый opaque id: старые save/delete не смогут затронуть замену с revision 0.
+Повреждение, другая версия и повтор id блокируют запись с `DialogRepositoryError`
+(`dialog.invalid`, `dialog.schemaUnsupported`, `dialog.conflict`); исходный файл
+не стирается и не переносится автоматически. Ошибки I/O проходят caller.
+Unknown JSON metadata сохраняются при read/update того же DTO и соседних записей.
+Фильтр project id относится только к переданному profile-файлу. Caller уже должен
+владеть profile: revision check не заменяет межпроцессный lock. Backend пока
+синхронный; async I/O и headless owner остаются следующим шагом.
+
+Integration проверяет настоящие fixture CLI Claude/Codex в двух profiles и
+завершённый ACP turn: snapshot записывается на диск, процессы закрываются,
+отдельный plain Node читает public repository/history. На reload пути запрещены
+subprocess APIs; DISPLAY/Electron не нужны. Проверяются native ids, все сообщения,
+metadata и неизменные исходные байты. Это проверка общего слоя, а не обещание
+resume. Desktop теперь автоматически сохраняет structured чат через этот же слой.
+
+### Общий реестр и Desktop
+
+`DialogRegistry` владеет несколькими structured drivers и их revisions. `create`,
+`snapshot`, `list`, `latest`, `send`, `respond`, `interrupt`, `stop`, `dispose` доступны
+другому Node host без Electron. `subscribe` возвращает detach observer: закрытие
+клиента не останавливает driver. События живого диалога публикуются после atomic save;
+late callbacks после stop не принимаются. Unknown metadata сохраняется в DTO и
+оставшихся messages/tools по id. `latest(projectId?)` выбирает последний созданный
+диалог в точном scope: без projectId только глобальный, list без фильтра возвращает все.
+
+Desktop `AssistantSession` выбирает один диалог и переводит события в прежний IPC.
+Единственный writer — main под single-instance lock. `userData/dialogs.json` создаётся
+при первом structured диалоге; старые provider logs автоматически не импортируются.
+Backup при смене версии с существующим projects.json копирует также dialogs.json
+побайтно до загрузки состояния, включая неизвестную/повреждённую схему.
+
+Первое открытие чата после restart показывает последний глобальный transcript,
+даже без установленного агента, без settings/discovery/CLI effects. История read-only:
+поле и отправка отключены, текст подсказывает прежнюю кнопку «+» для нового диалога.
+Обычный статус interrupted живого процесса продолжить можно; сохранённую историю —
+через новый диалог. Unsent draft/context сохраняются до явного нового разговора.
+Amp/Shell остаются терминальными и не записываются этим repository.
+
+При ошибке записи затронутый driver останавливается. Актуальные сообщения доступны
+в памяти до закрытия приложения, последний disk checkpoint остаётся неизменным;
+снимок очищает pending permissions/running tools, UI показывает локализованную ошибку.
+Read-only transition несёт authoritative snapshot, чтобы клиент не оставил старые
+permissions и не потерял видимый unsaved ответ. Reset проверяет settings/agent и
+создаёт новый durable record до остановки предыдущего: отказ сохраняет текущий выбор.
+Ошибки чтения не стирают файл; новое создание из повреждённой истории запрещено.
+Repository optional для прежних ephemeral hosts. Межпроцессный lock, writer lease,
+client authorization, replay/idempotency, provider resume и async backend ещё не реализованы.

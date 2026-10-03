@@ -1,8 +1,25 @@
 import { it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { AssistantChatSnapshot, AssistantChatUpdate, OrcaApi } from '../../shared/ipc'
-import { applyChatUpdate, chatStateFromSnapshot, groupMessages, isAssistantThinking, subscribeAssistantChat, toolActivityDetail } from './assistantChat'
+import { applyChatUpdate, canSendAssistantChat, chatStateFromSnapshot, groupMessages, isAssistantThinking, subscribeAssistantChat, toolActivityDetail } from './assistantChat'
 const snapshot: AssistantChatSnapshot = { ptyId: 's1', protocolVersion: 2, revision: 2, agent: 'claude', transport: 'chat', messages: [{ id: 'm1', role: 'agent', text: 'новый текст', at: 1 }], status: 'thinking', interactions: [] }
+it('history composer не отправляет в сохранённый диалог; обычный done/interrupted доступен', () => {
+  const done = chatStateFromSnapshot({ ...snapshot, status: 'done' })
+  assert.equal(canSendAssistantChat(done), true)
+  assert.equal(canSendAssistantChat({ ...done, status: 'interrupted' }), true)
+  assert.equal(canSendAssistantChat({ ...done, readOnly: true, requiresNewConversation: true }), false)
+  assert.equal(canSendAssistantChat({ ...done, transport: 'terminal' }), false)
+  for (const status of ['starting', 'thinking', 'waiting', 'error'] as const) assert.equal(canSendAssistantChat({ ...done, status }), false)
+})
+it('storage failure authoritative snapshot очищает старые permissions/tools и сохраняет несохранённый текст', () => {
+  const before = chatStateFromSnapshot({ ...snapshot, status: 'waiting', interactions: [{ id: 'r', kind: 'permission', title: 'Run?' }] })
+  const after = applyChatUpdate(before, { ptyId: 's1', revision: 3, status: 'error', error: 'storage failed', readOnly: true, requiresNewConversation: true,
+    snapshot: { ...snapshot, revision: 3, status: 'error', error: 'storage failed', readOnly: true, requiresNewConversation: true, interactions: [], messages: [{ id: 'latest', role: 'agent', text: 'Unsaved reply', at: 2 }] } })
+  assert.equal(after.readOnly, true)
+  assert.deepEqual(after.interactions, [])
+  assert.equal(after.messages[0].text, 'Unsaved reply')
+  assert.equal(canSendAssistantChat(after), false)
+})
 it('разрешение появляется один раз и исчезает после ответа; история сохраняется', () => {
   const initial = chatStateFromSnapshot(snapshot)
   const request = { ptyId: 's1', revision: 3, interaction: { id: 'r1', kind: 'permission' as const, title: 'Bash' } }

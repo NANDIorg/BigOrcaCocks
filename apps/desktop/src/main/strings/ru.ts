@@ -2,6 +2,19 @@
 // получают сокет и CLI: `OrcaError.message` строится отсюда. Порядок — по областям: трей, диалоги, уведомления,
 // ошибки по модулям.
 export default {
+  'command.invalidContext': 'Невалидный контекст команды.',
+  'command.forbidden': 'Нет доступа к команде.',
+  'command.invalidInput': 'Невалидное поле команды: {field}.',
+  'command.projectNotFound': 'Проект «{projectId}» не найден.',
+  'command.taskNotFound': 'Задача «{taskId}» не найдена в выбранном проекте.',
+  'command.globalTaskNotFound': 'Глобальная задача «{globalTaskId}» не найдена в выбранном проекте.',
+  'command.rejected': 'Команда не выполнена: {reason}.',
+  'runtime.startupTitle': 'Не удалось запустить Orca',
+  'runtime.profileBusy': 'Этот профиль Orca уже открыт в другом процессе. Закройте его перед запуском Desktop.',
+  'runtime.profileUnavailable': 'Не удалось получить защиту профиля: локальный адрес занят или недоступен.',
+  'runtime.profileInvalid': 'Запись владельца профиля повреждена или относится к другому профилю. Требуется проверка каталога данных.',
+  'runtime.profileUnsupported': 'Запись владельца профиля создана несовместимой версией Orca. Используйте совместимую версию приложения.',
+  'runtime.startupFailed': 'Не удалось открыть профиль Orca: {error}',
   'agentLaunch.settingsInvalid': 'Не удалось прочитать настройки Amp: {path}. Проверьте JSON/JSONC и доступ к файлу.',
   'assistantTransport.missingCli': 'Не найден CLI {command}. Установите агент и проверьте PATH.',
   'assistantTransport.windowsLauncher': 'CLI {command} использует неподдерживаемый Windows launcher. Укажите native executable или стандартный npm shim.',
@@ -326,6 +339,9 @@ export default {
 
   'assistantChat.unknownPty': "Этот диалог ассистента больше не активен.",
   'assistantChat.emptyText': 'пустое сообщение чата',
+  'assistantChat.historyOnly': 'Сохранённый диалог доступен только для чтения. Начните новый диалог.',
+  'assistantChat.historyLoad': 'Не удалось прочитать историю диалогов. Файл dialogs.json не изменён. Проверьте доступ к файлу и его формат; история из более новой версии требует подходящей версии Orca.',
+  'assistantChat.historyStorage': 'Не удалось сохранить историю. Диалог остановлен; последние изменения доступны в памяти до закрытия приложения. Проверьте доступ к файлу dialogs.json и свободное место, затем начните новый диалог.',
 
   'onboarding.invalidInput': 'мастер первого запуска: ожидается объект с полем skipped (boolean)'
 } satisfies Record<string, string | { one: string; few: string; many: string }>

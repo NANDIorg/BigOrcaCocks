@@ -1,3 +1,7 @@
+import { DEFAULT_APP_THEME, isAppTheme, type AppTheme } from '@orca-board/contracts'
+export { APP_THEMES, DEFAULT_APP_THEME, isAppTheme } from '@orca-board/contracts'
+export type { AppTheme } from '@orca-board/contracts'
+
 /** Общий набор токенов для renderer, окон main и терминалов. */
 const graphiteColors = {
   page: '#252422',
@@ -48,17 +52,12 @@ const graphiteColors = {
   's-other': '#98968d',
   's-unknown': '#77746b'
 } as const
-
-export const APP_THEMES = ['graphite', 'slate', 'forest', 'paper'] as const
-export type AppTheme = typeof APP_THEMES[number]
 export type ThemeColors = { readonly [Key in keyof typeof graphiteColors]: string }
 export interface ThemeDefinition {
   readonly id: AppTheme
   readonly colorScheme: 'dark' | 'light'
   readonly colors: ThemeColors
 }
-
-export const DEFAULT_APP_THEME: AppTheme = 'graphite'
 
 /** Семантика и геометрия общие; спокойные темы меняют только поверхности и согласованные акценты. */
 export const appThemes: Record<AppTheme, ThemeDefinition> = {
@@ -96,10 +95,6 @@ export const appThemes: Record<AppTheme, ThemeDefinition> = {
     s1: '#49657b', s2: '#46664f', s3: '#85582e', s4: '#76536f', s5: '#76602f',
     's-other': '#657061', 's-unknown': '#7b8577'
   } }
-}
-
-export function isAppTheme(value: unknown): value is AppTheme {
-  return APP_THEMES.some(theme => theme === value)
 }
 
 /** Усиливаем только семантические цвета; поверхности, текст, логотип и терминал сохраняют исходные оттенки. */

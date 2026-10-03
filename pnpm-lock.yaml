@@ -10,9 +10,15 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@orca-board/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@orca-board/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -71,8 +77,34 @@ importers:
 
   packages/cli: {}
 
+  packages/contracts:
+    dependencies:
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   packages/core:
     devDependencies:
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/runtime:
+    dependencies:
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.4
       typescript:
         specifier: ^5.6.0
         version: 5.9.3

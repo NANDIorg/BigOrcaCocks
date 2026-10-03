@@ -15,6 +15,25 @@ needs_input — **вычисляемая** колонка: там карточк
 
 ## Модель: глобальная задача = прогон (`Run`)
 
+Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime
+адресуют project/client/actor явно: CRUD, типы, подзадачи и вложения используют core
+guards и общие resources. Общая операция `createGlobalTaskRemoval` проверяет живого
+координатора и cascade/dispatch до очистки файлов/PTY/worktree; ветка сохраняется.
+Запуск/перезапуск координатора и accept/return проходят `CoordinatorCommands` с тем
+же явным context/policy. Общая trusted orchestration используется также старым
+agent socket. Run scope решает approval без закрытия живого координатора, legacy
+task scope перезапускает его; failed launch после решения сохраняет feedback/files.
+Подробности — «Общие команды глобальных задач» и «Общие команды координатора»
+в [architecture.md](architecture.md). Запуск/остановка подзадач идут через общий
+`WorkerCommands` с тем же context; workflow и agent socket используют одну trusted
+`WorkerOperations`. Lifecycle закрывает dispatch до PTY, включая терминалы уже
+закрытых запусков после done. Review/requests/остальные lifecycle команды и transport
+guarantees ещё переносятся отдельно.
+
+Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
+channels. UI/preload не меняются, active selection переводится в явный context
+одного вызова на IPC границе; runtime не зависит от выбора проекта в окне.
+
 Отдельной сущности нет. Прогон (`Run`, `packages/core/src/types.ts`) уже был «набором задач одного
 координатора» со своим жизненным циклом (`closedAt`, `run_done`, `runs finish`), а связь задача → прогон
 (`Task.runId`) уже хранилась, была неизменяемой и учитывалась в фильтре событий. Поэтому:
