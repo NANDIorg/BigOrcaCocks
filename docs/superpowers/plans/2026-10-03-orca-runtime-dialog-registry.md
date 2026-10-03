@@ -42,30 +42,76 @@ storage reporting задаёт host. Ревизии монотонны; сорт
 **Files:** create runtime src/dialog-registry.ts, test/dialog-registry.test.ts; modify runtime src/index.ts, src/dialog-repository.ts.
 **Interfaces:** DialogRegistryDependencies {repository?, create, errors, onError?}; DialogSnapshot {dialog, readOnly?, requiresNewConversation?}; DialogRegistryUpdate {id, revision, update, readOnly?, requiresNewConversation?}; subscribe возвращает unsubscribe. DIALOGS_FILE='dialogs.json' для явного host/backup path.
 
-- [ ] RED: реальные файлы и provider fixtures проверяют несколько диалогов, revision/snapshot после событий, observer detach, stop/late update, reload history-only без create, project/profile isolation; failed creation/write и unknown metadata. Run new suite; Expected FAIL missing registry.
-- [ ] Implement registry с единственным lifecycle, JSON copies, persistence-before-publish, fail closed при write error; ошибки чтения propagate, без overwrite/reset. Run registry + existing repository/conversation suites/typecheck. Expected PASS.
-- [ ] Commit feat: управлять общими диалогами через реестр; task-done targeted suite.
+- [x] RED: реальные файлы и provider fixtures проверяют несколько диалогов, revision/snapshot после событий, observer detach, stop/late update, reload history-only без create, project/profile isolation; failed creation/write и unknown metadata. Run new suite; Expected FAIL missing registry.
+- [x] Implement registry с единственным lifecycle, JSON copies, persistence-before-publish, fail closed при write error; ошибки чтения propagate, без overwrite/reset. Run registry + existing repository/conversation suites/typecheck. Expected PASS.
+- [x] Commit feat: управлять общими диалогами через реестр; task-done targeted suite.
 
 ## Task 2: Совместимый Desktop адаптер и read-only UI
 
 **Files:** runtime src/assistant-session.ts, test/assistant-session.test.ts, src/backup.ts, test/backup.test.ts; contracts src/assistant-chat.ts; Desktop main assistant-session.ts/test/index.ts/strings; renderer AssistantPanel.tsx, assistantChat.ts/test, i18n; DESIGN.md; docs/architecture.md, docs/assistant-chat.md.
 **Interfaces:** AssistantSessionDependencies.repository?; errors.readOnly?/storage?; onError?. Сохранить прежние методы/unknownPty/emptyText. AssistantChatSnapshot/Update additive optional readOnly/requiresNewConversation/providerBinding. Renderer использует существующие tokens/notice/reset, сохраняет unsent draft/context.
 
-- [ ] RED: session restore без settings/guard/create; history mutation отказ; reset после restore создаёт новый чат; failed reset сохраняет прежний; PTY compatibility; backup copies dialogs bytes включая повреждённые/future; renderer send gate/history flags. Expected FAIL against legacy behavior.
-- [ ] Replace единственный structured lifecycle registry delegation, wire Desktop repository/userData and localized errors, preserve PTY guard; readonly notice/disabled send and composer. Backup при Desktop version change включает dialogs.json без чтения схемы. Expected relevant tests/typecheck PASS.
-- [ ] Update maintained docs/design. Run relevant suites + core docs tests. Commit refactor: подключить Desktop к общему реестру диалогов; task-done.
+- [x] RED: session restore без settings/guard/create; history mutation отказ; reset после restore создаёт новый чат; failed reset сохраняет прежний; PTY compatibility; backup copies dialogs bytes включая повреждённые/future; renderer send gate/history flags. Expected FAIL against legacy behavior.
+- [x] Replace единственный structured lifecycle registry delegation, wire Desktop repository/userData and localized errors, preserve PTY guard; readonly notice/disabled send and composer. Backup при Desktop version change включает dialogs.json без чтения схемы. Expected relevant tests/typecheck PASS.
+- [x] Update maintained docs/design. Run relevant suites + core docs tests. Commit refactor: подключить Desktop к общему реестру диалогов; task-done.
 
 ## Task 3: Реальный restart и итоговая проверка
 
 **Files:** create runtime test/dialog-registry-integration.test.ts; update plan completion evidence.
 **Interfaces:** Task1 registry + Task2 AssistantSession; actual provider fixture and separate plain Node process use public exports, no Electron/DISPLAY/CLI startup on history read.
 
-- [ ] Real Codex permission/binding persisted by session without manual save, stop/reload separate Node host reads same messages/native id, no interaction/tools execution; new dialog explicit. Different profile untouched. Expected PASS using completed APIs.
-- [ ] Native Node rebuild + full pnpm verify, static premium audit; one fresh reviewer, one RED→GREEN Important/Critical fix pass, Minors deferred. Expected PASS or explicit bounded rulings.
-- [ ] Commit test: проверить восстановление Desktop через общий реестр; task-done integration suite.
+- [x] Real Codex permission/binding persisted by session without manual save, stop/reload separate Node host reads same messages/native id, no interaction/tools execution; new dialog explicit. Different profile untouched. Expected PASS using completed APIs.
+- [x] Native Node rebuild + full pnpm verify, static premium audit; one fresh reviewer, one RED→GREEN Important/Critical fix pass, Minors deferred. Expected PASS or explicit bounded rulings.
+- [x] Commit test: проверить восстановление Desktop через общий реестр; task-done integration suite.
 
 ## Завершение
 
-- [ ] Final review/evidence, all Rulings and deferred Minors reported.
-- [ ] Pack/open latest Desktop app; ASAR/signature/startup, manual UI user (no automated screens/clicks).
-- [ ] Update PR59 body once before own-branch push; exact-HEAD push/PR all five required jobs green; own scratch archive/hash/delete only. No merge/release.
+- [x] Final review/evidence, all Rulings and deferred Minors reported.
+- [x] Pack/open latest Desktop app; ASAR/signature/startup, manual UI user (no automated screens/clicks).
+- [x] Delivery подготовлен: PR59 body один раз перед push; CI и архивирование выполняются после этого финального docs commit, чтобы не отменять проверку последним редактированием. Фактический результат хранится в /private/tmp/orca-runtime-dialog-registry-evidence. No merge/release.
+
+
+## Результат среза
+
+Общий DialogRegistry теперь владеет несколькими structured conversations, revisions,
+сохранением и observers. Desktop подключён к userData/dialogs.json через совместимый
+AssistantSession: последний созданный глобальный чат открывается после restart только
+для чтения без CLI/settings/discovery. «+» начинает новый разговор; Amp/Shell остаются
+терминальными. Прежний Desktop API и global selection сохранены. Это следующий срез
+рубежа4; фундамент для Web ещё требует owner/API/replay/idempotency, общих файлов/UI
+и проверки независимых поставок. Provider resume и old-log import не реализованы.
+
+Один fresh reviewer39/39 + адресные probes нашёл2 Important и1 Minor. Root воспроизвёл
+оба Important. Единый fix pass: RED5 (четыре реальные Codex/ACP state/human fault
+subprocesses ETIMEDOUT, loss unknown binding metadata) → GREEN78/78. Driver проверяет
+closed после host callbacks/перед acceptance и очищает ожидание при синхронной ошибке;
+binding extras сохраняются при обновлении известных полей и очистке native id.
+Повторного ревью нет. pnpm verify3472/3472: scripts49/core943/CLI38/contracts50/runtime532/
+Desktop1860, failures/skips/cancelled0, strict typecheck/build PASS. Первый verify3467/3467.
+
+Статический strict audit renderer36 замечаний, точно те же36 на baseline1067243;
+новых0. Whole-app premium compliance не заявляется, UI вручную проверяет пользователь.
+Mac x64 pack1.1.3 собран с production6a350a3 и открыт: main/preload ASAR embedding,
+DialogRegistry/repository/history-only, strict deep codesign и новые main/renderer
+проверены. Финальный commit меняет только этот план, не входящий в app bundle.
+
+Все решения в порядке принятия:
+
+1. Ruling: Продолжить inline с одним итоговым reviewer — пользователь уже подтвердил самостоятельную работу — цена ошибки: пересмотреть объём этого среза.
+2. Ruling: Восстанавливать последний глобальный чат, сохранить Desktop global/PTY API — выбор чата сейчас не зависит от проекта; новые clients имеют явный scope — цена ошибки: пока нет выбора старой истории и автоматического продолжения.
+3. Ruling: History-only, новый разговор после restart — у drivers нет resume — цена ошибки: отправка требует нового диалога.
+4. Ruling: Optional repository для прежних ephemeral hosts; Desktop задаёт файл под single-instance lock — один structured lifecycle вместо дублирования — цена ошибки: headless ещё требует межпроцессного owner и async I/O.
+5. Ruling: Использовать прежние UI tokens/notice/reset и manual UI пользователя — AGENTS не разрешает автоматические обходы интерфейса — цена ошибки: визуальные состояния требуют ручной проверки.
+6. Ruling: Read-only transition несёт полный snapshot — иначе клиент оставляет старые permissions/tools и не видит unsaved текст — цена ошибки: одно событие содержит больше данных.
+7. Ruling: latest сортирует createdAt прежде updatedAt — checkpoint закрываемого старого диалога записывается после create нового — цена ошибки: параллельные clients не получают выбор по последней активности, используют явные ids.
+8. Ruling: Не расширять перенос фундамента до legacy UI migration — strict audit36 совпадает с baseline, новых0; владельцы затронутого UI уже описаны — цена ошибки: полная premium compliance не доказана.
+9. Final Ruling: Headless owner/auth/replay/idempotency/resume остаются следующим service этапом — нынешний Desktop имеет единственного writer и history-only — цена ошибки: runtime нельзя напрямую открывать недоверенным или нескольким writer clients.
+10. Final Ruling: Оставить sync whole-file backend для текущего Desktop — atomic CAS проверен; database migration существенно расширяет срез — цена ошибки: большая история блокирует event loop и потребует async backend.
+11. Final Ruling: History picker/project UI позже — global latest соответствует существующему Desktop, explicit registry ids/scopes уже работают — цена ошибки: Desktop пока не выбирает старый или project-scoped диалог.
+12. Final Ruling: Legacy UI migration и визуальные проверки остаются ручными; executor собирает и проверяет ASAR/signature/startup — замечания audit прежние, AGENTS назначает UI пользователю — цена ошибки: whole-app visual/premium compliance не установлена.
+
+Deferred Minors: successfully stopped/detached entries удерживают transcripts до конца
+lifetime registry; память растёт с новыми диалогами, eviction/limits нужны перед
+долгоживущим headless owner. Прежний assistant fixture formatter ослабляет точность
+части assertions причины отказа; он также отложен. Исторический EOF cosmetic устранён
+в уже затронутых backup source/test без отдельного расширения задачи.
