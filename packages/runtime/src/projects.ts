@@ -395,7 +395,7 @@ export function createProjectServices<S extends RuntimeSettings, P extends Runti
      * умолчанию `typeId` (нет — тип библиотеки по умолчанию); копии настроек типа нет — связь живая.
      * Уже добавленный репозиторий возвращается как есть.
      */
-    add(path: string, typeId?: string): Project {
+    add(path: string, typeId?: string, select = true): Project {
       let root: string
       try {
         root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: path, stdio: 'pipe' }).toString().trim()
@@ -404,7 +404,7 @@ export function createProjectServices<S extends RuntimeSettings, P extends Runti
       }
       const existing = this.data.projects.find((p) => p.root === root)
       if (existing) {
-        this.data.activeId = existing.id
+        if (select) this.data.activeId = existing.id
         this.save()
         return existing
       }
@@ -412,7 +412,7 @@ export function createProjectServices<S extends RuntimeSettings, P extends Runti
       const id = createHash('sha1').update(root).digest('hex').slice(0, 10)
       const project: Project = { id, root, name: basename(root), columns: clone(DEFAULT_COLUMNS), defaultTaskTypeId: type.id }
       this.data.projects.push(project)
-      this.data.activeId = id
+      if (select) this.data.activeId = id
       this.save()
       return project
     }
@@ -1490,3 +1490,6 @@ export function createProjectServices<S extends RuntimeSettings, P extends Runti
 
   return { ProjectManager, WorkflowValidationError }
 }
+
+export type RuntimeProjectManager<S extends RuntimeSettings = RuntimeSettings, P extends RuntimeSettingsPatch = RuntimeSettingsPatch> =
+  InstanceType<ReturnType<typeof createProjectServices<S, P>>['ProjectManager']>

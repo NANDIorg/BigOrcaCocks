@@ -62,6 +62,7 @@ export type ProjectMessageKey =
   | 'type.unavailable'
   | 'type.unknownPermission'
   | 'workflow.conflict'
+  | 'workflow.contextInvalid'
   | 'workflow.future'
   | 'workflow.notSaved'
   | 'workflow.selectors'

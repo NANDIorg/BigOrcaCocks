@@ -33,6 +33,11 @@ task scope перезапускает его; failed launch после реше�
 живость перед ответом, byte validation/rollback вложений; server paths клиент не задаёт.
 Остальные lifecycle команды и transport guarantees переносятся дальше.
 
+Настройки типов/шаблонов и workflow относятся к общему `ProfileCommands` без selection;
+`ProjectConfigCommands` меняет доступные/default типы конкретного project context.
+Запущенные прогоны сохраняют прежние live/snapshot правила менеджера; новые commands
+не подменяют их тип и не выбирают проект соседнего клиента.
+
 Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
 channels. UI/preload не меняются, active selection переводится в явный context
 одного вызова на IPC границе; runtime не зависит от выбора проекта в окне.

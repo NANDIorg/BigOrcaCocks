@@ -28,7 +28,7 @@
 
 ### Task 1: Общий profile/config API и workflow assistant
 
-**Files:** create contracts `profile-commands.ts`, `project-config-commands.ts`; modify `project-commands.ts` context и barrels; create runtime `profile-commands.ts`, `project-config-commands.ts`, `workflow-assistant.ts`; modify runtime executor/projects/barrel; create tests `profile-commands.test.ts` и `workflow-assistant.test.ts`.
+**Files:** create contracts `profile-commands.ts`, `project-config-commands.ts`; modify `project-commands.ts` context и barrels; create runtime `profile-commands.ts`, `profile-command-input.ts`, `project-config-commands.ts`, `workflow-assistant.ts`; modify runtime executor/project-messages/projects/barrel; create tests `profile-commands.test.ts`, `profile-command-test-host.ts` и `workflow-assistant.test.ts`; четыре docs обновляются вместе с API.
 
 **Interfaces:**
 - ClientCommandContext `{clientId,actor}`; ProjectCommandContext extends ClientCommandContext.
@@ -37,11 +37,14 @@
 - createProjectConfigCommands({manager,authorize}) → enabledAgents/columns/taskTypes/group с явным project context и прежними project guards.
 - createWorkflowAssistantServices({messages}) → saveWorkflowDraft/buildWorkflowAssistantContext на переданном manager, прежние ошибки contextInvalid/conflict и содержимое промпта.
 
-- [ ] **Step 1:** Реальные fixture tests с missing factory assertions: context/policy/invalid payload раньше lookup, input/output isolation, сохранение/reload, group lifecycle, scoped project changes, selection после add, настройки/rollback/onboarding, CRUD типов/шаблонов, export host metadata, workflow context/conflict.
-- [ ] **Step 2:** Targeted node:test под Node24; Expected FAIL factories при успешном импорте.
-- [ ] **Step 3:** Минимальная реализация contracts/executors/factories и перенос workflow helper без изменения workflow engine.
-- [ ] **Step 4:** Contracts/runtime typecheck, targeted tests, полный runtime suite; Expected PASS. Прежние project/settings/workflow tests не выключать.
-- [ ] **Step 5:** Diff/staged diff, commit точных paths; task-done повтор targeted suite. Обновить docs вместе с общим API.
+- [x] **Step 1:** Реальные fixture tests с missing factory assertions: context/policy/invalid payload раньше lookup, input/output isolation, сохранение/reload, group lifecycle, scoped project changes, selection после add, настройки/rollback/onboarding, CRUD типов/шаблонов, export host metadata, workflow context/conflict.
+- [x] **Step 2:** Targeted node:test под Node24; Expected FAIL factories при успешном импорте.
+- [x] **Step 3:** Минимальная реализация contracts/executors/factories и перенос workflow helper без изменения workflow engine.
+- [x] **Step 4:** Contracts/runtime typecheck, targeted tests, полный runtime suite; Expected PASS. Прежние project/settings/workflow tests не выключать.
+- [x] **Step 5:** Diff/staged diff, commit точных paths; task-done повтор targeted suite. Обновить docs вместе с общим API.
+
+Task1: targeted35/35, runtime730/730, contracts50/50, core943/943; typechecks
+contracts/runtime/Desktop PASS, fail/cancel/skip0. Desktop IPC подключается Task2.
 
 ### Task 2: Desktop IPC и совместимость workflow helper
 

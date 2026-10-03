@@ -27,6 +27,10 @@ Legacy Desktop/socket отбрасывают resolution.images, пути фор�
 resources. Router сохраняет taskless approval/decision прогона, duplicate/stale
 guards, rollback orphan файлов и durable feedback после решения.
 
+Библиотека типов и графов теперь также имеет общий profile API; конфигурация проекта
+требует явный project context. Эти команды используют прежние guards ProjectManager
+и не решают pending запросы выбранной в другом клиенте доски.
+
 ## Модель
 
 ```ts

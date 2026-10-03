@@ -182,7 +182,8 @@ gateFor клиент не задаёт. Subtask привязывается к п
 это пока синхронная операция без transaction/reconciliation.
 
 Запуск координатора, accept/return, worker start/stop и review/requests входят в
-общий API ниже. Проекты, настройки, файлы и остальные lifecycle команды ещё переносятся.
+общий API ниже. API профиля/конфигурации проекта описан далее; файлы и остальные
+lifecycle команды ещё переносятся.
 Native reveal/open остаются Desktop capabilities.
 
 Desktop `main/global-task-commands.ts` регистрирует прежние 12 globalTasks channels
@@ -274,6 +275,28 @@ capture selection; legacy resolution.images вырезаются без изме
 Socket callbacks используют те же trusted operations и helper ответа на вопрос,
 с прежним envelope/HELP и локализованными ошибками IPC. Пока операции синхронные;
 async effects, remote transports и restart reconciliation относятся к следующим рубежам.
+
+### Общие команды профиля и конфигурации проектов
+
+`ProfileCommands` в contracts и `createProfileCommands` в runtime адресуют client/actor
+без обязательного проекта: проекты и группы, настройки/onboarding, библиотека типов
+и шаблонов, workflow get/validate/set/create, guarded draft/context и export текста.
+Обязательная policy, whitelist и проверка формы предшествуют manager lookup; результаты
+отделены от изменяемого manager. Существующие guards/JSON/persistence используются повторно.
+Public list не содержит active; public add вызывает `ProjectManager.add(..., false)`
+и не меняет legacy activeId. Default add прежних trusted callers сохраняется.
+
+`ProjectConfigCommands` с `createProjectConfigCommands` требуют явный project context
+для enabledAgents, columns, доступных типов/default и группы. Невалидные/пустые id,
+sparse arrays и чужой project не перенаправляются на активную доску. Перенос задач
+при смене колонок сохраняет источник действующего лица через общий executor.
+
+Настройки по умолчанию ограничены RuntimeSettings; расширение keys и generic Settings/Patch
+задаёт только host (Desktop — window/update fields). Метаданные экспорта принадлежат host,
+выбор файла/папки и запись экспортированного текста — native adapter. Общая factory
+`createWorkflowAssistantServices` сохраняет optimistic baseline guard, роли/название/revision
+из manager и удаление extraArgs из контекста. Ошибка context/conflict переводится host.
+Desktop IPC подключается следующей задачей; selection/native dialogs не входят в этот API.
 
 ### Общий запуск агентов и терминальные сессии
 

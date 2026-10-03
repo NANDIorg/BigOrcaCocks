@@ -1320,6 +1320,12 @@ server paths; legacy resolution.images отбрасываются. Workflow engi
 
 ## CLI и сокет
 
+Application API библиотеки workflow общий: `ProfileCommands.workflowGet/Validate/Set/Create`
+использует прежние guards/revision менеджера, guarded draft/context — общую factory
+`createWorkflowAssistantServices`. Контекст обсуждения не сохраняет тип; актуальные роли,
+название и revision берёт manager, extraArgs не передаются ассистенту. Native экспорт
+и legacy selection относятся к Desktop adapter; протокол/HELP agent CLI сохраняются.
+
 ```
 orca-board workflow show [--run <id>]     # этапы и переходы: снимок прогона (координатору --run из $ORCA_RUN_ID) или граф проекта
 orca-board task create --title "..." --stage <nodeId>   # подзадача этапа «Работа» пути, когда открыто несколько этапов

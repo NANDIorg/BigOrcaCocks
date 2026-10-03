@@ -1,8 +1,11 @@
 /** Host устанавливает автора после проверки соединения; JSON клиента не доказывает полномочия. */
-export interface ProjectCommandContext {
-  projectId: string
+export interface ClientCommandContext {
   clientId: string
   actor: { kind: 'operator' | 'agent' | 'system'; id: string }
+}
+
+export interface ProjectCommandContext extends ClientCommandContext {
+  projectId: string
 }
 
 export type CommandErrorCode = 'command.invalidContext' | 'command.forbidden' | 'command.invalidInput'
