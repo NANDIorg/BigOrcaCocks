@@ -8,6 +8,9 @@ import type { DialogDocument } from './dialog-validation.ts'
 
 export { DialogRepositoryError } from './dialog-validation.ts'
 
+/** Имя файла по соглашению Desktop; repository всё равно получает явный absolute path. */
+export const DIALOGS_FILE = 'dialogs.json'
+
 export interface DialogRepository {
   list(projectId?: string): DialogRecord[]
   get(id: string): DialogRecord | undefined
