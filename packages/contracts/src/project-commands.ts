@@ -6,9 +6,10 @@ export interface ProjectCommandContext {
 }
 
 export type CommandErrorCode = 'command.invalidContext' | 'command.forbidden' | 'command.invalidInput'
-  | 'command.projectNotFound' | 'command.taskNotFound' | 'command.globalTaskNotFound' | 'command.rejected'
+  | 'command.projectNotFound' | 'command.taskNotFound' | 'command.globalTaskNotFound'
+  | 'command.requestNotFound' | 'command.questionNotFound' | 'command.rejected'
 
 export interface CommandErrorData {
   code: CommandErrorCode
-  details: { field?: string; projectId?: string; taskId?: string; globalTaskId?: string; reason?: string }
+  details: { field?: string; projectId?: string; taskId?: string; globalTaskId?: string; requestId?: string; questionId?: string; reason?: string }
 }

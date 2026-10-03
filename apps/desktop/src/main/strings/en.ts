@@ -8,6 +8,8 @@ export default {
   'command.projectNotFound': 'Project “{projectId}” was not found.',
   'command.taskNotFound': 'Task “{taskId}” was not found in the selected project.',
   'command.globalTaskNotFound': 'Global task “{globalTaskId}” was not found in the selected project.',
+  'command.requestNotFound': 'Request “{requestId}” was not found in the selected project.',
+  'command.questionNotFound': 'Question “{questionId}” was not found in the selected project.',
   'command.rejected': 'The command failed: {reason}.',
   'runtime.startupTitle': 'Could not start Orca',
   'runtime.profileBusy': 'This Orca profile is already open in another process. Close it before starting Desktop.',

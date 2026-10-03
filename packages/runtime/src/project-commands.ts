@@ -8,6 +8,8 @@ const messages: Record<CommandErrorCode, string> = {
   'command.projectNotFound': 'Проект не найден',
   'command.taskNotFound': 'Задача не найдена',
   'command.globalTaskNotFound': 'Глобальная задача не найдена',
+  'command.requestNotFound': 'Запрос не найден',
+  'command.questionNotFound': 'Вопрос не найден',
   'command.rejected': 'Команда не выполнена'
 }
 
