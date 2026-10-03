@@ -155,8 +155,7 @@ Native backend импортируется только тестовым host Des
 завершается после assertions с ненулевым кодом при ошибке. Это проверка исполнения
 без окна, а не установленного Linux артефакта или native cleanup долгоживущего owner.
 
-Это часть этапа исполнения. Wiring main/index.ts,
-обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
+Это часть этапа исполнения. Обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
 Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
@@ -205,6 +204,26 @@ Desktop workflow/renderer/ProjectManager сценарии остаются ин�
 причины журнала сохраняются. Desktop `main/workflow-run.ts` — прежние exports общей
 factory, самостоятельная suite перенесена в runtime. Desktop socket/IPC/fork E2E
 остаются проверкой host-интеграции. SUBTASK_MERGE_NODE сохранён для старых запросов.
+
+### Общая маршрутизация workflow проекта
+
+`createWorkflowServices({ resources, messages })` создаёт review/task/run services.
+`forProject(deps)` связывает обработку событий, добор задач, решения запросов и
+приёмку с явно переданными store/repoRoot и callbacks. Кеша выбранного проекта нет:
+две привязки одного owner не смешивают репозитории, merge targets и запуски.
+Legacy/path события идут task executor, gate/ask/decision прогона — run executor;
+approval/decision ответы маршрутизируются с прежними проверками актуальности.
+
+Desktop использует один aggregate и сохраняет facades. Main оставляет setImmediate
+вне store commit, project resolution, liveness/agent guards, проверку и запись файлов
+вложений. Общий API получает уже сохранённые пути. `resumeStuckStages` добирает задачи,
+эффекты графа прогона восстанавливаются через прежний startRunWorkflow.
+
+Package entrypoint обычным Node без Electron loader/DISPLAY проводит воркера через
+done → human → accept → merge, повторно открывает JSON-доску и проверяет результат.
+Native PTY fixture Desktop выполняет тот же переход общим binding после detach и
+natural exit. Проверка установленного Linux артефакта и долгоживущего native owner
+остаётся отдельным рубежом; извлечение исполнителей ещё не означает готовность Web.
 
 ## Процессы
 

@@ -15,14 +15,16 @@ import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
 import { createAssistantConversation } from './assistant-conversation'
 import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
-import { getReview, resolveHumanRequest } from './review'
+import { getReview } from './review'
+import { workflowServices } from './workflow-services'
+import type { ResolveOutcome } from '@orca-board/runtime'
 import { attachmentCapabilities, coordinatorObjective, hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
-import { approvalResolved, enterWork, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, type WorkflowDeps } from './workflow'
+import { enterWork, type WorkflowDeps } from './workflow'
 import {
-  acceptRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunGate, isRunScope, returnRun, runDecision, runGateDecision,
+  acceptRun, escalateDecision, finishRunStage, isRunScope, returnRun, runDecision,
   hasIdleStage, settleIdleRunStages, startRunWorkflow,
   type RunWorkflowDeps
 } from './workflow-run'
@@ -495,8 +497,7 @@ function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
   if (!events.some((e) => e.type === 'worker_done' || e.type === 'escalation' || e.type === 'question_answered')) return
   setImmediate(() => {
     if (!projects.get(projectId)) return
-    handleWorkflowEvents(workflowDeps(projectId), events)
-    handleRunWorkflowEvents(runWorkflowDeps(projectId), events)
+    workflowServices.forProject(runWorkflowDeps(projectId)).handleEvents(events)
   })
 }
 
@@ -509,7 +510,7 @@ function resumeProjectStages(projectId: string): void {
   setImmediate(() => {
     if (!projects.get(projectId)) return
     try {
-      resumeStuckStages(workflowDeps(projectId))
+      workflowServices.forProject(runWorkflowDeps(projectId)).resumeStuckStages()
     } catch (e) {
       // Проект могли удалить между открытием и тиком; исключение из setImmediate уронило бы main.
       console.error(`[orca] воркфлоу: не удалось добрать прерванные этапы (${projectId}):`, (e as Error).message)
@@ -526,16 +527,10 @@ function reviewDecision(projectId: string, taskId: string, decision: 'accept' | 
   const p = resolveProject(projectId)
   // Картинки — только к замечаниям «Вернуть»; их сохраняет main (в cwd читателя) и подставляет пути.
   if (decision === 'accept' && hasImageInput(images)) throw new OrcaError('attachments.notForAction')
-  if (isRunGate(p.store.getTask(taskId))) {
-    if (decision === 'reject') rejectWithImages(p.store, p.root, taskId, images, text ?? '', (paths) => runGateDecision(runWorkflowDeps(p.id), taskId, decision, text, paths))
-    else runGateDecision(runWorkflowDeps(p.id), taskId, decision, text)
-    return p.store.getTask(taskId)
-  }
-  if (decision === 'accept') {
-    reviewAccept(workflowDeps(p.id), taskId, text)
-    return p.store.getTask(taskId)
-  }
-  return rejectWithImages(p.store, p.root, taskId, images, text ?? '', (paths) => reviewReject(workflowDeps(p.id), taskId, text ?? '', paths))
+  const workflow = workflowServices.forProject(runWorkflowDeps(p.id))
+  if (decision === 'accept') return workflow.reviewDecision(taskId, decision, text)
+  return rejectWithImages(p.store, p.root, taskId, images, text ?? '', paths =>
+    workflow.reviewDecision(taskId, decision, text, paths))
 }
 
 /**
@@ -733,19 +728,13 @@ function notify(projectId: string, events: OrcaEvent[]): void {
 }
 
 /** Решение запроса к человеку (IPC и сокет): accept — с git-частью, clarify/restart — сразу старт воркера. */
-function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution, images?: unknown): ReturnType<typeof resolveHumanRequest> {
+function resolveRequest(projectId: string | undefined, id: string, resolution: RequestResolution, images?: unknown): ResolveOutcome {
   const p = resolveProject(projectId)
   const request = p.store.getRequest(id)
   if (request?.taskId) syncWorkerLiveness(p.store, request.taskId)
-  const deps = workflowDeps(p.id)
-  const runDeps = runWorkflowDeps(p.id)
-  // Approval прогона (нода `human`, без задачи) и выбор ветки развилки (decision) ведёт `workflow-run.ts`; approval на задаче
-  // (нода `human` пути подзадачи, в том числе «Конфликт мержа») — движок по подзадачам (`workflow.ts`).
-  // `resolution.images` из IPC и сокета вырезается: пути к картинкам ставит только main после записи файлов.
-  return resolveWithImages(p.store, p.root, id, resolution, images, (clean) =>
-    resolveHumanRequest(p.store, p.root, id, clean, deps.startWorker, (r) => {
-      if (!handleRunRequest(runDeps, r)) approvalResolved(deps, r)
-    }, deps.mergeTarget))
+  const workflow = workflowServices.forProject(runWorkflowDeps(p.id))
+  // Пути картинок подставляет host после записи; общий service маршрутизирует task/run/decision.
+  return resolveWithImages(p.store, p.root, id, resolution, images, clean => workflow.resolveHumanRequest(id, clean))
 }
 
 /** Тестовое уведомление из настроек: показывается всегда, звук и превью — по настройкам. */

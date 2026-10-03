@@ -64,7 +64,7 @@ it('обычный Node использует сессии и launcher без Ele
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
-it('package entrypoint запускает общий воркер под Node без Electron loader и сохраняет результат', () => {
+it('package entrypoint запускает общий воркер и workflow под Node без Electron loader, принимает и восстанавливает результат', () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-worker-entry-'))
   const repo = join(dir, 'repo'); mkdirSync(repo)
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, stdio: 'pipe' })
@@ -74,10 +74,11 @@ it('package entrypoint запускает общий воркер под Node б
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import assert from 'node:assert/strict'
       import { join } from 'node:path'
+      import { writeFileSync, readFileSync, existsSync } from 'node:fs'
       import { TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES } from '@orca-board/core'
       const listeners = process.listenerCount('exit')
       const { createExecutionResources, createGitOperations, createWorkerServices,
-        createSessionRegistry, createAgentLauncher, jsonPersistence } = await import('@orca-board/runtime')
+        createSessionRegistry, createAgentLauncher, createWorkflowServices, jsonPersistence } = await import('@orca-board/runtime')
       const dir = process.argv[1], repo = process.argv[2]
       let data, exit
       const sessions = createSessionRegistry({ spawn: () => ({ onData: fn => { data = fn }, onExit: fn => { exit = fn },
@@ -93,17 +94,42 @@ it('package entrypoint запускает общий воркер под Node б
       } })
       const file = join(dir, 'board.json')
       const store = new TaskStore(jsonPersistence(file), () => DEFAULT_COLUMNS)
-      const task = store.createTask({ title: 'Headless worker', roleId: 'developer' })
-      const worker = services.startWorker(store, repo, { socketPath: join(dir, 'orca.sock'), projectId: 'project',
-        roles: DEFAULT_ROLES, typeTitle: 'General', permissionMode: 'auto' }, task.id)
+      const workflow = { version: 1, nodes: [
+        { id: 'start', type: 'start', x: 0, y: 0 }, { id: 'work', type: 'work', x: 0, y: 0 },
+        { id: 'human', type: 'human', x: 0, y: 0 }, { id: 'merge', type: 'merge', x: 0, y: 0 }, { id: 'end', type: 'end', x: 0, y: 0 }
+      ], edges: [
+        { id: 's', from: 'start', to: 'work', outcome: 'next' }, { id: 'w', from: 'work', to: 'human', outcome: 'next' },
+        { id: 'h', from: 'human', to: 'merge', outcome: 'accept' }, { id: 'm', from: 'merge', to: 'end', outcome: 'ok' }
+      ] }
+      const run = store.createRun('Headless workflow', undefined, workflow)
+      const workflows = createWorkflowServices({ resources, messages: { ...messages, text: key => key,
+        displayError: error => error instanceof Error ? error.message : String(error) } })
+      const ctx = { socketPath: join(dir, 'orca.sock'), projectId: 'project', roles: DEFAULT_ROLES,
+        typeTitle: 'General', permissionMode: 'auto', workflow }
+      const deps = { store, repoRoot: repo, run: () => ({ roles: DEFAULT_ROLES, workflow }),
+        startWorker: taskId => { workflows.task.enterWork(deps, taskId); return services.startWorker(store, repo, ctx, taskId) },
+        isAlive: sessions.isAlive, startCoordinator: () => assert.fail('legacy graph needs no coordinator'),
+        mergeTarget: task => resources.mergeTarget(store, repo, task) }
+      const binding = workflows.forProject(deps)
+      const task = store.createTask({ title: 'Headless worker', roleId: 'developer', runId: run.id })
+      const worker = deps.startWorker(task.id)
       assert.equal(store.getTask(task.id).status, 'in_progress')
       data('output without window')
       assert.equal(sessions.terminalSnapshots()[0].tail, 'output without window')
+      writeFileSync(join(worker.worktree, 'result.txt'), 'Headless result')
+      const before = store.listEvents().length
       store.finishDispatch(worker.dispatchId, 'Headless result', [])
+      binding.handleEvents(store.listEvents().slice(before))
+      assert.equal(store.getTask(task.id).stage.nodeId, 'human')
+      const request = store.pendingRequests()[0]
       exit({ exitCode: 0 })
       assert.equal(sessions.isAlive(worker.ptyId), false)
+      binding.resolveHumanRequest(request.id, { action: 'accept' })
       const restored = new TaskStore(jsonPersistence(file), () => DEFAULT_COLUMNS)
-      assert.equal(restored.getTask(task.id).status, 'review')
+      assert.equal(restored.getTask(task.id).status, 'done')
+      assert.equal(restored.getRequest(request.id).status, 'resolved')
+      assert.equal(readFileSync(join(restored.getRun(run.id).git.worktree, 'result.txt'), 'utf8'), 'Headless result')
+      assert.equal(existsSync(join(repo, 'result.txt')), false)
       assert.equal(restored.snapshot().dispatches.find(d => d.id === worker.dispatchId).summary, 'Headless result')
       launcher.dispose()
       assert.equal(process.listenerCount('exit'), listeners)

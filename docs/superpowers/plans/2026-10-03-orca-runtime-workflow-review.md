@@ -84,11 +84,11 @@
 - forProject → `handleEvents(events: readonly OrcaEvent[]): void`, `resumeStuckStages(): void`, `resolveHumanRequest(id, resolution): ResolveOutcome`, `reviewDecision(taskId, outcome, text?, images?: string[]): Task | undefined`.
 - Binding маршрутизирует task/run events и approval/decision решения; main сохраняет setImmediate, project resolution, liveness и запись/проверку image paths перед вызовом общего API.
 
-- [ ] Тесты binding: legacy/path/run события обрабатываются своим executor, task/run/decision requests идут по правильному графу, два проекта сохраняют независимые callbacks/targets; повтор решённого запроса не запускает worker.
-- [ ] Run: `node --test packages/runtime/test/workflow-services.test.ts`. Expected: FAIL — createWorkflowServices отсутствует.
-- [ ] Добавить aggregator/binding и подключить его к main events/resume/resolve/review, сохранив совместимые exports. Plain Node smoke выполняет реальную запись/reload и workflow; native fixture использует общий binding для перехода после done и приёмки/мержа.
-- [ ] Run: Node/native targeted tests, затем `pnpm verify`. Expected: PASS без пропусков.
-- [ ] Commit: `refactor: подключить Desktop к общим workflow services`.
+- [x] Тесты binding: legacy/path/run события обрабатываются своим executor, task/run/decision requests идут по правильному графу, два проекта сохраняют независимые callbacks/targets; повтор решённого запроса не запускает worker.
+- [x] Run: `node --test packages/runtime/test/workflow-services.test.ts`. Expected: FAIL — createWorkflowServices отсутствует.
+- [x] Добавить aggregator/binding и подключить его к main events/resume/resolve/review, сохранив совместимые exports. Plain Node smoke выполняет реальную запись/reload и workflow; native fixture использует общий binding для перехода после done и приёмки/мержа.
+- [x] Run: Node/native targeted tests, затем `pnpm verify`. Expected: PASS без пропусков.
+- [x] Commit: `refactor: подключить Desktop к общим workflow services`.
 - [ ] Одно fresh-context итоговое ревью диапазона плана; Important/Critical исправить одним RED→GREEN проходом и полным verify, Minor записать как deferred.
 - [ ] Записать результат/оставшиеся рубежи, сохранить ledger/review/проверки вне scratch, удалить только workspace этого плана. Собрать/open Desktop, проверить настоящий app.asar и codesign.
 

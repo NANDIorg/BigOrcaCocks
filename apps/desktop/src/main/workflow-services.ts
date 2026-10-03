@@ -1,4 +1,4 @@
-import { createReviewServices, createTaskWorkflowServices, createRunWorkflowServices, type WorkflowMessages } from '@orca-board/runtime'
+import { createWorkflowServices, type WorkflowMessages } from '@orca-board/runtime'
 import { executionResources } from './execution-resources'
 import { OrcaError, mt } from './i18n'
 
@@ -10,7 +10,7 @@ export const workflowMessages: WorkflowMessages = {
     : error instanceof Error ? error.message : String(error)
 }
 
-export const reviewServices = createReviewServices({ resources: executionResources, messages: workflowMessages })
-export const taskWorkflowServices = createTaskWorkflowServices({ resources: executionResources, review: reviewServices, messages: workflowMessages })
-
-export const runWorkflowServices = createRunWorkflowServices({ resources: executionResources, workflow: taskWorkflowServices, messages: workflowMessages })
+export const workflowServices = createWorkflowServices({ resources: executionResources, messages: workflowMessages })
+export const reviewServices = workflowServices.review
+export const taskWorkflowServices = workflowServices.task
+export const runWorkflowServices = workflowServices.run
