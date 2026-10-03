@@ -97,7 +97,11 @@ describe('общий discovery: реестр и версии', () => {
       writeFileSync(file, process.platform === 'win32'
         ? `@"${process.execPath}" "${script}"\r\n`
         : `#!/bin/sh\nexec "${process.execPath}" "${script}"\n`, { mode: 0o700 })
-      const service = runtime.createAgentDiscovery({ home: root, env: { ...process.env, PATH: root, PATHEXT: '.CMD', DISCOVERY_FIXTURE: 'fixture from env' } })
+      const env = { ...process.env }
+      // В обычном объекте env Windows различает Path/PATH, а lookup должен видеть только fixture PATH.
+      for (const key of Object.keys(env)) if (['PATH', 'PATHEXT'].includes(key.toUpperCase())) delete env[key]
+      Object.assign(env, { PATH: root, PATHEXT: '.CMD', DISCOVERY_FIXTURE: 'fixture from env' })
+      const service = runtime.createAgentDiscovery({ home: root, env })
       const info = codex(service)
       assert.equal(info.installed, true)
       assert.equal(info.version, scenario === 'env' ? 'fixture from env' : undefined)

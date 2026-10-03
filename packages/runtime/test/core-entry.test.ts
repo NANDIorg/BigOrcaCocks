@@ -23,6 +23,46 @@ it('обычный Node загружает core через пакет и вос�
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+it('package entrypoint обнаруживает CLI и модели владельца под Node без Electron/DISPLAY', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'orca discovery entry-'))
+  try {
+    const bin = join(dir, 'bin'); mkdirSync(bin)
+    const config = join(dir, '.codex'); mkdirSync(config)
+    writeFileSync(join(config, 'config.toml'), 'model = "headless-model"\nmodel_reasoning_effort = "high"')
+    writeFileSync(join(config, 'models_cache.json'), '{"models":[{"slug":"headless-model","supported_reasoning_levels":[{"effort":"high"}]}]}')
+    const script = join(dir, 'version.cjs')
+    writeFileSync(script, "if (process.argv[2] !== '--version') process.exit(1); process.stdout.write(process.env.DISCOVERY_FIXTURE)")
+    writeFileSync(join(bin, process.platform === 'win32' ? 'codex.cmd' : 'codex'), process.platform === 'win32'
+      ? `@"${process.execPath}" "${script}" %*\r\n`
+      : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o700 })
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import assert from 'node:assert/strict'
+      import { join } from 'node:path'
+      const listeners = process.listenerCount('exit')
+      const { createAgentDiscovery, createAgentSelection } = await import('@orca-board/runtime')
+      const home = process.argv[1]
+      const env = { ...process.env }
+      for (const key of Object.keys(env)) if (['PATH', 'PATHEXT'].includes(key.toUpperCase())) delete env[key]
+      Object.assign(env, { PATH: join(home, 'bin'), PATHEXT: '.CMD', DISCOVERY_FIXTURE: 'owner version' })
+      const discovery = createAgentDiscovery({ home, env })
+      const infos = discovery.agentInfos(['codex'])
+      const codex = infos.find(a => a.id === 'codex')
+      assert.equal(codex.installed, true)
+      assert.equal(codex.enabled, true)
+      assert.equal(codex.version, 'owner version')
+      assert.equal(codex.supportsExtraArgs, true)
+      assert.deepEqual(codex.defaults, { model: 'headless-model', effort: 'high' })
+      assert.deepEqual(codex.models[0].efforts, ['high'])
+      const selection = createAgentSelection({ error: key => new Error(key) })
+      const role = { id: 'dev', title: 'Developer', agent: 'codex' }
+      assert.equal(selection.pickRole({ title: 'Headless', roles: [role] }, infos, undefined), role)
+      assert.throws(() => selection.assertAgentUsable(discovery.agentInfos([]), 'codex'), { message: 'agent.disabled' })
+      assert.equal(process.listenerCount('exit'), listeners)
+    `, dir], { cwd: fileURLToPath(new URL('../', import.meta.url)), encoding: 'utf8', env: { ...process.env, NODE_OPTIONS: '', DISPLAY: '' } })
+    assert.equal(child.status, 0, `${child.stdout}\n${child.stderr}`)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 it('обычный Node использует сессии и launcher без Electron, DISPLAY и exit hooks', () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-runtime-entry-'))
   try {

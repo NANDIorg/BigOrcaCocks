@@ -191,6 +191,14 @@ common.none/role.missing.* остаются сообщениями для пер
 не меняют inputs и не запускают процессы; вызывающий service применяет их до
 эффектов store/Git. Каждый host использует свою error factory.
 
+Desktop `main/agents.ts` создаёт singleton discovery/selection без overrides,
+сохраняет прежние exports и assertion signature. AgentInfo/supportsExtraArgs,
+фильтрация enabledAgents и socket response прежние. Ошибки возвращаются через
+OrcaError: message по-русски для socket/CLI, IPC переводит её при доставке;
+смена языка не требует пересоздания service. Общий поиск и выбор роли проверяются
+через package entrypoint под Node без Electron loader/DISPLAY. Следующий перенос —
+dialog drivers, transcripts и AssistantSession; owner/client lifecycle ещё предстоит.
+
 ### Общая приёмка и решения человека
 
 `createReviewServices({ resources, messages })` выполняет review/merge и решения
@@ -603,9 +611,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
   | `opencode` | `--model <model>` |
   | `amp`, `copilot`, `goose`, `shell` | игнорируют (модель задаётся у самого агента) |
 
-- **Проверки** (`src/main/agents.ts`): `pickRole(roles, agents, requested)` — указанная роль должна
+- **Проверки** (`packages/runtime/src/agent-selection.ts`, Desktop facade `src/main/agents.ts`): `pickRole(type, agents, requested)` — указанная роль должна
   существовать, её агент — пройти `assertAgentUsable` (известен, установлен, включён в проекте);
-  без `--role` роль берётся только если она в проекте одна, иначе ошибка со списком ролей.
+  без `--role` роль берётся только если она в типе задачи одна, иначе ошибка со списком ролей.
   `task.create` по сокету и `tasks:create` из UI идут через `pickRole`; `--agent` в `task.create`
   отвергается с подсказкой про `--role`. `worker.start` (сокет и UI) заново проверяет роль задачи
   и её агента: роль могли удалить, агента — выключить.
@@ -1414,7 +1422,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     поле своего флага нет — флаг пользователя действует, конфликта нет. Остальные причины от полей не зависят.
   - **`AgentInfo.supportsExtraArgs?: true`** — признак «main умеет сохранять и применять флаги». Старый main молча стёр бы
     незнакомое поле при сохранении, поэтому renderer без признака поле не даёт править и просит перезапустить приложение.
-- **Дефолты и модели агента** (`agentConfig` в `src/main/agents.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
+- **Дефолты и модели агента** (`createAgentDiscovery` в `packages/runtime/src/agent-discovery.ts`): `AgentInfo.models` и `AgentInfo.defaults` заполнены
   всегда (`[]` / `{}`). codex: `config.toml` читается построчно, только ключи верхнего уровня до первой секции `[..]`;
   разбор кэша — чистая `parseCodexModelsCache(text, defaultModel?)` в core (`visibility: "hide"` пропускаются,
   дефолтная модель не из кэша добавляется первой; битый JSON → только модель конфига или `[]`).
@@ -1425,7 +1433,8 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
   (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.cargo/bin`, `~/.bun/bin`) —
   Electron из Finder получает урезанный PATH. Сам агент не запускается; только для найденного бинарника
   читается версия `<bin> <versionArgs>` с таймаутом 3 с (первая строка, до 60 символов; ошибка → без версии).
-  Результат кэшируется на процесс, `detectAgents(true)` пересканирует (кнопка «Обновить» в «О проекте»).
+  Результат кэшируется на экземпляр discovery (Desktop использует один), `detectAgents(true)` пересканирует
+  (кнопка «Обновить» в «О проекте»). Codex config/models cache отдельно обновляется каждые 60 секунд или по refresh.
 - **`Project.enabledAgents?: AgentKind[]`** (`projects.ts`): какие агенты включены в проекте; `undefined` —
   все установленные. `agentInfos(enabledAgents)` собирает `AgentInfo[]`:
   `enabled = installed && (enabledAgents === undefined || включён)`. Меняется через IPC `projects:setEnabledAgents`.

@@ -68,11 +68,11 @@
 
 **Interfaces:** Desktop сохраняет все exports через singleton discovery/selection и OrcaError. parseTopLevelToml/DetectedAgent/RoleSource/missingRoleText совместимы. missingRoleMessage переводится на русский прежним mtIn.
 
-- [ ] Добавить consumer tests: русский message/код и IPC-перевод после смены языка, роль/guards, общий discovery через package entrypoint без Electron/DISPLAY с реальными config/bin fixtures.
-- [ ] Run: новые Desktop и package entrypoint tests. Expected: PASS — это consumer characterization уже проверенных RED→GREEN factories; Desktop tests фиксируют совместимость до и после замены adapter.
-- [ ] Подключить Desktop к общим factories и добавить Node smoke; обновить оставшиеся рубежи docs.
-- [ ] Run: Desktop targeted tests, runtime/desktop typecheck, затем `pnpm verify`. Expected: PASS без пропусков.
-- [ ] Commit: `refactor: подключить Desktop к общему обнаружению агентов`.
+- [x] Добавить consumer tests: русский message/код и IPC-перевод после смены языка, роль/guards, общий discovery через package entrypoint без Electron/DISPLAY с реальными config/bin fixtures.
+- [x] Run: новые Desktop и package entrypoint tests. Expected: PASS — это consumer characterization уже проверенных RED→GREEN factories; Desktop tests фиксируют совместимость до и после замены adapter.
+- [x] Подключить Desktop к общим factories и добавить Node smoke; обновить оставшиеся рубежи docs.
+- [x] Run: Desktop targeted tests, runtime/desktop typecheck, затем `pnpm verify`. Expected: PASS без пропусков.
+- [x] Commit: `refactor: подключить Desktop к общему обнаружению агентов`.
 - [ ] Одно fresh-context ревью диапазона среза; один RED→GREEN проход Important/Critical, Minor записать как deferred.
 - [ ] Записать результат, сохранить evidence вне scratch и удалить только scratch этого плана. Собрать/open Desktop, проверить codesign и app.asar. Update PR #59/push/CI точного HEAD.
 
