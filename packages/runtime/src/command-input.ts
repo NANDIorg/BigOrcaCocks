@@ -4,6 +4,15 @@ import { CommandError } from './project-commands.ts'
 
 export function commandInputError(field: string): never { throw new CommandError('command.invalidInput', { field }) }
 
+export function commandDimensionsFrom(input: Record<string, unknown>): { cols?: number; rows?: number } {
+  const size = (raw: unknown, field: string): number | undefined => {
+    if (raw === undefined) return undefined
+    if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw <= 0) commandInputError(field)
+    return raw
+  }
+  return { cols: size(input.cols, 'cols'), rows: size(input.rows, 'rows') }
+}
+
 export function commandAttachmentsFrom(raw: unknown) {
   try {
     // Core map не посещает holes; на transport границе они равнозначны отсутствующим bytes.

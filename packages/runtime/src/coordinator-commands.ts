@@ -1,6 +1,6 @@
 import type { CoordinatorCommands, CoordinatorCommandName } from '@orca-board/contracts'
 import { createProjectCommandExecutor, type ProjectCommandHost } from './project-commands.ts'
-import { commandAttachmentsFrom, commandFields, commandInputError, commandString } from './command-input.ts'
+import { commandAttachmentsFrom, commandDimensionsFrom, commandFields, commandInputError, commandString } from './command-input.ts'
 import { createCoordinatorOperations, type CoordinatorOperationHost, type CoordinatorProject } from './coordinator-operations.ts'
 
 export interface CoordinatorCommandHost extends ProjectCommandHost<CoordinatorProject, CoordinatorCommandName>, CoordinatorOperationHost {}
@@ -11,12 +11,7 @@ function textFrom(raw: unknown, field: string): string {
 }
 
 function launchFrom(input: Record<string, unknown>) {
-  const size = (raw: unknown, field: string): number | undefined => {
-    if (raw === undefined) return undefined
-    if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw <= 0) commandInputError(field)
-    return raw
-  }
-  return { cols: size(input.cols, 'cols'), rows: size(input.rows, 'rows'), images: commandAttachmentsFrom(input.images) }
+  return { ...commandDimensionsFrom(input), images: commandAttachmentsFrom(input.images) }
 }
 
 /** Policy и payload проверяются раньше lookup; все действия scoped к одному явному проекту. */
