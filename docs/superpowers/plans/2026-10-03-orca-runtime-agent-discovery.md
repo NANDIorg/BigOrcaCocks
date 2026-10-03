@@ -73,8 +73,10 @@
 - [x] Подключить Desktop к общим factories и добавить Node smoke; обновить оставшиеся рубежи docs.
 - [x] Run: Desktop targeted tests, runtime/desktop typecheck, затем `pnpm verify`. Expected: PASS без пропусков.
 - [x] Commit: `refactor: подключить Desktop к общему обнаружению агентов`.
-- [ ] Одно fresh-context ревью диапазона среза; один RED→GREEN проход Important/Critical, Minor записать как deferred.
-- [ ] Записать результат, сохранить evidence вне scratch и удалить только scratch этого плана. Собрать/open Desktop, проверить codesign и app.asar. Update PR #59/push/CI точного HEAD.
+- [x] Одно fresh-context ревью диапазона среза; один RED→GREEN проход Important/Critical, Minor записать как deferred.
+- [x] Записать результат, сохранить evidence вне scratch и удалить только scratch этого плана. Собрать/open Desktop, проверить codesign и app.asar.
+
+Перед итоговой сдачей: update PR #59/push и зелёный CI точного HEAD; это внешние проверки после финального коммита документации, без merge/release.
 
 ## Самопроверка
 
@@ -82,3 +84,40 @@ Task 3 использует factories Tasks 1–2, остальные задач
 Срез закрывает обнаружение/выбор агентов этапа 3. Диалоги, owner/client context,
 async Git, общий UI, installed Linux и независимая поставка остаются следующими
 рубежами; готовность всей базы и начало Web здесь не заявляются.
+
+
+## Результат переноса
+
+Общие createAgentDiscovery/createAgentSelection доступны через Node runtime;
+Desktop agents.ts стал совместимым adapter без изменения UI, схем, IPC/socket/HELP,
+legacy CLI и версии 1.1.3. Пути/окружение и caches принадлежат экземпляру; refresh,
+60-секундный TTL, version timeout/fallback, models и вложенные ошибки сохранены.
+
+Добавлены 33 сценария: 28 runtime, 5 Desktop. Полный pnpm verify: 3345/3345,
+failures/skips 0, strict types/build PASS. Обычный Node package smoke: 4/4;
+реальный безопасный fixture CLI проверяет argv/env/timeout без платного LLM.
+Независимый reviewer: runtime31/31 и Desktop38/38 PASS, регрессий переноса нет.
+Отложен Minor: архитектурное описание guards до любых store/Git effects шире
+реального orchestration-порядка старого runWorker.
+
+Существующий runWorker сначала подготавливает workflow, затем проверяет агента.
+При отказе disabled/notInstalled могут остаться branch/worktree, измениться
+stage/visits, очиститься stageBlock или отмениться прежний approval. PTY до guard
+не закрывается. Простой перенос проверки выше enterWork не учитывает роль
+work/ask и подготовительные Git outcomes; общий preflight/контракт этих эффектов
+обязательно уточнить при следующем service wiring, до готовности Web. Чистота
+selection factory не означает атомарность всей команды запуска.
+
+Локальный mac x64 pack 1.1.3 собран и открыт:
+`/private/tmp/orca-web-migration-audit/apps/desktop/release/local/mac/orca-board.app`.
+Codesign strict/deep проходит; настоящий app.asar содержит новые shared factories
+и предыдущие services, bare imports private пакетов отсутствуют. UI проверяет
+пользователь. Назначенный worktree сохранён; review/ledger/RED/GREEN/verify/pack
+сохраняются в `/private/tmp/orca-runtime-agent-discovery-evidence`.
+
+Следующие рубежи: общие диалоги/transcripts/AssistantSession и observers,
+application/launch preflight, owner/client context/lock/bootstrap, async Git и
+async discovery/commonDir/effect tokens, полный file API, общий client/UI,
+installed Linux и независимая продуктовая поставка. Синхронный refresh версий
+может блокировать host до 3 секунд на CLI; responsive owner здесь не заявлен.
+Вся база и Web ещё не готовы; новый CLI пока не создаётся.
