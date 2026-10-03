@@ -40,11 +40,11 @@
 - `AgentDiscoveryOptions extends BinaryLookupOptions { codexDir?: string; now?: () => number; executeVersion?: (command: AgentVersionCommand) => string }`.
 - `createAgentDiscovery(options?: AgentDiscoveryOptions)` → `detectAgents(refresh?: boolean)`, `agentInfos(enabledAgents: AgentKind[] | undefined, refresh?: boolean)` и методы BinaryLookup. `parseTopLevelToml(text)` экспортируется.
 
-- [ ] Добавить тесты API на настоящих временных файлах: PATH/installed/enabled/version, два home/config, cache/refresh/TTL, TOML sections/quotes, broken/missing config/cache, версии/пустой вывод/ошибка/timeout, Windows cmd port и явное окружение.
-- [ ] Run: `node --test packages/runtime/test/agent-discovery.test.ts`. Expected: FAIL — factory отсутствует.
-- [ ] Перенести алгоритмы из Desktop agents.ts в factory, внедрить пути/окружение/clock/version port; экспортировать runtime API и описать границу в architecture.
-- [ ] Run: runtime typecheck/tests и core docs tests. Expected: PASS; версия реально исполняется безопасным fixture CLI без платного LLM.
-- [ ] Commit: `refactor: вынести обнаружение агентов и моделей в runtime`.
+- [x] Добавить тесты API на настоящих временных файлах: PATH/installed/enabled/version, два home/config, cache/refresh/TTL, TOML sections/quotes, broken/missing config/cache, версии/пустой вывод/ошибка/timeout, Windows cmd port и явное окружение.
+- [x] Run: `node --test packages/runtime/test/agent-discovery.test.ts`. Expected: FAIL — factory отсутствует.
+- [x] Перенести алгоритмы из Desktop agents.ts в factory, внедрить пути/окружение/clock/version port; экспортировать runtime API и описать границу в architecture.
+- [x] Run: runtime typecheck/tests и core docs tests. Expected: PASS; версия реально исполняется безопасным fixture CLI без платного LLM.
+- [x] Commit: `refactor: вынести обнаружение агентов и моделей в runtime`.
 
 ## Task 2: Общие проверки агента и роли
 

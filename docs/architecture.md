@@ -155,11 +155,33 @@ Native backend импортируется только тестовым host Des
 завершается после assertions с ненулевым кодом при ошибке. Это проверка исполнения
 без окна, а не установленного Linux артефакта или native cleanup долгоживущего owner.
 
-Это часть этапа исполнения. Обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
+Это часть этапа исполнения. Dialog drivers и AssistantSession пока в Desktop.
 Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
 сама по себе не является авторизацией для удалённого клиента.
+
+### Общее обнаружение агентов и моделей
+
+`createAgentDiscovery({ home?, codexDir?, platform?, env?, now?, executeVersion? })`
+ищет CLI через общий BinaryLookup, читает версии и собирает AgentInfo в порядке
+реестра core. У экземпляра свои кэши: установка/версия до refresh, Codex config и
+models_cache — 60 секунд. Refresh одного экземпляра не сбрасывает другой.
+Home/config/env задаёт host, defaults сохраняют домашний каталог и окружение
+текущего пользователя. Указанный env применяется и к lookup, и к команде версии.
+
+Команда версии остаётся синхронной: timeout 3 секунды, первая непустая строка до
+60 символов; ошибка/timeout оставляют installed=true без версии. Windows cmd/bat
+запускается через shell, прочие CLI — argv без shell. Clock и version executor
+можно передать как порты; обычный Node использует штатные Date.now/execFileSync.
+Списки моделей прочих агентов, Codex TOML/fallback/скрытый default и
+supportsExtraArgs сохраняют прежние правила. На сервере это сведения о CLI и
+конфигурации владельца runtime, а не о браузере подключённого оператора.
+
+Новые runtime suites используют настоящие config/cache/bin fixtures, включая
+безопасный процесс версии без LLM. Общий поиск не создаёт session/exit hooks и
+не импортирует Electron. Responsive owner и асинхронное обнаружение остаются
+следующим этапом надёжности; этот перенос сохраняет прежний порядок Desktop.
 
 ### Общая приёмка и решения человека
 
