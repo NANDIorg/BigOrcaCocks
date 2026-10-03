@@ -36,11 +36,11 @@
 - Produces: `TaskStore.previewEnterWork(taskId: string, opts?: RunWorkflowFallback): WfStep | undefined` — undefined при отсутствии нового входа; накопленные visits повторного входа совпадают с enterWork.
 - Produces: `TaskStore.previewAdvanceStage(taskId: string, outcome: WfOutcome, opts?: RunWorkflowFallback): WfStep` — те же validations и pure step, что advanceStage.
 
-- [ ] Написать тесты: fresh work-role, повторный вход с human и approval, неизменный snapshot/persistence при preview; entry ask/work no-op; blocked; nextStage conditions; legacy и путь подзадачи; ответы/гейты/run scope без пути. Проверить literal stage/action/visits и неизменность до последующей записи.
-- [ ] Run: `node --test packages/core/src/worker-preparation.test.ts`. Expected: FAIL — preview API отсутствует.
-- [ ] Выделить read-only вычисления из advanceStage/enterWork; обе mutation используют preview, сохраняя events/clearStageBlock/cancelStaleApprovals и прежние blocked semantics. Описать read-only границу в workflow docs.
-- [ ] Run: `pnpm --filter @orca-board/core typecheck` и `pnpm --filter @orca-board/core test`. Expected: PASS.
-- [ ] Commit: `refactor(core): добавить предварительный расчёт входа воркера`.
+- [x] Написать тесты: fresh work-role, повторный вход с human и approval, неизменный snapshot/persistence при preview; entry ask/work no-op; blocked; nextStage conditions; legacy и путь подзадачи; ответы/гейты/run scope без пути. Проверить literal stage/action/visits и неизменность до последующей записи.
+- [x] Run: `node --test packages/core/src/worker-preparation.test.ts`. Expected: FAIL — preview API отсутствует.
+- [x] Выделить read-only вычисления из advanceStage/enterWork; обе mutation используют preview, сохраняя events/clearStageBlock/cancelStaleApprovals и прежние blocked semantics. Описать read-only границу в workflow docs.
+- [x] Run: `pnpm --filter @orca-board/core typecheck` и `pnpm --filter @orca-board/core test`. Expected: PASS.
+- [x] Commit: `refactor(core): добавить предварительный расчёт входа воркера`.
 
 ## Task 2: Общая проверка выбранной роли перед входом
 
@@ -52,14 +52,44 @@
 - Produces: `WorkerPreparationOptions { roleId?: string; validateRole?: (roleId: string) => void }`; `enterWork(deps, taskId, opts?: WorkerPreparationOptions): { roleId?: string }` сохраняет прежний результат temporary ask-role.
 - Desktop facade `validateWorkerRole` связывает общий preflight с OrcaError и прежними adapters.
 
-- [ ] Написать regression tests: missing stage-role; disabled/notInstalled/unknown; invalid flags; restart сохраняет approval/stage/visits; work-role применяется после guard; ask/override временные; ответы/гейты/run scope; Git ok/error с разными агентами, Git → merge → work, отказ перед переходом/PTY, explicit override до Git. Real TaskStore, временный настоящий Git, реальные selection/launch policy. Desktop проверяет OrcaError и перевод после смены языка; Node smoke использует public package entry.
-- [ ] Run: `node --test packages/runtime/test/worker-preparation.test.ts`. Expected: FAIL — factory/guard отсутствуют.
-- [ ] Создать preflight factory и экспорт; в enterWork вызывать validation до прямой записи, после Git/merge в подготовительной цепочке — по preview фактического перехода. Передавать opts через отложенное исполнение Git; оставлять обычное автоматическое execute без нового контракта. Desktop передаёт snapshot типа/агентов и callback, закрывает прежний PTY после успешной подготовки.
-- [ ] Run: runtime/Desktop typecheck, новые suites и существующие workflow/launch suites; `pnpm verify`. Expected: PASS, schema/HELP не меняются.
-- [ ] Commit: `fix: проверять запуск воркера до входа в этап`.
+- [x] Написать regression tests: missing stage-role; disabled/notInstalled/unknown; invalid flags; restart сохраняет approval/stage/visits; work-role применяется после guard; ask/override временные; ответы/гейты/run scope; Git ok/error с разными агентами, Git → merge → work, отказ перед переходом/PTY, explicit override до Git. Real TaskStore, временный настоящий Git, реальные selection/launch policy. Desktop проверяет OrcaError и перевод после смены языка; Node smoke использует public package entry.
+- [x] Run: `node --test packages/runtime/test/worker-preparation.test.ts`. Expected: FAIL — factory/guard отсутствуют.
+- [x] Создать preflight factory и экспорт; в enterWork вызывать validation до прямой записи, после Git/merge в подготовительной цепочке — по preview фактического перехода. Передавать opts через отложенное исполнение Git; оставлять обычное автоматическое execute без нового контракта. Desktop передаёт snapshot типа/агентов и callback, закрывает прежний PTY после успешной подготовки.
+- [x] Run: runtime/Desktop typecheck, новые suites и существующие workflow/launch suites; `pnpm verify`. Expected: PASS, schema/HELP не меняются.
+- [x] Commit: `fix: проверять запуск воркера до входа в этап`.
 
 ## Завершение
 
-- [ ] Fresh final reviewer по диапазону текущего среза, плану/spec/ledger; re-grade по эффекту, один fix pass Important/Critical, Minors в ledger.
-- [ ] Собрать и открыть локальное приложение после проверок; проверить app.asar, подпись и наличие renderer. Ручной UI проверяет пользователь.
-- [ ] Обновить PR #59 один раз перед push, дождаться CI точного HEAD; сохранить evidence, убрать только scratch этого плана.
+- [x] Fresh final reviewer по диапазону текущего среза, плану/spec/ledger; re-grade по эффекту, один fix pass Important/Critical, Minors в ledger.
+- [x] Собрать и открыть локальное приложение после проверок; проверить app.asar, подпись и наличие renderer. Ручной UI проверяет пользователь.
+
+При сдаче после итогового documentation commit: обновить PR #59 один раз перед
+push, дождаться CI точного HEAD; сохранить evidence, убрать только scratch этого плана.
+Результат доставки фиксируется в evidence и GitHub checks, чтобы не менять HEAD
+после проверенного CI только ради отметки в этом документе.
+
+## Итог реализации
+
+- Core preview API, общий WorkerPreflight и Desktop wiring выполнены. Новые suites:
+  core 9, runtime 24, Desktop 4 — всего 37 сценариев. Прямой отказ сохраняет состояние
+  и pending approval; ask-role остаётся временной, Git/merge выбирает реальную роль.
+- Одно свежее ревью `92a1120..c7f40f8` + `bca14c0`: targeted 48/48 PASS. При
+  разборе Declined два унаследованных дефекта повышены до Important и исправлены
+  одним RED→GREEN проходом: same-node visits/attempts и первый нерабочий эффект
+  в guarded-входе. Самопереход теперь пишет посещения и stage_changed; первый
+  human/end/blocked/merge исполняется графом вместо запуска обычного воркера мимо него.
+  Calls без validation callback сохраняют прежний enterWork-контракт.
+- После fix pass полный `pnpm verify`: 3382/3382, failures/skips/cancelled 0;
+  core 943, runtime 371, Desktop 1934; strict typecheck и build проходят.
+- Minor отложен: если подготовительный merge конфликтует и следующий агент
+  недоступен, текст конфликта не сохраняется в feedback; ветки/worktree сохраняются.
+- Выполненные подготовительные Git/merge effects не откатываются при отказе
+  запуска. Async/owner/reconciliation, dialog registry и installed headless остаются
+  следующими этапами; серверная база ещё не готова.
+- Evidence и ledger сохраняются в `/private/tmp/orca-runtime-worker-preparation-evidence`;
+  назначенный worktree остаётся. Публикация релиза и merge не выполняются.
+
+Локальная сборка mac x64 1.1.3 выполнена и открыта; ASAR/signature/renderer
+проверены. App: `apps/desktop/release/local/mac/orca-board.app` в назначенном
+worktree. После этого документа остаются доставка в PR #59 и push своей ветки;
+результат CI точного финального HEAD будет в GitHub checks и evidence.
