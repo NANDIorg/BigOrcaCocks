@@ -202,8 +202,17 @@ Desktop `main/agents.ts` создаёт singleton discovery/selection без ove
 фильтрация enabledAgents и socket response прежние. Ошибки возвращаются через
 OrcaError: message по-русски для socket/CLI, IPC переводит её при доставке;
 смена языка не требует пересоздания service. Общий поиск и выбор роли проверяются
-через package entrypoint под Node без Electron loader/DISPLAY. Следующий перенос —
-dialog drivers и AssistantSession; owner/client lifecycle ещё предстоит.
+через package entrypoint под Node без Electron loader/DISPLAY.
+
+`createAssistantConversationServices({ messages, env, homeDir, executablePath, platform })`
+в runtime создаёт независимые structured conversations: Claude stream-json, Codex
+app-server и ACP. Desktop facade передаёт динамический translator и своё окружение;
+общий engine не зависит от окна или Desktop globals. Host-интерфейсы AssistantConversation /
+ConversationOptions находятся в pure runtime leaf без Node imports; DTO остаются
+в contracts. Прежний shared-путь типов временно переэкспортирует этот leaf,
+сохраняя совместимость и не импортируя Node/Electron граф runtime barrel.
+Provider frames, approvals, contextual acceptance, cancellation и terminal-only
+Amp/shell сохраняются. AssistantSession и owner/client lifecycle ещё предстоит.
 
 Читатели истории `transcripts.ts` и `assistant-chat.ts` уже находятся в runtime;
 Desktop оставляет совместимые re-exports. `TranscriptCache` и `AssistantChatCache`

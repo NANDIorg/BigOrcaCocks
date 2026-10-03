@@ -212,7 +212,15 @@ Amp/Shell остаются terminal-only: прямые новые CLI коман
 разбирается заново. Незавершённая последняя строка ждёт окончания записи. Чтение истории
 не запускает сохранённые инструменты повторно.
 
-`main/assistant-conversation.ts` запускает CLI без PTY: Claude — stream-json со stdio control requests, Codex — app-server, Gemini/Cursor/OpenCode/Copilot/Goose — ACP v1. `shared/assistant-conversation.ts` задаёт общий контракт. Amp и Shell сохраняют отдельный терминал по явному выбору пользователя; встроенного xterm в `AssistantPanel` нет. Устаревший CLI показывает ошибку, провайдер не заменяется автоматически.
+Общий `createAssistantConversationServices` в `packages/runtime/src/assistant-conversation.ts`
+запускает CLI без PTY: Claude — stream-json со stdio control requests, Codex — app-server,
+Gemini/Cursor/OpenCode/Copilot/Goose — ACP v1. Desktop `main/assistant-conversation.ts`
+сохраняет прежние exports и задаёт messages/env/homeDir/executablePath/platform;
+смена языка переводит следующие сообщения без пересоздания factory. DTO находятся
+в contracts; host-интерфейсы драйвера — в pure runtime leaf без Node imports.
+`shared/assistant-conversation.ts` остаётся совместимым типовым путём.
+Amp и Shell сохраняют отдельный терминал по явному выбору пользователя; встроенного
+xterm в `AssistantPanel` нет. Устаревший CLI показывает ошибку, провайдер не заменяется автоматически.
 
 Сессия принадлежит приложению, не проекту. `AssistantSession` хранит текущий экземпляр, проверяет новый агент до закрытия старого, отбрасывает поздние события предыдущего диалога и добавляет монотонную `revision`. Закрытие окна в фоне не завершает сессию; фактический выход и установка обновления вызывают dispose. Подпроцесс получает нейтральный `userData/assistant`, инструкции ассистента, настройки модели/effort, пользовательские `extraArgs` после разбора в argv и окружение из `assistantEnv`. Флаги передаются без shell, перед служебными опциями протокола; подкоманды Goose `acp` и Codex `app-server` всегда идут первыми, чтобы variadic-флаг не поглотил их и не запустил интерактивный терминал. Настройки действуют со следующего диалога; флаги интерактивного терминала должны поддерживаться выбранным native-протоколом, иначе CLI сообщает ошибку. Стартовая папка не является системной песочницей. Приложение не добавляет флагов обхода разрешений: Claude сохраняет `auto` и автоматическое разрешение `Bash(orca-board:*)`, остальные используют штатные правила CLI.
 
