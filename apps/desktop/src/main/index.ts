@@ -18,14 +18,16 @@ import { transcriptEnv } from './transcripts'
 import { getReview } from './review'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection } from '@orca-board/runtime'
-import type { BoardCommands } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, ProjectCommandContext } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
+import { registerDesktopGlobalTaskCommands } from './global-task-commands'
+import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities, coordinatorObjective, hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
-import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
+import { showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 import { enterWork, type WorkflowDeps } from './workflow'
 import { validateWorkerRole } from './worker-preflight'
 import {
@@ -38,8 +40,8 @@ import { docsOpenPath, docsPreviewUrl, docsRevealPath, readDocBytes, viewDoc } f
 import { listRules, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
-import { mergeTarget, removeRunWorktree, RunBranchSync } from './run-branch'
-import { runImagesRoot, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, removeRunImagesDir, revealTaskAttachment, openTaskAttachment } from './run-images'
+import { mergeTarget, RunBranchSync } from './run-branch'
+import { runImagesRoot, revealTaskAttachment, openTaskAttachment } from './run-images'
 import { startSocketServer, askWaiting, answerQuestion, syncWorkerLiveness } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { exportTaskTypeToFile } from './task-type-export'
@@ -50,7 +52,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, PtySpawnOptions, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -99,6 +101,8 @@ let win: BrowserWindow | null = null
 let windowFullscreen = false
 let projects: ProjectManager
 let boardCommands: BoardCommands
+let globalTaskCommands: GlobalTaskCommands
+let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
 /** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
 const runBranchSync = new RunBranchSync({ isAlive })
@@ -612,21 +616,7 @@ const assistantSession = new AssistantSession({
  * dispatch закрыт, а PTY жив) закрываются после удаления.
  */
 function removeGlobalTask(p: { id: string; store: TaskStore; root: string }, runId: string, cascade: boolean): { deleted: string; tasks: string[] } {
-  const { store } = p
-  const run = store.getRun(runId)
-  if (run?.coordinatorPtyId && isAlive(run.coordinatorPtyId)) {
-    throw new OrcaError('global.coordinatorAlive')
-  }
-  const ptyIds = store.snapshot().dispatches.filter((d) => store.getTask(d.taskId)?.runId === runId && isAlive(d.ptyId)).map((d) => d.ptyId)
-  const result = store.deleteGlobalTask(runId, { cascade })
-  // Картинки задачи принадлежат ей: без задачи они никому не нужны (файлы лежат вне worktree и репозитория).
-  removeRunImagesDir(runImagesRoot(app.getPath('userData')), p.id, runId)
-  // Снимки показа подзадач — тоже: смотреть их больше негде (карточки и запросы удалены вместе с задачей).
-  removeShowcaseDir(showcaseSnapshotsRoot(app.getPath('userData')), p.id, runId)
-  ptyIds.forEach((id) => killPty(id))
-  // Worktree ветки фичи больше некому убрать; сама ветка остаётся — в ней может быть работа. Грязный — не трогаем.
-  if (run?.git?.worktree) removeRunWorktree(p.root, run.git.worktree)
-  return result
+  return globalTaskRemoval(p, runId, cascade)
 }
 
 /** Раз в минуту: живой воркер без вывода дольше STUCK_MS → эскалация. */
@@ -928,37 +918,11 @@ function registerIpc(): void {
   handle('runs:list', () => (projects.active() ? projects.activeStore().listRuns() : []))
   handle('runs:close', (_e, runId: string) => projects.activeStore().closeRun(runId))
 
-  // Глобальные задачи активного проекта (docs/nested-kanban.md). Изменения — в board:changed.
-  handle('globalTasks:list', () => (projects.active() ? projects.activeStore().listGlobalTasks() : []))
-  handle('globalTasks:get', (_e, id: string) => projects.activeStore().getGlobalTask(id))
-  handle('globalTasks:create', (_e, input: GlobalTaskInput, images?: unknown) => {
-    const p = resolveProject()
-    const { typeId, ...rest } = input ?? {}
-    // Данные из renderer не доверенные: вложения (любой тип файла) проверяются по лимитам до создания — невалидные задачу не создают.
-    const valid = validateAttachments(images)
-    // Тип проверяется до создания: недоступный проекту — ошибка, задача не создаётся.
-    const type = projects.runType(p.id, typeof typeId === 'string' && typeId ? typeId : undefined)
-    return createTaskWithImages(p.store, runImagesRoot(app.getPath('userData')), p.id, { ...rest, type }, valid)
-  })
-  handle('globalTasks:update', (_e, id: string, patch: GlobalTaskPatch) => projects.activeStore().updateGlobalTask(id, patch ?? {}))
-  handle('globalTasks:changeType', (_e, id: string, typeId: string) => {
-    if (typeof typeId !== 'string' || !typeId) throw new OrcaError('global.typeRequired')
-    const p = resolveProject()
-    // Тип — из библиотеки проекта, как при создании: недоступный проекту — ошибка, тип не меняется.
-    return p.store.changeGlobalTaskType(id, projects.runType(p.id, typeId))
-  })
-  // Вложения задачи (картинки и файлы): до начала работы (правило смены типа), лимиты — суммарно на задачу. Файлы — userData/run-images.
-  handle('globalTasks:addImages', (_e, id: string, images?: unknown) => {
-    const p = resolveProject()
-    return addTaskImages(p.store, runImagesRoot(app.getPath('userData')), p.id, id, validateAttachments(images))
-  })
-  handle('globalTasks:removeImage', (_e, id: string, imageId: string) => {
-    const p = resolveProject()
-    return removeTaskImage(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId)
-  })
-  handle('globalTasks:image', (_e, id: string, imageId: string) => {
-    const p = resolveProject()
-    return loadTaskImage(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId)
+  registerDesktopGlobalTaskCommands(handle, {
+    commands: globalTaskCommands,
+    activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
   })
   // Показать в папке — любое вложение задачи (только из её метаданных).
   handle('globalTasks:revealAttachment', (_e, id: string, imageId: string) => {
@@ -970,17 +934,6 @@ function registerIpc(): void {
     const p = resolveProject()
     const err = await shell.openPath(openTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
     if (err) throw new Error(err)
-  })
-  handle('globalTasks:move', (_e, id: string, status: string) => projects.activeStore().moveGlobalTask(id, status))
-  handle('globalTasks:remove', (_e, id: string, opts?: { cascade?: boolean }) =>
-    removeGlobalTask(resolveProject(), id, opts?.cascade === true)
-  )
-  handle('globalTasks:tasks', (_e, id: string) => projects.activeStore().listSubtasks(id))
-  handle('globalTasks:createTask', (_e, id: string, input: SubtaskInput) => {
-    if (!input?.title?.trim()) throw new OrcaError('global.subtaskTitleEmpty')
-    const p = resolveProject()
-    const role = pickRole(projects.resolveRun(p.id, id), projectAgents(p.id), input.roleId ?? p.store.stageDefaultRole(id))
-    return p.store.createTask({ ...input, roleId: role.id, agent: role.agent, runId: id })
   })
   handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
     runCoordinator('', undefined, cols, rows, validateAttachments(images), id)
@@ -1129,13 +1082,31 @@ function initializeDesktop(): void {
   // До первого запуска агентов: system prompt прошлых запусков на Windows (`win32Launch`) больше никто не читает.
   pruneLaunchTempFiles()
   projects = new ProjectManager(app.getPath('userData'))
+  const authorize = (context: ProjectCommandContext) => Boolean(win && !win.isDestroyed()
+    && context.clientId === `desktop:${win.webContents.id}` && context.actor.kind === 'operator' && context.actor.id === 'local-user')
+  const selection = createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
+  const removal = {
+    resources: executionResources, dataDir: app.getPath('userData'),
+    messages: { error: (key: 'global.coordinatorAlive') => new OrcaError(key) },
+    sessions: { isAlive, kill: killPty }
+  }
+  globalTaskRemoval = createGlobalTaskRemoval(removal)
   boardCommands = createBoardCommands({
     project: id => projects.get(id) ? {
       store: projects.store(id), roles: () => projects.resolveRun(id), agents: () => projectAgents(id)
     } : undefined,
-    authorize: context => Boolean(win && !win.isDestroyed() && context.clientId === `desktop:${win.webContents.id}`
-      && context.actor.kind === 'operator' && context.actor.id === 'local-user'),
-    selection: createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
+    authorize, selection
+  })
+  globalTaskCommands = createGlobalTaskCommands({
+    ...removal, authorize, selection,
+    project: id => {
+      const project = projects.get(id)
+      return project ? {
+        store: projects.store(id), root: project.root,
+        runType: typeId => projects.runType(id, typeId),
+        roles: runId => projects.resolveRun(id, runId), agents: () => projectAgents(id)
+      } : undefined
+    }
   })
   syncMainAppearance()
   setMainLocale(projects.settings().language)

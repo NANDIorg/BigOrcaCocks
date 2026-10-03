@@ -23,6 +23,10 @@ guards и общие resources. Общая операция `createGlobalTaskRem
 их вход через общий command API — следующий этап. Подробности — «Общие команды
 глобальных задач» в [architecture.md](architecture.md).
 
+Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
+channels. UI/preload не меняются, active selection переводится в явный context
+одного вызова на IPC границе; runtime не зависит от выбора проекта в окне.
+
 Отдельной сущности нет. Прогон (`Run`, `packages/core/src/types.ts`) уже был «набором задач одного
 координатора» со своим жизненным циклом (`closedAt`, `run_done`, `runs finish`), а связь задача → прогон
 (`Task.runId`) уже хранилась, была неизменяемой и учитывалась в фильтре событий. Поэтому:

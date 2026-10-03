@@ -184,6 +184,15 @@ gateFor клиент не задаёт. Subtask привязывается к п
 Запуск координатора, accept/return и остальные workflow/requests команды ещё
 требуют такого application API. Native reveal/open остаются Desktop capabilities.
 
+Desktop `main/global-task-commands.ts` регистрирует прежние 12 globalTasks channels
+через общий `project-command-adapter.ts` (его использует и board adapter). Проверка
+webContents/mainFrame предшествует selection; main фиксирует operator/local-user,
+policy проверяет Desktop client. Пустой list без проекта и null patch/options
+сохраняют совместимость; вложенные host/core причины сохраняют прежние IPC ошибки.
+Production main предоставляет общие resources, типы/роли конкретного проекта и
+session ports. Его legacy socket removal helper использует ту же общую операцию,
+протокол CLI не меняется.
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,

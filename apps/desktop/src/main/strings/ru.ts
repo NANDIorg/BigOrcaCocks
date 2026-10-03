@@ -7,6 +7,7 @@ export default {
   'command.invalidInput': 'Невалидное поле команды: {field}.',
   'command.projectNotFound': 'Проект «{projectId}» не найден.',
   'command.taskNotFound': 'Задача «{taskId}» не найдена в выбранном проекте.',
+  'command.globalTaskNotFound': 'Глобальная задача «{globalTaskId}» не найдена в выбранном проекте.',
   'command.rejected': 'Команда не выполнена: {reason}.',
   'runtime.startupTitle': 'Не удалось запустить Orca',
   'runtime.profileBusy': 'Этот профиль Orca уже открыт в другом процессе. Закройте его перед запуском Desktop.',

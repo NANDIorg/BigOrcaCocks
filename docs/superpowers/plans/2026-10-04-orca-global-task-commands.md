@@ -72,11 +72,11 @@
 - Общий adapter устанавливает operator/local-user; caller проверяется до selection. list без проекта → []; null update → {}; null remove opts → cascade false. Ошибки core/OrcaError из local cause сохраняют legacy перевод.
 - Main создаёт два service после ProjectManager с одним проверенным Desktop policy, resources/roles/types/paths/sessions. Main `removeGlobalTask` делегирует общей trusted removal; socket envelope неизменен. reveal/open остаются native, coordinator/accept/return отдельным следующим этапом.
 
-- [ ] Написать интеграционные тесты registered callbacks с настоящим global service/store/resources: старые channels/types/defaults, active project switch, input не подменяет actor/run, чужой caller не читает selection/store, прежняя локализованная ошибка type/role.
-- [ ] Запустить `node --experimental-transform-types --no-warnings --import ./apps/desktop/test/ts-resolve.mjs --test apps/desktop/src/main/board-commands.test.ts apps/desktop/src/main/global-task-commands.test.ts`: Expected FAIL нет executable adapter.
-- [ ] Подключить common service/adapters к production main, убрать перенесённую бизнес-логику. Новый error key добавить в оба main словаря; preload и signatures не менять.
-- [ ] Пересобрать node-pty из исходников под Node 24, запустить adapter suites и `pnpm verify`: Expected PASS всех пакетов/typecheck/build.
-- [ ] Обновить docs/checkbox, проверить diff, закоммитить; task-done — обе Desktop adapter suites → PASS.
+- [x] Написать интеграционные тесты registered callbacks с настоящим global service/store/resources: старые channels/types/defaults, active project switch, input не подменяет actor/run, чужой caller не читает selection/store, прежняя локализованная ошибка type/role.
+- [x] Запустить `node --experimental-transform-types --no-warnings --import ./apps/desktop/test/ts-resolve.mjs --test apps/desktop/src/main/board-commands.test.ts apps/desktop/src/main/global-task-commands.test.ts`: Expected FAIL нет executable adapter.
+- [x] Подключить common service/adapters к production main, убрать перенесённую бизнес-логику. Новый error key добавить в оба main словаря; preload и signatures не менять.
+- [x] Пересобрать node-pty из исходников под Node 24, запустить adapter suites и `pnpm verify`: Expected PASS всех пакетов/typecheck/build.
+- [x] Обновить docs/checkbox, проверить diff, закоммитить; task-done — обе Desktop adapter suites → PASS.
 
 ## Доставка и границы готовности
 
