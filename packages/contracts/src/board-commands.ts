@@ -1,12 +1,7 @@
 import type { Task, Dispatch, OrcaEvent, Question, Run, HumanRequest, TaskPriority } from '@orca-board/core'
 import type { TaskPatch } from './tasks.ts'
-
-/** Host устанавливает автора после проверки соединения; поля JSON клиента не доказывают его полномочия. */
-export interface ProjectCommandContext {
-  projectId: string
-  clientId: string
-  actor: { kind: 'operator' | 'agent' | 'system'; id: string }
-}
+import type { ProjectCommandContext } from './project-commands.ts'
+export type { ProjectCommandContext, CommandErrorCode as BoardCommandErrorCode, CommandErrorData as BoardCommandErrorData } from './project-commands.ts'
 
 export interface TaskCreateInput {
   title: string
@@ -28,13 +23,6 @@ export interface BoardSnapshot {
 }
 
 export type BoardCommandName = 'board.get' | 'tasks.create' | 'tasks.update' | 'tasks.move' | 'tasks.remove'
-export type BoardCommandErrorCode = 'command.invalidContext' | 'command.forbidden' | 'command.invalidInput'
-  | 'command.projectNotFound' | 'command.taskNotFound' | 'command.rejected'
-
-export interface BoardCommandErrorData {
-  code: BoardCommandErrorCode
-  details: { field?: string; projectId?: string; taskId?: string; reason?: string }
-}
 
 /** Синхронный application API владельца; сетевой client/transport оборачивает его отдельно. */
 export interface BoardCommands {

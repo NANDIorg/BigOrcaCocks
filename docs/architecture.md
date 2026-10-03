@@ -127,6 +127,12 @@ Desktop; Web-клиенты получат свой контекст выбор�
 
 ### Общие команды доски
 
+Общий `createProjectCommandExecutor` отвечает за context, policy, attribution,
+lookup, копирование результата и `CommandError`; `BoardCommandError` остаётся alias
+того же класса. Contracts context/error лежат в `project-commands.ts`, входные
+task validators runtime не экспортируются клиентам. Deps проверяются с обходом
+всех позиций массива: holes отклоняются до lookup/persistence.
+
 `createBoardCommands` в runtime выполняет `get/createTask/updateTask/moveTask/removeTask`
 с явным `ProjectCommandContext { projectId, clientId, actor }`. Host устанавливает
 actor по доверенному соединению и передаёт обязательную `authorize(context, command)`;

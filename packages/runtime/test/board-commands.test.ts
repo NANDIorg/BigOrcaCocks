@@ -10,6 +10,14 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 const operator = (projectId = 'A') => ({ projectId, clientId: `client-${projectId}`, actor: { kind: 'operator' as const, id: 'local-user' } })
 
+test('разреженные deps отклоняются до открытия проекта', () => {
+  const { service, stores, lookedUp } = fixture()
+  const before = stores.get('A')!.snapshot()
+  assert.throws(() => service.createTask(operator(), { title: 'No', deps: new Array<string>(1) }), code('command.invalidInput', 'deps'))
+  assert.deepEqual(lookedUp, [])
+  assert.deepEqual(stores.get('A')!.snapshot(), before)
+})
+
 function fixture(authorize = (_context: unknown, _command: unknown) => true) {
   assert.equal(typeof runtime.createBoardCommands, 'function', 'Нужен исполняемый API доски без Desktop')
   const dir = mkdtempSync(join(tmpdir(), 'orca-board-commands-'))

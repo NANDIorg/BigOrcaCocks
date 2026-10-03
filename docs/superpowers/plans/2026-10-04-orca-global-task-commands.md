@@ -39,11 +39,11 @@
 - Produces: внутренние `commandFields`, `commandString`, `commandInputError`, `taskCreateFrom` для безопасного построения input и dense deps. Публичный barrel их не экспортирует.
 - Существующий `BoardCommands`/DTO и `instanceof BoardCommandError` сохраняются. Новая ошибка `command.globalTaskNotFound`, details `globalTaskId`.
 
-- [ ] Написать тест `разреженные deps отклоняются до открытия проекта`: `deps: new Array(1)` → invalidInput/deps, lookup пуст, persistence не меняется. Существующие policy/context/actor/error DTO tests остаются regression.
-- [ ] Запустить `node --test packages/runtime/test/board-commands.test.ts`: Expected FAIL sparse deps.
-- [ ] Вынести executor/контекст/ошибку и валидаторы, перевести существующий Board service на них. Отказ policy строго при результате !== true, копия context, payload до lookup, structuredClone результата, source human/cli/app только внутри синхронной операции.
-- [ ] Запустить board suite, runtime/contracts typecheck и contracts test: Expected PASS.
-- [ ] Обновить архитектуру, проверить diff, закоммитить; task-done: `node --test packages/runtime/test/board-commands.test.ts` → PASS.
+- [x] Написать тест `разреженные deps отклоняются до открытия проекта`: `deps: new Array(1)` → invalidInput/deps, lookup пуст, persistence не меняется. Существующие policy/context/actor/error DTO tests остаются regression.
+- [x] Запустить `node --test packages/runtime/test/board-commands.test.ts`: Expected FAIL sparse deps.
+- [x] Вынести executor/контекст/ошибку и валидаторы, перевести существующий Board service на них. Отказ policy строго при результате !== true, копия context, payload до lookup, structuredClone результата, source human/cli/app только внутри синхронной операции.
+- [x] Запустить board suite, runtime/contracts typecheck и contracts test: Expected PASS.
+- [x] Обновить архитектуру, проверить diff, закоммитить; task-done: `node --test packages/runtime/test/board-commands.test.ts` → PASS.
 
 ### Task 2: Общий global service и удаление ресурсов
 
