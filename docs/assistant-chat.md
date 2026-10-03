@@ -282,3 +282,16 @@ Contracts `DialogRecord` связывает transcript с opaque dialog/project 
 незавершённый turn → interrupted, старые interactions очищены, running tools →
 cancelled. История не запускает CLI/tools и требует нового разговора. Это общий
 слой рубежа 4; подключение persistence к registry/Desktop ещё предстоит.
+
+Runtime `createDialogRepository(absoluteFile)` хранит новый изолированный JSON
+`{schemaVersion:1, dialogs:[...]}`. Import/factory/read не создают файл; запись
+использует atomic rename. `save(record, expectedRevision)` создаёт revision 0
+при `null`, затем принимает только следующий revision; `remove` тоже требует
+текущую ревизию. Перед каждой мутацией перечитывается и проверяется весь документ.
+Повреждение, другая версия и повтор id блокируют запись с `DialogRepositoryError`
+(`dialog.invalid`, `dialog.schemaUnsupported`, `dialog.conflict`); исходный файл
+не стирается и не переносится автоматически. Ошибки I/O проходят caller.
+Unknown JSON metadata сохраняются при read/update того же DTO и соседних записей.
+Фильтр project id относится только к переданному profile-файлу. Caller уже должен
+владеть profile: revision check не заменяет межпроцессный lock. Backend пока
+синхронный; его подключение к registry/Desktop и async I/O остаются следующим шагом.
