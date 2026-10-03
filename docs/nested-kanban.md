@@ -19,9 +19,13 @@ needs_input — **вычисляемая** колонка: там карточк
 адресуют project/client/actor явно: CRUD, типы, подзадачи и вложения используют core
 guards и общие resources. Общая операция `createGlobalTaskRemoval` проверяет живого
 координатора и cascade/dispatch до очистки файлов/PTY/worktree; ветка сохраняется.
-Запуск координатора и accept/return пока используют существующие workflow services,
-их вход через общий command API — следующий этап. Подробности — «Общие команды
-глобальных задач» в [architecture.md](architecture.md).
+Запуск/перезапуск координатора и accept/return проходят `CoordinatorCommands` с тем
+же явным context/policy. Общая trusted orchestration используется также старым
+agent socket. Run scope решает approval без закрытия живого координатора, legacy
+task scope перезапускает его; failed launch после решения сохраняет feedback/files.
+Подробности — «Общие команды глобальных задач» и «Общие команды координатора»
+в [architecture.md](architecture.md). Worker/review/requests/lifecycle команды и
+transport guarantees ещё переносятся отдельно.
 
 Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
 channels. UI/preload не меняются, active selection переводится в явный context

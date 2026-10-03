@@ -18,21 +18,22 @@ import { transcriptEnv } from './transcripts'
 import { getReview } from './review'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, ProjectCommandContext } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, type CoordinatorProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, ProjectCommandContext } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
+import { registerDesktopCoordinatorCommands } from './coordinator-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
-import { attachmentCapabilities, coordinatorObjective, hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
+import { attachmentCapabilities, hasImageInput, rejectWithImages, resolveWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 import { enterWork, type WorkflowDeps } from './workflow'
 import { validateWorkerRole } from './worker-preflight'
 import {
-  acceptRun, escalateDecision, finishRunStage, isRunScope, returnRun, runDecision,
-  hasIdleStage, settleIdleRunStages, startRunWorkflow,
+  escalateDecision, finishRunStage, runDecision,
+  hasIdleStage, settleIdleRunStages,
   type RunWorkflowDeps
 } from './workflow-run'
 import { docSourceRoot, docTasks, listDocGroups, readDoc } from './docs'
@@ -102,6 +103,8 @@ let windowFullscreen = false
 let projects: ProjectManager
 let boardCommands: BoardCommands
 let globalTaskCommands: GlobalTaskCommands
+let coordinatorCommands: CoordinatorCommands
+let coordinatorOperations: ReturnType<typeof createCoordinatorOperations>
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
 /** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
@@ -565,27 +568,22 @@ function runCoordinator(
   typeId?: string
 ): string {
   const p = resolveProject(projectId)
-  // Повторный запуск — роли типа прогона; новый прогон — выбранного типа (нет — типа проекта по умолчанию).
-  if (runId !== undefined) {
-    // Воркфлоу глобальной задачи дошёл до конца: координатору нечего делать, а запуск переоткрыл бы закрытый прогон.
-    if (runFinished(p.store, runId)) throw new OrcaError('workflow.runFinished')
-    const started = startCoordinator(p.store, p.root, ctx(p.id, runId), objective, cols, rows, images, runId)
-    startRunWorkflow(runWorkflowDeps(p.id), started.runId)
-    return started.ptyId
-  }
-  const type = projects.runType(p.id, typeId)
-  const env = { ...typeCtx(p.id, projects.resolveType(p.id, type.typeId)), type }
-  const started = startCoordinator(p.store, p.root, env, objective, cols, rows, images)
-  // Новый прогон с воркфлоу прогона: координатор запущен — граф входит в первую ноду (обычно `stage_started`).
-  startRunWorkflow(runWorkflowDeps(p.id), started.runId)
-  return started.ptyId
+  return coordinatorOperations.start(coordinatorProject(p.id)!, objective, cols, rows, images, runId, typeId).ptyId
 }
 
-/** Воркфлоу глобальной задачи (`workflowScope: 'run'`) дошёл до ноды `end`: прогон закрыт, повторный запуск координатора не нужен. */
-function runFinished(store: TaskStore, runId: string): boolean {
-  const run = store.getRun(runId)
-  if (run?.workflowScope !== 'run' || !run.stage) return false
-  return store.runWorkflow(runId).nodes.find((n) => n.id === run.stage!.nodeId)?.type === 'end'
+/** Host собирает ports одного явного проекта; runtime не знает выбора проекта в окне. */
+function coordinatorProject(projectId: string): CoordinatorProject | undefined {
+  const project = projects.get(projectId)
+  if (!project) return undefined
+  return {
+    store: projects.store(projectId), root: project.root,
+    environment: runId => ctx(projectId, runId),
+    newRunEnvironment: typeId => {
+      const type = projects.runType(projectId, typeId)
+      return { ...typeCtx(projectId, projects.resolveType(projectId, type.typeId)), type }
+    },
+    workflow: runWorkflowDeps(projectId)
+  }
 }
 
 /** Чат живёт независимо от окна и выбранного проекта. Amp/Shell используют отдельный PTY. */
@@ -935,25 +933,11 @@ function registerIpc(): void {
     const err = await shell.openPath(openTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
     if (err) throw new Error(err)
   })
-  handle('globalTasks:startCoordinator', (_e, id: string, cols: number, rows: number, images?: unknown) =>
-    runCoordinator('', undefined, cols, rows, validateAttachments(images), id)
-  )
-  handle('globalTasks:accept', (_e, id: string, decision?: string) =>
-    acceptRun(runWorkflowDeps(resolveProject().id), id, typeof decision === 'string' ? decision : undefined))
-  // `images` — вложения к уточнению (байты файлов): main проверяет их и пишет в cwd координатора, дальше по возврату идут пути.
-  handle('globalTasks:returnToWork', (_e, id: string, text: string, cols: number, rows: number, images?: unknown) => {
-    const p = resolveProject()
-    const reason = typeof text === 'string' ? text : ''
-    if (isRunScope(p.store, id)) {
-      // «Вернуть» — reject ноды `human`: граф идёт по ребру reject, координатор получает `stage_started` с замечаниями (живой
-      // не закрывается — он ждёт этап в Monitor, мёртвый запускается заново). Терминал — тот, что сейчас у координатора.
-      // Проверка живости — после записи: файлы уже в `stageInput.images`, и «Запустить координатора» их подхватит.
-      returnRunWithImages(p.store, p.root, id, images, reason, (paths) => returnRun(runWorkflowDeps(p.id), id, reason, paths))
-      const ptyId = p.store.getRun(id)?.coordinatorPtyId
-      if (!ptyId || !isAlive(ptyId)) throw new OrcaError('workflow.coordinatorNotRunning')
-      return ptyId
-    }
-    return returnRunWithImages(p.store, p.root, id, images, reason, (paths) => returnToWork(p.store, p.root, ctx(p.id, id), id, reason, cols, rows, paths)).ptyId
+  registerDesktopCoordinatorCommands(handle, {
+    commands: coordinatorCommands,
+    activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
   })
   handle('questions:answer', (_e, id: string, answer: string) => answerQuestion(projects.activeStore(), id, answer))
   handle('requests:list', (_e, opts?: RequestListOptions) => {
@@ -988,11 +972,6 @@ function registerIpc(): void {
   handle('terminals:list', () => terminalSnapshots())
 
   handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
-  handle('coordinator:start', (_e, objective: unknown, cols: number, rows: number, images?: unknown) => {
-    // Данные из renderer не доверенные: вложения проверяются по лимитам, картинка узнаётся по сигнатуре.
-    const valid = validateAttachments(images)
-    return runCoordinator(coordinatorObjective(objective, valid), undefined, cols, rows, valid)
-  })
   handle('assistant:open', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, false))
   handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
   handle('assistantChat:available', (_e, id: string) => assistantSession.available(id))
@@ -1108,6 +1087,13 @@ function initializeDesktop(): void {
       } : undefined
     }
   })
+  const coordinatorHost = {
+    workers: { startCoordinator, returnToWork }, workflow: workflowServices.run,
+    resources: executionResources,
+    messages: { error: (key: 'workflow.runFinished' | 'workflow.coordinatorNotRunning') => new OrcaError(key) }
+  }
+  coordinatorOperations = createCoordinatorOperations(coordinatorHost)
+  coordinatorCommands = createCoordinatorCommands({ ...coordinatorHost, project: coordinatorProject, authorize })
   syncMainAppearance()
   setMainLocale(projects.settings().language)
   refreshApplicationMenu()

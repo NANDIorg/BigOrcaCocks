@@ -37,11 +37,11 @@
 - CoordinatorProject `{store,root,environment(runId?),newRunEnvironment(typeId?),workflow:RunWorkflowDeps}`. Host передаёт workers/startCoordinator/returnToWork, run workflow service, resources, error для двух workflow keys. createCoordinatorOperations(host) принимает явный project и используется также legacy agent launch.
 - Payload: whitelist; строки objective/text допускают пустую строку согласно старым guards, decision optional string, typeId и runId непустые; cols/rows optional positive integer. Вложения через один общий commandAttachmentsFrom с core validation.
 
-- [ ] Step 1: Написать тесты factory и настоящих start/accept/return, двух проектов, всех четырёх policy checks, невалидного context/payload, source human/cli/app, ended/alive/ambiguous guards, legacy return, rollback/retained files при failed launch.
-- [ ] Step 2: `node --test packages/runtime/test/coordinator-commands.test.ts` с Node 24 PATH. Expected: assertion FAIL, отсутствует createCoordinatorCommands/createCoordinatorOperations, без import ошибки.
-- [ ] Step 3: Реализовать contracts, trusted operations и четыре project команды. Вынести проверку attachments из global-task-commands в private command-input; сохранить глобальный CRUD.
-- [ ] Step 4: `pnpm --filter @orca-board/contracts typecheck`, `pnpm --filter @orca-board/runtime typecheck`, `pnpm --filter @orca-board/runtime test`. Expected: всё PASS. Проверить diff и закоммитить точные файлы.
-- [ ] Step 5: task-done с `pnpm --filter @orca-board/runtime test`. Expected: PASS и ledger completion.
+- [x] Step 1: Написать тесты factory и настоящих start/accept/return, двух проектов, всех четырёх policy checks, невалидного context/payload, source human/cli/app, ended/alive/ambiguous guards, legacy return, rollback/retained files при failed launch.
+- [x] Step 2: `node --test packages/runtime/test/coordinator-commands.test.ts` с Node 24 PATH. Expected: assertion FAIL, отсутствует createCoordinatorCommands/createCoordinatorOperations, без import ошибки.
+- [x] Step 3: Реализовать contracts, trusted operations и четыре project команды. Вынести проверку attachments из global-task-commands в private command-input; сохранить глобальный CRUD.
+- [x] Step 4: `pnpm --filter @orca-board/contracts typecheck`, `pnpm --filter @orca-board/runtime typecheck`, `pnpm --filter @orca-board/runtime test`. Expected: всё PASS. Проверить diff и закоммитить точные файлы.
+- [x] Step 5: task-done с `pnpm --filter @orca-board/runtime test`. Expected: PASS и ledger completion.
 
 ### Task 2: Desktop и документация
 
@@ -51,11 +51,11 @@
 - Consumes: четыре CoordinatorCommands из Task 1 и createDesktopProjectCommandAdapter, общий test host из Task 1.
 - Produces: registerDesktopCoordinatorCommands(handle, {commands,activeProjectId,clientId}); старые четыре IPC callbacks сохраняют signature/launch ptyId string. Старые accept decision и return text defaults нормализует только adapter. Main собирает явные project ports, trusted runCoordinator использует createCoordinatorOperations.
 
-- [ ] Step 1: Добавить тесты четырёх callbacks с настоящим runtime: caller до selection; один capture active project; старые defaults/DTO; между проектами нет fallback; локализация host errors; return failure сохраняет feedback и файлы. Пустой adapter export допустим только для запуска RED.
-- [ ] Step 2: Desktop loader test command для `coordinator-commands.test.ts`. Expected: assertion FAIL отсутствует registerDesktopCoordinatorCommands.
-- [ ] Step 3: Подключить adapter и project services в main, убрать четыре старые бизнес-реализации и runFinished. Legacy socket использует общий trusted executor, raw graph restart остаётся без startRunWorkflow.
-- [ ] Step 4: Обновить три документа: текущее покрытие, distinction legacy socket / owner API и ещё отсутствующие lifecycle/worker/review/transport guarantees.
-- [ ] Step 5: После Node rebuild node-pty выполнить `pnpm verify` с Node 24 PATH, отдельно docs core test при необходимости включён verify. Expected: все suites/typecheck/build PASS. Проверить diff, commit, task-done с Desktop coordinator test command.
+- [x] Step 1: Добавить тесты четырёх callbacks с настоящим runtime: caller до selection; один capture active project; старые defaults/DTO; между проектами нет fallback; локализация host errors; return failure сохраняет feedback и файлы. Пустой adapter export допустим только для запуска RED.
+- [x] Step 2: Desktop loader test command для `coordinator-commands.test.ts`. Expected: assertion FAIL отсутствует registerDesktopCoordinatorCommands.
+- [x] Step 3: Подключить adapter и project services в main, убрать четыре старые бизнес-реализации и runFinished. Legacy socket использует общий trusted executor, raw graph restart остаётся без startRunWorkflow.
+- [x] Step 4: Обновить три документа: текущее покрытие, distinction legacy socket / owner API и ещё отсутствующие lifecycle/worker/review/transport guarantees.
+- [x] Step 5: После Node rebuild node-pty выполнить `pnpm verify` с Node 24 PATH, отдельно docs core test при необходимости включён verify. Expected: все suites/typecheck/build PASS. Проверить diff, commit, task-done с Desktop coordinator test command.
 
 ## Завершение
 

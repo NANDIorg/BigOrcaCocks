@@ -181,8 +181,9 @@ gateFor клиент не задаёт. Subtask привязывается к п
 удаляется принудительно, ветка остаётся. Ошибки cleanup сохраняют прежние semantics;
 это пока синхронная операция без transaction/reconciliation.
 
-Запуск координатора, accept/return и остальные workflow/requests команды ещё
-требуют такого application API. Native reveal/open остаются Desktop capabilities.
+Запуск координатора и accept/return входят в общий API ниже. Остальные worker,
+review, requests и lifecycle команды ещё требуют такого application API.
+Native reveal/open остаются Desktop capabilities.
 
 Desktop `main/global-task-commands.ts` регистрирует прежние 12 globalTasks channels
 через общий `project-command-adapter.ts` (его использует и board adapter). Проверка
@@ -192,6 +193,36 @@ policy проверяет Desktop client. Пустой list без проект�
 Production main предоставляет общие resources, типы/роли конкретного проекта и
 session ports. Его legacy socket removal helper использует ту же общую операцию,
 протокол CLI не меняется.
+
+### Общие команды координатора
+
+`CoordinatorCommands` в contracts и `createCoordinatorCommands` в runtime дают
+start/startCoordinator/accept/returnToWork с тем же явным project/client/actor,
+обязательной host policy и whitelist до lookup. Objective/text — строки; пустые
+значения проверяют прежние domain guards, attachment-only цель допустима. Optional
+cols/rows — положительные safe integers; пути файлов, run snapshot и произвольные
+поля store клиент не задаёт. Вложения проходят общий byte/limit validator вместе
+с глобальным CRUD. Launch DTO содержит ptyId/runId, accept возвращает GlobalTask;
+executor отделяет результаты от store.
+
+`createCoordinatorOperations` — trusted orchestration и для этих команд, и для
+старого agent socket. Host передаёт ports одного проекта: store/root, окружение
+снимка/выбранного типа и RunWorkflowDeps; workers, workflow и resources общие.
+Запуск проверяет end и живой PTY, затем запускает координатора и граф. Raw restart
+из самого графа не вызывает startRunWorkflow повторно. Графовые переходы сохраняют
+source workflow; прямые изменения legacy scope — human/cli/app по actor.
+
+Возврат run scope решает approval и идёт по reject, сохраняя живого координатора;
+legacy task scope закрывает прежний PTY и запускает новый. Если решение уже durable,
+failed launch сохраняет feedback/referenced attachments; до решения файлы удаляются
+по прежнему rollback. Неоднозначный fork approval не меняет lanes. Это синхронный
+application API, без transaction/effect tokens/reconciliation и очереди async Git.
+
+Desktop `main/coordinator-commands.ts` использует общий project adapter: проверенный
+caller прежде единственного capture activeId, старые четыре IPC signatures/defaults
+и ptyId строки сохраняются. Ошибки boundary и host переводятся прежним ru/en путём.
+Самостоятельные Web/CLI transports и auth, lifecycle/worker/review/request commands,
+revisions/idempotency/replay остаются дальнейшими этапами.
 
 ### Общий запуск агентов и терминальные сессии
 

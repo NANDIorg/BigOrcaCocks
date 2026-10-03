@@ -382,7 +382,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 → мерж → `worktree remove --force`, папка удаляется). Конфликт (`git merge --abort` уже выполнен) — исход `conflict`, обычно «Конфликт мержа» (`human`) с текстом git; «Принять»
 повторяет слияние (ветку разрешает человек). Повтор ноды после `workflow_blocked` — `startRunWorkflow` (см. ниже). Платформенных веток нет: только `execFileSync('git', […])` и `os.tmpdir()`.
 
-**Вход и повтор.** `startRunWorkflow(runId)` зовёт `runCoordinator` (`index.ts`) после каждого запуска координатора: граф не начат — `enterRunStage` и эффект первой ноды
+**Вход и повтор.** Общая trusted orchestration `createCoordinatorOperations` вызывает `startRunWorkflow` после запуска координатора. В неё входят owner `CoordinatorCommands` с явным context/policy и старый agent socket через Desktop `runCoordinator`: граф не начат — `enterRunStage` и эффект первой ноды
 (обычно `stage_started`), граф идёт — повтор эффекта текущей ноды. Повтор безопасен: задача-вопрос и проверка этого захода не дублируются (нашлась — при необходимости просто запускается),
 ждущий approval возвращается тот же, слияние и git идемпотентны, «Работа» при живом координаторе ничего не делает. Прогон, дошедший до `end`, координатора не запускает
 (`workflow.runFinished`): запуск переоткрыл бы закрытый прогон.
@@ -404,7 +404,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `worker_done` задачи `ask` | то же | закрыть, `advanceRunStage(next, {answers})`, если прогон стоит на этом заходе ноды |
 | `question_answered` (агент `ask` не жив) | то же | воркер стартует сам |
 | approval `human` решён | IPC `requests:resolve`, сокет `request resolve` → `resolveHumanRequest` → `handleRunRequest` | `accept` → исход `accept` (текст «Принять» → `decision` следующей «Работы»), `reject` → исход `reject` (замечания → `feedback`, приложенные к ним файлы → `images`) |
-| «Подтвердить» / «Вернуть в работу» на карточке | IPC `globalTasks:accept` → `acceptRun`, `globalTasks:returnToWork(…, images?)` → `returnRun` | то же решение approval (файлы к «Вернуть» main пишет в cwd координатора до перехода); «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
+| «Подтвердить» / «Вернуть в работу» на карточке | Desktop compatibility adapter → общие `CoordinatorCommands.accept/returnToWork` → `acceptRun/returnRun` | то же решение approval (файлы к «Вернуть» общий runtime пишет в cwd координатора до перехода); «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
 | Координатор умер, `stage finish` не пришёл | раз в 5 с `watchFinishedCoordinators` → `settleIdleRunStages` | `settleIdleStages`: этап закрывается по `next` без сводки, эффект следующей ноды |
 
 **Путь подзадачи в движке main.** Подзадача этапа «Работа» идёт по своему пути (`Task.stage`), его исполняет **движок по подзадачам** (`main/workflow.ts`: `advance`,
