@@ -75,11 +75,46 @@
 
 ## Завершение и оставшийся объём
 
-- [ ] Fresh final reviewer с plan/spec/ledger и текущим диапазоном. Re-grade Declined, Important/Critical исправить одним RED→GREEN проходом; Minors отложить явно.
-- [ ] Pack/open локальный mac app, ASAR/signature/main+renderer; UI вручную проверяет пользователь.
-- [ ] Обновить PR #59 один раз перед push; CI точного HEAD; сохранить evidence и убрать только scratch этого плана.
+- [x] Fresh final reviewer с plan/spec/ledger и текущим диапазоном. Re-grade Declined, Important/Critical исправить одним RED→GREEN проходом; Minors отложить явно.
+- [x] Pack/open локальный mac app, ASAR/signature/main+renderer; UI вручную проверяет пользователь.
+- [x] Подготовить обновление PR #59 и evidence доставки. После финального docs-коммита: обновить body один раз, push, дождаться CI точного HEAD и архивировать/убрать только scratch этого плана; результат фиксируется вне checkout.
 
 После текущего среза остаются пять архитектурных рубежей: завершить диалоги/observers;
 headless/owner/async/reconciliation; полный service API и файлы; общий UI/client;
 installed artifact и независимая release policy. Это крупные блоки, а не число мелких
 переносов: календарный срок ещё не зафиксирован. Web начинается после критериев §12.
+
+
+## Результат переноса
+
+Tasks 1–3 выполнены: история/cache, существующие structured drivers и одна
+AssistantSession на экземпляр находятся в runtime. Desktop сохраняет прежние
+facades, IPC/socket и язык ошибок; UI, схемы, версия и dependencies не менялись.
+
+Полный `pnpm verify` после единственного fix pass: **3396/3396**,
+failures/skips/cancelled 0; core 943, runtime 463, Desktop 1856, scripts 49,
+CLI 38, contracts 47. Git Flow, typecheck и build проходят. Fresh reviewer
+самостоятельно выполнил runtime 91/91, Desktop 5/5 и UTF-8/1MiB/partial smoke.
+Important: гонка Codex cumulative usage воспроизведена новым тестом
+(actual [10,20,10] вместо [10,10,10]), исправлена объединением reads:
+RED → history GREEN 30/30 → полный verify. Второго ревью после исправления нет.
+
+Локальный mac x64 pack 1.1.3 собран и открыт; ASAR/signature/main+renderer
+проверены. После этих проверок меняется только данный план, не bundled files.
+Ручной интерфейс проверяет пользователь. Push/CI выполняются после фиксации
+этого документа; финальные SHA/jobs, review, ledger и логи сохраняются в
+`/private/tmp/orca-runtime-assistant-evidence` (вне commits).
+
+### Принятые решения
+
+1. Продолжить утверждённую архитектуру inline без нового запроса подтверждения плана — пользователь многократно подтвердил самостоятельное продолжение, разработчик запрещает повторные approval flows при уже данном разрешении — цена ошибки: пересмотр границ текущего среза.
+2. Извлечь существующие transports/session/history до полного registry/persistence/reconnect — это перенос рубежа 4 с сохраняющимся Desktop, не готовый server dialog service — цена ошибки: до следующих диалоговых/owner этапов Web/новый CLI подключать рано.
+3. Сбрасывать оба reader cache при том же размере и новом mtime — реальные RED показывают старую историю и usage после rewrite; append/partial-line не меняются — цена ошибки: изменение только metadata может вызвать лишнее полное чтение файла, без исполнения tools.
+4. Driver interfaces AssistantConversation/ConversationOptions держать в pure runtime leaf, а не contracts public DTO — существующий boundary test запрещает provider driver types; spec отделяет process runtime от wire contracts — цена ошибки: временный Desktop type bridge ссылается на pure runtime leaf; при переносе общего UI оставляем только DTO, guard не ослабляем. Task 3 consumes runtime interfaces, остальные сигнатуры прежние.
+5. Полный dialog registry/persistence/idempotency/replay/owner/installed artifact остаётся будущими срезами — текущий перенос сохраняет Desktop и не объявляет server readiness; это подтверждение утверждённой границы — цена ошибки: Web/новый CLI нельзя подключать до завершения этих обязательных этапов.
+6. Не добавлять rollback прежнего диалога после async startup/handshake failure нового CLI — явный reset создаёт новую сессию; guard refusal сохраняет старую, а сбой уже созданного процесса показывается в новой сессии, как baseline — цена ошибки: контекст прежнего in-memory диалога не восстановится при таком сбое до будущего persistence.
+7. Не обещать детекцию всех внешних замен transcript — текущие provider logs дописываются, перенос добавляет только same-size/new-mtime reset; проверка содержимого на каждом read меняет стоимость кеширования — цена ошибки: при внешней замене на больший файл или сохранении size/mtime возможны устаревшие history/usage до сброса cache; надёжность import/rotation требует отдельного решения.
+
+### Отложенный Minor
+
+- Общий test formatter prefix request capability ослабляет точность ряда assertions конкретной причины отказа; отклонение и отсутствие wire mutation всё ещё проверяются.
