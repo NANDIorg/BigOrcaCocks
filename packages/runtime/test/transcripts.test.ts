@@ -5,7 +5,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFile
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { StatsSession } from '@orca-board/core'
-import { claudeSlug, collectSessionUsage, TranscriptCache, parseClaudeLine, type TranscriptEnv, type UsageContext, transcriptEnv } from '../src/transcripts.ts'
+import { claudeSlug, collectSessionUsage, TranscriptCache, parseClaudeLine, parseCodexLine, type TranscriptEnv, type UsageContext, transcriptEnv } from '../src/transcripts.ts'
 
 let tmp: string
 let env: TranscriptEnv
@@ -152,6 +152,28 @@ describe('транскрипты codex', () => {
   const tokens = (at: number, input: number, cached: number, output: number): object => ({
     timestamp: iso(at), type: 'event_msg',
     payload: { type: 'token_count', info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output } } }
+  })
+
+  it('параллельные чтения дописанного Codex хвоста не применяют cumulative counters дважды', async () => {
+    const file = path.join(tmp, 'parallel-codex.jsonl')
+    const line = (input: number): string => JSON.stringify(tokens(T0 + input, input, 0, 0)) + '\n'
+    writeFileSync(file, line(10))
+    const cache = new TranscriptCache()
+    await cache.read(file, parseCodexLine)
+    appendFileSync(file, line(20) + line(30))
+    const [a, b] = await Promise.all([cache.read(file, parseCodexLine), cache.read(file, parseCodexLine)])
+    assert.equal(a, b)
+    assert.deepEqual([...a!.records.values()].map(record => record.input), [10, 10, 10])
+    const cached = await cache.read(file, parseCodexLine)
+    assert.equal(cached, a)
+    assert.equal([...cached!.records.values()].reduce((sum, record) => sum + record.input, 0), 30)
+    appendFileSync(file, line(40))
+    assert.deepEqual([...(await cache.read(file, parseCodexLine))!.records.values()].map(record => record.input), [10, 10, 10, 10])
+    // Пропавший файл не оставляет вечный inflight: после создания путь снова читается.
+    const missing = path.join(tmp, 'later-codex.jsonl')
+    assert.deepEqual(await Promise.all([cache.read(missing, parseCodexLine), cache.read(missing, parseCodexLine)]), [undefined, undefined])
+    writeFileSync(missing, line(5))
+    assert.equal([...(await cache.read(missing, parseCodexLine))!.records.values()][0].input, 5)
   })
 
   it('накопительный счётчик — приросты, input без кэша; сессия найдена по cwd и окну, id запоминается', async () => {

@@ -164,8 +164,19 @@ const CHUNK = 1 << 20
  */
 export class TranscriptCache {
   private files = new Map<string, CacheEntry>()
+  // Одновременные запросы статистики разделяют один read: повторный хвост исказит Codex cumulative deltas.
+  // Как и files, inflight ключуется путём; формат/парсер одного пути остаётся тем же.
+  private inflight = new Map<string, Promise<ParsedFile | undefined>>()
 
-  async read(path: string, parse: LineParser): Promise<ParsedFile | undefined> {
+  read(path: string, parse: LineParser): Promise<ParsedFile | undefined> {
+    const running = this.inflight.get(path)
+    if (running) return running
+    const promise = this.readNow(path, parse).finally(() => this.inflight.delete(path))
+    this.inflight.set(path, promise)
+    return promise
+  }
+
+  private async readNow(path: string, parse: LineParser): Promise<ParsedFile | undefined> {
     let st
     try {
       st = await stat(path)
