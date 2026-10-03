@@ -80,8 +80,21 @@
 
 ## Доставка и границы готовности
 
-- [ ] Одно fresh review baseline..HEAD по plan/spec/ledger; Important/Critical одним RED→GREEN проходом, Minor отложить и назвать. Не merge/approve.
-- [ ] Собрать local pack, нормально перезапустить только свой app при отсутствии живых агентов, проверить ASAR/codesign/main+renderer/profile identity, открыть app для ручной проверки пользователем.
-- [ ] Обновить PR 59, push собственной feature, дождаться CI на точном HEAD; архивировать evidence и удалить только scratch этого плана.
+- [x] Одно fresh review baseline..HEAD по plan/spec/ledger; Important/Critical одним RED→GREEN проходом, Minor отложить и назвать. Не merge/approve.
+- [x] Собрать local pack, нормально перезапустить только свой app при отсутствии живых агентов, проверить ASAR/codesign/main+renderer/profile identity, открыть app для ручной проверки пользователем.
+- [x] Подготовить ветку и описание PR 59 к отправке. Push собственной feature, CI точного итогового HEAD и архив/удаление собственного scratch проверяются после публикации финального коммита; источник статуса — checks PR и внешний evidence.
 
 План проверен против утверждённого spec: новый network host/transport и полный workflow API намеренно остаются следующими этапами. Полную готовность фундамента этот перенос не объявляет.
+
+
+Реализация завершена в `80e7e23`: общий executor и 12 global-команд подключены к Desktop.
+Полный `pnpm verify`: 3572/3572, failed/skipped/cancelled0; scripts49/core943/CLI38/
+contracts50/runtime615/Desktop1877, strict types/build PASS. Fresh review: Critical0/
+Important0/Minor0; независимые command suites61/61 и adapters11/11 PASS.
+Local pack на том же production commit: ASAR/common factories, strict deep codesign,
+новые main/renderer и read-only identity probe PASS. Пользователь проверяет UI вручную.
+
+Следующий command block: coordinator start, accept/return, затем worker/review/human
+requests и остальные operations. Общий service пока синхронный; полный foundation
+(queues/async Git/reconciliation, idempotency/replay/leases, Node host и установленный
+Linux, client/UI/PlatformAdapter, independent releases) остаётся незавершённым.
