@@ -68,8 +68,8 @@ Task2: file API12/12, affected56/56 (file+stats+docs-view+runtime guards), contr
 
 **Interfaces:** registerDesktopFileCommands(handle,host) — прежние docs7/showcase5/files2 IPC, verified caller до legacy active selection; docs:list без проекта [] после caller validation, files используют explicit id. Trusted native ports shell.openPath/showItemInFolder; production previewAddress native orca-preview.
 
-- [ ] **Step 1:** Failing adapter tests с реальными services/files: exact channels, caller ordering, legacy source selection/A/B, native path/result, ru/en cause translation, late removal без shell side effect.
-- [ ] **Step 2:** `pnpm --filter @orca-board/desktop exec node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/file-commands.test.ts`; Expected FAIL missing register factory.
-- [ ] **Step 3:** Подключить commands и facades; убрать inline root/source domain logic. protocol.handle и navigation/native shell остаются Desktop.
-- [ ] **Step 4:** Affected Desktop docs/files/showcase/preview/socket suites, Desktop/runtime typechecks + core docs HELP; Expected PASS. Полный verify — перед итоговой доставкой после остальных планов.
-- [ ] **Step 5:** Docs/diff/staged diff/commit/task-done affected suite; продолжить Git/runs/agents/dialogs без handoff.
+- [x] **Step 1:** Failing adapter tests с реальными services/files: exact channels, caller ordering, legacy source selection/A/B, native path/result, ru/en cause translation, late removal без shell side effect.
+- [x] **Step 2:** `pnpm --filter @orca-board/desktop exec node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/file-commands.test.ts`; Expected FAIL missing register factory.
+- [x] **Step 3:** Подключить commands и facades; убрать inline root/source domain logic. protocol.handle и navigation/native shell остаются Desktop.
+- [x] **Step 4:** Affected Desktop docs/files/showcase/preview/socket suites, Desktop/runtime typechecks + core docs HELP; Expected PASS. Полный verify — перед итоговой доставкой после остальных планов.
+- [x] **Step 5:** Docs/diff/staged diff/commit/task-done affected suite; продолжить Git/runs/agents/dialogs без handoff.

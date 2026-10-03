@@ -17,8 +17,8 @@ import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, registeredProject, isRegisteredProjectCurrent, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
@@ -26,10 +26,11 @@ import { registerDesktopWorkerCommands } from './worker-commands'
 import { registerDesktopReviewRequestCommands } from './review-request-commands'
 import { registerDesktopProfileCommands } from './profile-commands'
 import { registerDesktopRulesStatsCommands } from './rules-stats-commands'
+import { registerDesktopFileCommands } from './file-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities } from './attachments'
-import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
+import { showcaseServices } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 import type { WorkflowDeps } from './workflow'
@@ -39,10 +40,10 @@ import {
   hasIdleStage, settleIdleRunStages,
   type RunWorkflowDeps
 } from './workflow-run'
-import { docSourceRoot, docTasks, listDocGroups, readDoc } from './docs'
-import { docsOpenPath, docsPreviewUrl, docsRevealPath, readDocBytes, viewDoc } from './docs-view'
+import { docServices } from './docs'
+import { docViewServices } from './docs-view'
 import { ruleServices, readRule, writeRule } from './rules'
-import { listProjectDir, resolveProjectPath } from './project-files'
+import { projectFileServices } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, RunBranchSync } from './run-branch'
 import { runImagesRoot, revealTaskAttachment, openTaskAttachment } from './run-images'
@@ -116,6 +117,7 @@ let profileCommands: ProfileCommands<AppSettings, AppSettingsPatch>
 let projectConfigCommands: ProjectConfigCommands
 let ruleCommands: RuleCommands
 let statsCommands: StatsCommands
+let fileCommands: FileCommands
 const taskWorkerLifecycle = createTaskWorkerLifecycle({ isAlive, killPty })
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
@@ -661,12 +663,6 @@ function testNotification(): void {
   new Notification({ title: 'orca-board', body, silent: !s.sound }).show()
 }
 
-/** Корень источника документов: проект или worktree его задачи в работе. Чужие id — ошибка. */
-function docRoot(source: unknown): string {
-  const p = resolveProject()
-  return docSourceRoot(source, p.root, docTasks(p.store))
-}
-
 /** Диалог выбора репозитория для «Добавить проект»; отмена — null. */
 async function pickRepoFolder(): Promise<string | null> {
   if (!win) throw new Error('no window')
@@ -865,59 +861,15 @@ function registerIpc(): void {
   handle('assistantChat:send', (_e, id: string, text: unknown) => assistantSession.send(id, text))
   handle('assistantChat:interrupt', (_e, id: string) => assistantSession.interrupt(id))
   handle('assistantChat:respond', (_e, id: string, requestId: string, answer: InteractionAnswer) => assistantSession.respond(id, requestId, answer))
-  handle('docs:list', () => {
-    if (!projects.active()) return []
-    const p = resolveProject()
-    return listDocGroups(p.root, currentBranch(p.root), docTasks(p.store))
-  })
-  handle('docs:read', (_e, source: unknown, path: unknown) => readDoc(docRoot(source), path))
-  // Любой файл источника (main/docs-view.ts): бинарь, не UTF-8, большой и PDF — `stub`, не ошибка.
-  handle('docs:view', (_e, source: unknown, path: unknown, opts: unknown) => viewDoc(docRoot(source), path, opts))
-  handle('docs:bytes', (_e, source: unknown, path: unknown) => readDocBytes(docRoot(source), path))
-  // Токен протокола показа на корень источника — всегда без сети: HTML проекта — недоверенный код.
-  handle('docs:previewUrl', (_e, source: unknown, path: unknown) => docsPreviewUrl(previewTokens, docRoot(source), path))
-  // Открыть приложением системы — только белый список показа (по пути и по цели симлинка); показать в папке — любой файл.
-  handle('docs:open', async (_e, source: unknown, path: unknown) => {
-    const err = await shell.openPath(await docsOpenPath(docRoot(source), path))
-    if (err) throw new Error(err)
-  })
-  handle('docs:reveal', async (_e, source: unknown, path: unknown) => {
-    shell.showItemInFolder(await docsRevealPath(docRoot(source), path))
+  registerDesktopFileCommands<IpcMainInvokeEvent>(handle, {
+    commands: fileCommands, activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
   })
   // Рукопожатие для вложений к замечаниям: renderer проверяет, что main новый и принимает `images`.
   handle('attachments:ping', () => true)
   // Что main принимает во вложениях: любые файлы в лимитах `ATTACHMENT_LIMITS` (`validateAttachments`).
   handle('attachments:capabilities', (): AttachmentCapabilities => attachmentCapabilities())
-  // Показ человеку: файлы задачи активного проекта (снимок запуска или worktree — showcaseSource), белый список
-  // расширений — main/showcase.ts.
-  const source = (taskId: unknown, dispatchId: unknown): string => {
-    const p = resolveProject()
-    return showcaseSource(p.store, taskId, dispatchId, showcaseSnapshots(p.id))
-  }
-  handle('showcase:read', (_e, taskId: unknown, path: unknown, dispatchId: unknown) => readShowcaseFile(source(taskId, dispatchId), path))
-  handle('showcase:open', async (_e, taskId: unknown, path: unknown, dispatchId: unknown) => {
-    const err = await shell.openPath(resolveShowcasePath(source(taskId, dispatchId), path))
-    if (err) throw new Error(err)
-  })
-  handle('showcase:reveal', (_e, taskId: unknown, path: unknown, dispatchId: unknown) =>
-    shell.showItemInFolder(resolveShowcasePath(source(taskId, dispatchId), path))
-  )
-  // Страница показа для изолированного фрейма: токен протокола orca-preview:// на корень показа (preview-protocol.ts).
-  handle('showcase:previewUrl', (_e, dispatchId: unknown, path: unknown, opts: unknown) => {
-    const p = resolveProject()
-    return showcasePreviewUrl(p.store, previewTokens, dispatchId, path, opts, showcaseSnapshots(p.id))
-  })
-  // База для картинок описания показа (`showcase.text`): токен без сети на тот же корень.
-  handle('showcase:previewBase', (_e, dispatchId: unknown) => {
-    const p = resolveProject()
-    return showcasePreviewBase(p.store, previewTokens, dispatchId, showcaseSnapshots(p.id))
-  })
-  // Одна папка проекта (main/project-files.ts) для диалога начального коммита; вкладки «Файлы» нет. Корень — явного projectId, неизвестный id — обычная ошибка «project not found».
-  handle('files:list', (_e, projectId: unknown, dir: unknown) => listProjectDir(projectRoot(String(projectId)), dir ?? ''))
-  // Только показать в Finder/Проводнике, не openPath: запуск произвольного файла опасен. Симлинк — сам симлинк.
-  handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {
-    shell.showItemInFolder(await resolveProjectPath(projectRoot(String(projectId)), path, false))
-  })
   registerDesktopRulesStatsCommands<IpcMainInvokeEvent>(handle, {
     rules: ruleCommands, stats: statsCommands, activeProjectId: () => projects.active()?.id,
     clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
@@ -945,6 +897,16 @@ function initializeDesktop(): void {
     isCurrent: project => isStatsProjectCurrent(projects, project), stats: statsServices,
     messages: { Error: OrcaError }, deps: project => statsProjectDeps(projects, project, { isAlive }),
     workflow: (project, taskId) => runnableWorkflow(projects.resolveRun(project.id, project.store.getTask(taskId)?.runId).workflow)
+  })
+  fileCommands = createFileCommands({
+    project: id => registeredProject(projects, id), authorize,
+    isCurrent: project => isRegisteredProjectCurrent(projects, project),
+    files: projectFileServices, docs: docServices, view: docViewServices, showcase: showcaseServices,
+    tokens: previewTokens, snapshots: showcaseSnapshots, branch: project => currentBranch(project.root),
+    native: {
+      open: async path => { const error = await shell.openPath(path); if (error) throw new Error(error) },
+      reveal: path => { shell.showItemInFolder(path) }
+    }
   })
   const selection = createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
   const removal = {

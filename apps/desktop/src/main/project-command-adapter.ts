@@ -1,5 +1,5 @@
-import type { ProjectCommandContext } from '@orca-board/contracts'
-import { CommandError } from '@orca-board/runtime'
+import type { ClientCommandContext, ProjectCommandContext } from '@orca-board/contracts'
+import { CommandError, projectCommandContextFrom } from '@orca-board/runtime'
 import { OrcaError } from './i18n'
 
 export interface DesktopProjectCommandHost<Event> {
@@ -28,14 +28,21 @@ export function invokeDesktopCommand<T>(operation: () => T): T {
 
 /** Legacy selection существует только на IPC границе; runtime всегда получает явный проект. */
 export function createDesktopProjectCommandAdapter<Event>(host: DesktopProjectCommandHost<Event>) {
-  function selected(event: Event): ProjectCommandContext | undefined {
+  function client(event: Event): ClientCommandContext {
     const clientId = host.clientId(event)
     if (typeof clientId !== 'string' || !clientId.trim()) throw new OrcaError('command.forbidden')
+    return { clientId, actor: { kind: 'operator', id: 'local-user' } }
+  }
+  function selected(event: Event): ProjectCommandContext | undefined {
+    const context = client(event)
     const projectId = host.activeProjectId()
-    return projectId ? { projectId, clientId, actor: { kind: 'operator', id: 'local-user' } } : undefined
+    return projectId ? { ...context, projectId } : undefined
   }
   return {
     selected,
+    explicit(event: Event, projectId: unknown): ProjectCommandContext {
+      return projectCommandContextFrom({ ...client(event), projectId })
+    },
     context(event: Event): ProjectCommandContext {
       const ctx = selected(event)
       if (!ctx) throw new OrcaError('projects.none')

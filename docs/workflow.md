@@ -22,8 +22,9 @@
 Подробности по слоям — `docs/architecture.md` («Воркфлоу: модель», «Воркфлоу: состояние в store», «Ревью и мерж»).
 
 Планирование/запись снимка показа и чтение showcase теперь доступны как общие
-runtime factories с прежними лимитами и prepared commit/discard. Desktop ещё
-использует старый facade; его IPC подключается к FileCommands следующим шагом.
+runtime factories с прежними лимитами и prepared commit/discard. Desktop facades и
+14 прежних IPC вызывают эти factories/FileCommands, socket snapshot воркера использует
+тот же алгоритм. Electron registration и OS shell находятся в host adapter.
 Общий API проверяет captured task/worktree/dispatch до late effect/result; file
 чтение не держит withStatusSource через await и не повторяет workflow effect.
 

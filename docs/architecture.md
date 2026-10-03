@@ -354,8 +354,12 @@ dispatch/root проверяется после async чтения, перед n
 Callback выдачи docs preview не создаёт grant устаревшего source.
 Open/reveal передаёт backend path только trusted host и возвращает void; DTO/bytes
 отделены. Native capability устанавливает хост; agent не получает её автоматически.
-Desktop IPC facades подключаются следующим шагом
-[плана](superpowers/plans/2026-10-04-orca-file-commands.md).
+Desktop подключает прежние docs7/showcase5/files2 каналы через verified caller и
+compatibility adapter; files адресует явный id, docs/showcase сохраняют legacy active
+selection только на границе IPC. Шесть main-модулей стали тонкими facades общих
+factories. Electron protocol/navigation и shell остаются в Desktop; native путь
+поступает в shell лишь после общей проверки source/project после await. Проверки:
+[план](superpowers/plans/2026-10-04-orca-file-commands.md).
 
 ### Общий запуск агентов и терминальные сессии
 

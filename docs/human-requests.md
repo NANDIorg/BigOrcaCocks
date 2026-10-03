@@ -44,7 +44,7 @@ Desktop stats IPC использует общий API и переводит Prom
 sandbox/CSP. Проектные документы не получают network, показы — лишь со snapshot.
 FileCommands требуют явный проект и host policy, не решают и не потребляют
 pending-запросы. После удаления проекта поздний file result/native effect отклонён;
-IPC подключается далее.
+Desktop IPC проверяет caller до выбора проекта и вызывает общий API.
 
 ## Модель
 
