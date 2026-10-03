@@ -137,6 +137,23 @@ test('release не удаляет подменённый record; следующ�
   assert.notEqual(next.info.instanceId, owner.info.instanceId)
 })
 
+test('stale record после смены hostname не блокирует тот же физический profile', async t => {
+  const dir = profile(t)
+  const former = await acquire(dir)
+  const identity = former.info
+  await former.release()
+  const file = join(dir, runtime.PROFILE_OWNER_FILE)
+  writeFileSync(file, JSON.stringify({ ...identity, hostname: `former-${identity.hostname}`, retained: { value: 42 } }))
+  const next = await acquire(dir)
+  t.after(() => next.release())
+  assert.equal(next.info.hostname, identity.hostname)
+  assert.equal(next.info.profileId, identity.profileId)
+  assert.notEqual(next.info.instanceId, identity.instanceId)
+  assert.equal(await runtime.probeProfileOwner(next.info), true)
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).retained, { value: 42 })
+  await next.release()
+})
+
 test('guard ограничивает frame и закрывает idle clients', async t => {
   const dir = profile(t)
   const owner = await acquire(dir)

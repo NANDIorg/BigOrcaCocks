@@ -85,6 +85,43 @@ test('медленный shutdown удерживает lease; concurrent stop н
   assert.equal(runtime.value, 42)
 })
 
+test('reentrant stop из cleanup удерживает owner до завершения исходного ресурса', async t => {
+  const { dir, track } = setup(t)
+  let continueCleanup: () => void = () => {}
+  const barrier = new Promise<void>(resolve => { continueCleanup = resolve })
+  let entered: () => void = () => {}
+  const started = new Promise<void>(resolve => { entered = resolve })
+  let calls = 0
+  let nested: Promise<void> | undefined
+  const runtime = await api.startProfileRuntime({ dataDir: dir, start: ctx => {
+    ctx.deferCleanup(async () => {
+      calls++
+      if (calls === 1) {
+        nested = runtime.stop()
+        entered()
+        await barrier
+      }
+      appendFileSync(join(dir, 'closed.log'), 'closed\n')
+    })
+    return null
+  } })
+  track(async () => { continueCleanup(); await runtime.stop(); await nested })
+  const stopping = runtime.stop()
+  await started
+  try {
+    assert.equal(await api.probeProfileOwner(runtime.owner), true)
+    await assert.rejects(api.acquireProfileOwnership({ dataDir: dir }), { code: 'ownership.busy' })
+    assert.equal(calls, 1)
+    assert.equal(nested, stopping)
+  } finally {
+    continueCleanup()
+    await Promise.all([stopping, nested])
+  }
+  assert.equal(readFileSync(join(dir, 'closed.log'), 'utf8'), 'closed\n')
+  const successor = await api.acquireProfileOwnership({ dataDir: dir })
+  await successor.release()
+})
+
 test('failed cleanup сохраняет ownership; retry повторяет только незавершённый ресурс', async t => {
   const { dir, track } = setup(t)
   assert.equal(typeof api.startProfileRuntime, 'function')

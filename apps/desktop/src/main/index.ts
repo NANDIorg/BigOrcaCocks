@@ -88,9 +88,10 @@ app.setPath('userData', join(app.getPath('appData'), 'orca-board'))
 // Второй экземпляр отобрал бы у первого сокет и писал бы в те же файлы состояния — он фокусирует первый и выходит.
 // Блокировка привязана к userData, поэтому изолированный `pnpm dev` со своим userData живёт рядом с основным.
 // `app.exit`, а не `quit`: before-quit → requestQuit трогает то, что у второго экземпляра не создано.
+let desktopInitialized = false
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) app.exit(0)
-else app.on('second-instance', () => { if (app.isReady()) showWindow() })
+else app.on('second-instance', () => { if (desktopInitialized && !quitting) showWindow() })
 
 let win: BrowserWindow | null = null
 let windowFullscreen = false
@@ -1320,6 +1321,7 @@ app.whenReady().then(async () => {
       if (quitting) return
       try {
         initializeDesktop()
+        desktopInitialized = true
       } catch (error) {
         // Частичный Desktop startup может уже открыть IPC/PTY: процесс выходит до освобождения guard.
         failDesktopStartup(error)

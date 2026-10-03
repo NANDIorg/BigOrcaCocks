@@ -37,7 +37,8 @@ export async function startProfileRuntime<T>(options: ProfileRuntimeOptions<T>):
   const stop = (): Promise<void> => {
     if (stopped) return Promise.resolve()
     if (pendingStop) return pendingStop
-    const attempt = (async () => {
+    // Promise публикуется до callbacks: dispose менеджера может синхронно вызвать stop повторно.
+    const attempt = Promise.resolve().then(async () => {
       const failures: unknown[] = []
       // Продолжаем cleanup независимых ресурсов; успешно закрытые не повторяются при retry.
       for (const resource of [...resources].reverse()) {
@@ -49,7 +50,7 @@ export async function startProfileRuntime<T>(options: ProfileRuntimeOptions<T>):
       if (failures.length) throw new AggregateError(failures, 'Не удалось остановить ресурсы профиля.')
       await lease.release()
       stopped = true
-    })()
+    })
     pendingStop = attempt
     void attempt.then(() => {}, () => { pendingStop = undefined })
     return attempt

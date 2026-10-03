@@ -48,7 +48,8 @@ Application services с явным клиентским контекстом о�
 `startProfileRuntime({ dataDir, start })` приобретает ownership до вызова initializer.
 Контекст содержит canonical dataDir, identity владельца и `deferCleanup`: менеджеры
 ресурсов регистрируются во время startup. `stop()` закрывает их в обратном порядке,
-затем освобождает guard; повторные и одновременные stop не дублируют cleanup.
+затем освобождает guard; повторные и одновременные stop не дублируют cleanup,
+включая reentrant stop из callback менеджера ресурса.
 При ошибке cleanup guard остаётся занят, повтор stop закрывает оставшиеся ресурсы.
 Ошибка частичного startup с неудачным cleanup возвращает `ProfileRuntimeStartupError`
 с исходной причиной и `retryCleanup()`. Успешный cleanup возвращает исходную ошибку.
@@ -63,7 +64,9 @@ OS освобождает guard при смерти процесса; PID и TTL
 
 `.orca-owner.json` содержит schema/protocol, profile id/path, hostname, PID, instance UUID
 и endpoint. Новый bind проверяет прежний record, затем атомарно заменяет stale identity;
-unknown metadata сохраняются. Повреждённый/future/oversize/non-regular/symlink record
+unknown metadata сохраняются. Изменившееся имя того же компьютера не блокирует
+валидный stale record после успешного bind и проверки физического каталога.
+Повреждённый/future/oversize/non-regular/symlink record
 блокирует startup и остаётся на месте. `release()` удаляет только record своей instance.
 Перенос/rename профиля требует отдельной offline процедуры; guard не является lock
 сетевого каталога или защитой от локального процесса с правами владельца.
@@ -75,7 +78,8 @@ Guard отвечает только на ограниченный read-only iden
 Owner record не входит в version backup: это identity процесса, а не пользовательские данные.
 
 Desktop получает guard до backup, ProjectManager, миграций и IPC/socket. Electron
-single-instance lock по-прежнему фокусирует другое окно Desktop; общий guard исключает
+single-instance lock по-прежнему фокусирует другое окно Desktop после завершения
+инициализации; раннее событие не открывает окно до готовности manager. Общий guard исключает
 одновременный Node owner. Legacy endpoints живут до quit, поэтому Desktop удерживает
 guard до выхода процесса, в том числе при ошибке частичной инициализации. Ошибка startup
 показывает локализованный native error box и завершает процесс. Node integration

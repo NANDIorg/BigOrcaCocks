@@ -64,10 +64,11 @@ function readRecord(location: ProfileLocation): Record<string, unknown> | undefi
     throw new ProfileOwnershipError('ownership.schemaUnsupported', 'Версия записи владельца профиля не поддерживается.')
   }
   if (record.profileId !== location.profileId || typeof record.dataDir !== 'string' || !isAbsolute(record.dataDir)
-    || record.hostname !== hostname() || !Number.isSafeInteger(record.pid) || Number(record.pid) < 1
+    || typeof record.hostname !== 'string' || !record.hostname.trim() || !Number.isSafeInteger(record.pid) || Number(record.pid) < 1
     || typeof record.instanceId !== 'string' || !record.instanceId || !sameEndpoint(record.endpoint, location.endpoint)) {
     invalid('Запись владельца относится к другому профилю или содержит неверную identity.')
   }
+  // Hostname может меняться на том же компьютере; exclusivity доказывает bind, identity — физический каталог.
   // Rename/перенос профиля выполняется offline: прежний путь обязан указывать на тот же физический каталог.
   let previous
   try { previous = statSync(realpathSync.native(record.dataDir), { bigint: true }) } catch { invalid('Прежний каталог владельца недоступен; требуется проверка переноса профиля.') }
