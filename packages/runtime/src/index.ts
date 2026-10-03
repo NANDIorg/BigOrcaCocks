@@ -36,3 +36,4 @@ export type { AssistantConversation, ConversationOptions } from './assistant-con
 export * from './assistant-session.ts'
 export * from './dialog-repository.ts'
 export * from './dialog-registry.ts'
+export * from './profile-ownership.ts'
