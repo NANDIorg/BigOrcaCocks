@@ -60,3 +60,37 @@
 ## Завершение
 
 Одно свежее whole-branch ревью с фокусом на Task 1–2; severity по эффекту для пользователя. Единственный fix pass Critical/Important RED→GREEN, Minors deferred. Локальный pack/open, read-only проверка startup/профиля и встроенного runtime без GUI. PR 59 body перед последним push; CI на точный final HEAD. Архивировать evidence/hash, удалить только собственный scratch. Итог содержит путь app, результаты, ограничения и все ledger rulings.
+
+## Результат выполнения
+
+Task 1 — `a4d1a7f`, Task 2 — `ed18840`; план начат от `791d2c9`.
+Общий API покрывает четыре действия, Desktop использует его без изменения preload
+и renderer. Legacy agent socket использует ту же trusted orchestration; его policy
+ещё не мигрирован на новый context. Raw graph restart не входит в граф повторно.
+
+Полный `pnpm verify` — 3602/3602, без fail/cancel/skip:
+scripts49/core943/CLI38/contracts50/runtime638/Desktop1884; types/build PASS.
+Task-done повторил runtime638/638 и Desktop7/7. Fresh reviewer gpt-6-astra/high:
+Critical0/Important0/Minor0, независимо runtime23/23 и Desktop7/7. Fix pass не нужен.
+Дополнительная RED→GREEN regression сохранила legacy attachments.invalid код
+и перевод при отказе вложений возврата.
+
+Local mac x64 pack1.1.3 собран на production `ed18840` и открыт:
+`/private/tmp/orca-web-migration-audit/apps/desktop/release/local/mac/orca-board.app`.
+Strict deep codesign и ASAR проверка встроенных common factories PASS.
+Новый main/renderer и read-only identity handshake реального профиля проверены
+из обычного Node; UI проверяет пользователь, автоматических кликов нет.
+Следующие правки плана только документируют результат, production не меняют.
+
+PR59 остаётся направлен в develop. Точный final HEAD, CI, startup и хэши evidence
+фиксируются вне Git в `/private/tmp/orca-coordinator-commands-evidence`, чтобы
+итоговая запись не требовала коммита SHA самой себя. Только свой scratch удаляется
+после архивирования; worktree и рабочая сборка сохраняются.
+
+Следующий блок — общие команды worker/review/request/lifecycle. Весь foundation
+ещё не завершён: async Git/commonDir/effect tokens/reconciliation, command records
+и подробный аудит автора, revisions/idempotency/reconnect/replay/writer leases,
+полный headless host с установленным Linux/native roots, общий client/UI,
+Web/CLI transports/auth и независимые продуктовые релизы идут отдельными этапами
+согласованной архитектуры. Графовые переходы пока сохраняют source workflow,
+прямые legacy изменения — human/cli/app; shared policy всё равно проверяет caller.
