@@ -86,11 +86,47 @@ host cleanup is real and no process.exit masks successful cleanup.
 
 - [x] RED: Desktop error mapper ru/en; two simultaneous Node hosts execute only one initializer; probe/disconnect leaves owner; SIGKILL restart reclaims record and preserves projects/dialog bytes; failed initializer releases guard naturally. Expected tests FAIL missing mapping/fixture behavior.
 - [x] Wrap Desktop initialization before backup/migrations; retain guard until process exit, preserve current agent socket/quit policy. Add fixtures/integration. Expected targeted tests/typecheck/core PASS.
-- [ ] Native Node rebuild; full pnpm verify. One fresh final reviewer; Important/Critical single RED→GREEN fix pass, Minors ledger. Expected PASS.
+- [x] Native Node rebuild; full pnpm verify. One fresh final reviewer; Important/Critical single RED→GREEN fix pass, Minors ledger. Expected PASS.
 - [x] Commit refactor: запускать Desktop через общий bootstrap; task-done integration/error suites.
 
 ## Завершение
 
-- [ ] All rulings/Minors/evidence recorded; final docs/core.
-- [ ] Pack/open latest Desktop; embedding/codesign/main/renderer confirmed; manual UI user.
-- [ ] PR59 body once before push, exactHEAD push/PR required CI green; own scratch archive/hash/delete. Worktree/app retained; no merge/release.
+- [x] All rulings/Minors/evidence recorded; final docs/core.
+- [x] Pack/open latest Desktop; embedding/codesign/main/renderer confirmed; manual UI user.
+- Доставка после итогового документационного коммита: PR59 body до push, exactHEAD push/PR required CI; own scratch archive/hash/delete. Фактический результат — PR checks и внешний архив; worktree/app сохраняются, merge/release не выполняются.
+
+
+## Итог реализации и ревью
+
+Ownership/bootstrap и подключение Desktop реализованы. Полный verify после одного
+fix pass — 3500/3500: scripts49, core943, CLI38, contracts50, runtime554, Desktop1866;
+failed/skipped/cancelled0, typecheck/buildPASS. Один fresh reviewer нашёл три Important:
+reentrant stop освобождал guard до cleanup, ранний second-instance обращался к
+несозданному projects, stale hostname блокировал физически тот же профиль.
+Все воспроизведены RED→GREEN: runtime22/22 и Desktop6/6; повторного ревью нет.
+
+Два Minor отложены: cached rejected release после повреждения metadata (ресурсы
+уже закрыты, но retry остаётся ошибкой); комбинация crash внутри initializer и
+двух takeover через alias проверена реальными процессами reviewer, но ещё не
+перенесена в постоянную suite. Цена — отсутствие именно этой регрессии в будущем CI.
+Единичный первоначальный отказ recovery не воспроизведён в 30 дополнительных
+прогонах; исходный error frame не сохранился, причина не установлена. Новые
+assertions сохраняют code/message/cause. Сетевые пробы не подтвердили гипотезу
+конфликта с outgoing ephemeral TCP; production не менялся по этой догадке.
+
+Ограничения: guard — внутренний read-only identity endpoint, не operator API;
+локальная ФС одного host, offline перенос/rename. Desktop удерживает lease до выхода
+процесса, cleanup менеджеров Node регистрируется во время initializer. Неожиданные
+OS-ошибки уже работающего guard требуют отдельной политики долгоживущего host.
+Полный headless host, client context/commands, async Git/reconciliation, replay/writer
+leases, installed Linux, общий client/UI и независимые релизы остаются следующими
+этапами. Ручной UI проверяет пользователь.
+
+Фактическая локальная упаковка, запуск и финальный CI фиксируются в PR59 и внешнем
+архиве `/private/tmp/orca-profile-runtime-evidence`; commit этой сводки не является
+утверждением о ещё не завершённой доставке. Назначенный worktree/app сохраняются.
+
+Local mac x64 pack1.1.3 на production commit b37c7b3 собран и открыт. ASAR содержит
+ownership/bootstrap и остальные private factories без bare workspace imports;
+strict deep codesignPASS, новый main/renderer и identity probe из plain Node подтверждены.
+Ручной UI не проверялся исполнителем. Последующие изменения этого плана — только docs.
