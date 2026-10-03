@@ -14,10 +14,17 @@ export function chatStateFromSnapshot(snapshot: AssistantChatSnapshot): ChatStat
   return { ...snapshot, revision: snapshot.revision ?? -1, interactions: snapshot.interactions ?? [] }
 }
 
+/** History-only и незавершённый transport не принимают новый запрос. */
+export function canSendAssistantChat(state: AssistantChatSnapshot): boolean {
+  return !state.readOnly && state.transport !== 'terminal' && (state.status === 'done' || state.status === 'interrupted')
+}
+
 /** Ревизия исключает откат свежего текста событиями, уже включёнными в снимок. */
 export function applyChatUpdate(state: ChatState, update: AssistantChatUpdate): ChatState {
   if (update.ptyId !== state.ptyId || (update.revision !== undefined && update.revision <= state.revision)) return state
-  const next = { ...state, revision: update.revision ?? state.revision }
+  if (update.snapshot && update.snapshot.ptyId === state.ptyId) return chatStateFromSnapshot({ ...update.snapshot, revision: update.revision ?? update.snapshot.revision })
+  const next = { ...state, revision: update.revision ?? state.revision,
+    ...(update.readOnly ? { readOnly: true, requiresNewConversation: true } as const : {}) }
   if ('status' in update) return { ...next, status: update.status, error: update.error }
   if ('interaction' in update) {
     return { ...next, interactions: [...state.interactions.filter((item) => item.id !== update.interaction.id), update.interaction] }

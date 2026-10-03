@@ -327,6 +327,7 @@ export default {
   "assistant.status.error": "ошибка",
   "assistant.stop": "Остановить ответ",
   "assistant.interrupted": "Ответ остановлен. Можно продолжить диалог.",
+  'assistant.historyOnly': 'Сохранённый диалог доступен только для чтения. Нажмите «+», чтобы начать новый диалог.',
   "assistant.scope": "Ассистент доски",
   "assistant.enterHint": "Enter — отправить · Shift+Enter — новая строка",
   "assistant.latest": "К последним сообщениям",

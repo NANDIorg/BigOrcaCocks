@@ -28,6 +28,14 @@ describe('compareVersions', () => {
 })
 
 describe('backupOnVersionChange', () => {
+  it('история диалогов копируется побайтно до загрузки, включая future/corrupt JSON', () => {
+    seed('1.0.0')
+    const bytes = '{"schemaVersion":99,"future":"untouched"}\n'
+    writeFileSync(join(dir, 'dialogs.json'), bytes)
+    const r = backupOnVersionChange(dir, '1.1.0')
+    assert.equal(readFileSync(join(r.backupDir!, 'dialogs.json'), 'utf8'), bytes)
+    assert.equal(readFileSync(join(dir, 'dialogs.json'), 'utf8'), bytes)
+  })
   it('первый запуск (файлов нет) — бэкапа нет, обновления нет', () => {
     assert.deepEqual(backupOnVersionChange(dir, '1.1.0'), { updated: false })
     assert.equal(existsSync(join(dir, 'backups')), false)
@@ -120,4 +128,3 @@ describe('ротация бэкапов', () => {
     assert.deepEqual(pruneBackups(dir), [])
   })
 })
-

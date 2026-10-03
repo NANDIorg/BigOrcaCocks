@@ -281,7 +281,7 @@ Contracts `DialogRecord` связывает transcript с opaque dialog/project 
 и временем. Чистый `dialogHistory` отдаёт отдельный JSON snapshot только для чтения:
 незавершённый turn → interrupted, старые interactions очищены, running tools →
 cancelled. История не запускает CLI/tools и требует нового разговора. Это общий
-слой рубежа 4; подключение persistence к registry/Desktop ещё предстоит.
+слой рубежа 4; Desktop подключает persistence через общий реестр.
 
 Runtime `createDialogRepository(absoluteFile)` хранит новый изолированный JSON
 `{schemaVersion:1, dialogs:[...]}`. Import/factory/read не создают файл; запись
@@ -297,11 +297,44 @@ Runtime `createDialogRepository(absoluteFile)` хранит новый изол�
 Unknown JSON metadata сохраняются при read/update того же DTO и соседних записей.
 Фильтр project id относится только к переданному profile-файлу. Caller уже должен
 владеть profile: revision check не заменяет межпроцессный lock. Backend пока
-синхронный; его подключение к registry/Desktop и async I/O остаются следующим шагом.
+синхронный; async I/O и headless owner остаются следующим шагом.
 
 Integration проверяет настоящие fixture CLI Claude/Codex в двух profiles и
 завершённый ACP turn: snapshot записывается на диск, процессы закрываются,
 отдельный plain Node читает public repository/history. На reload пути запрещены
 subprocess APIs; DISPLAY/Electron не нужны. Проверяются native ids, все сообщения,
 metadata и неизменные исходные байты. Это проверка общего слоя, а не обещание
-resume или восстановления чата нынешним Desktop.
+resume. Desktop теперь автоматически сохраняет structured чат через этот же слой.
+
+### Общий реестр и Desktop
+
+`DialogRegistry` владеет несколькими structured drivers и их revisions. `create`,
+`snapshot`, `list`, `latest`, `send`, `respond`, `interrupt`, `stop`, `dispose` доступны
+другому Node host без Electron. `subscribe` возвращает detach observer: закрытие
+клиента не останавливает driver. События живого диалога публикуются после atomic save;
+late callbacks после stop не принимаются. Unknown metadata сохраняется в DTO и
+оставшихся messages/tools по id. `latest(projectId?)` выбирает последний созданный
+диалог в точном scope: без projectId только глобальный, list без фильтра возвращает все.
+
+Desktop `AssistantSession` выбирает один диалог и переводит события в прежний IPC.
+Единственный writer — main под single-instance lock. `userData/dialogs.json` создаётся
+при первом structured диалоге; старые provider logs автоматически не импортируются.
+Backup при смене версии с существующим projects.json копирует также dialogs.json
+побайтно до загрузки состояния, включая неизвестную/повреждённую схему.
+
+Первое открытие чата после restart показывает последний глобальный transcript,
+даже без установленного агента, без settings/discovery/CLI effects. История read-only:
+поле и отправка отключены, текст подсказывает прежнюю кнопку «+» для нового диалога.
+Обычный статус interrupted живого процесса продолжить можно; сохранённую историю —
+через новый диалог. Unsent draft/context сохраняются до явного нового разговора.
+Amp/Shell остаются терминальными и не записываются этим repository.
+
+При ошибке записи затронутый driver останавливается. Актуальные сообщения доступны
+в памяти до закрытия приложения, последний disk checkpoint остаётся неизменным;
+снимок очищает pending permissions/running tools, UI показывает локализованную ошибку.
+Read-only transition несёт authoritative snapshot, чтобы клиент не оставил старые
+permissions и не потерял видимый unsaved ответ. Reset проверяет settings/agent и
+создаёт новый durable record до остановки предыдущего: отказ сохраняет текущий выбор.
+Ошибки чтения не стирают файл; новое создание из повреждённой истории запрещено.
+Repository optional для прежних ephemeral hosts. Межпроцессный lock, writer lease,
+client authorization, replay/idempotency, provider resume и async backend ещё не реализованы.

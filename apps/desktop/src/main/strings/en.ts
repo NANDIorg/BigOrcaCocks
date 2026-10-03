@@ -321,6 +321,9 @@ export default {
 
   'assistantChat.unknownPty': "This assistant conversation is no longer active.",
   'assistantChat.emptyText': 'chat message is empty',
+  'assistantChat.historyOnly': 'Saved conversations are read-only. Start a new conversation.',
+  'assistantChat.historyLoad': 'Could not read conversation history. dialogs.json was left unchanged. Check file access and format; history from a newer version requires a compatible version of Orca.',
+  'assistantChat.historyStorage': 'Could not save history. The conversation was stopped; the latest changes remain in memory until the app closes. Check access to dialogs.json and free disk space, then start a new conversation.',
 
   'onboarding.invalidInput': 'first-run wizard: an object with a boolean skipped field is expected'
 } satisfies { [K in keyof typeof ru]: string | { one: string; other: string } }

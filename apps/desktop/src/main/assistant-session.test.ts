@@ -2,15 +2,25 @@ import { it } from 'node:test'
 import assert from 'node:assert/strict'
 import { AssistantSession } from './assistant-session'
 import { ipcError, OrcaError, setMainLocale } from './i18n'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createDialogRepository } from '@orca-board/runtime'
+import type { DialogRepository } from '@orca-board/runtime'
+import type { AssistantChatUpdate, ConversationSnapshot } from '@orca-board/contracts'
 
-function fixture() {
+function fixture(repository?: DialogRepository, onUpdate: (event: AssistantChatUpdate) => void = () => {}) {
   let sent = 0
   const manager = new AssistantSession({
+    repository,
     settings: () => ({ agent: 'claude' }), assertUsable: () => {},
-    create: () => ({ id: 'chat', snapshot: () => ({ id: 'chat', agent: 'claude', messages: [], status: 'done', interactions: [] }),
-      send: async () => { sent++ }, interrupt: async () => {}, respond: async () => {}, dispose: () => {} }),
+    create: (_settings, update) => {
+      const state: ConversationSnapshot = { id: 'chat', agent: 'claude', messages: [], status: 'done', interactions: [] }
+      return { id: 'chat', snapshot: () => state,
+        send: async text => { sent++; const message = { id: 'm', role: 'human' as const, text, at: 1 }; state.messages.push(message); update({ type: 'message', message }) }, interrupt: async () => {}, respond: async () => {}, dispose: () => {} }
+    },
     startTerminal: () => { throw new Error('terminal must not start') },
-    isAlive: () => false, killTerminal: () => {}, onUpdate: () => {}
+    isAlive: () => false, killTerminal: () => {}, onUpdate
   })
   return { manager, sent: () => sent }
 }
@@ -28,6 +38,47 @@ it('Desktop session сохраняет OrcaError с прежними ключа�
   await manager.send('chat', 'hello')
   assert.equal(sent(), 1)
   manager.dispose()
+})
+
+it('storage failure snapshot/event переводятся на текущий язык Desktop, rejection сохраняет OrcaError', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'orca-desktop-write-fault-'))
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); setMainLocale('ru') })
+  const file = join(dir, 'dialogs.json')
+  const events: AssistantChatUpdate[] = []
+  const { manager } = fixture(createDialogRepository(file), event => events.push(event))
+  t.after(() => manager.dispose())
+  manager.open(80, 30, false)
+  mkdirSync(`${file}.tmp`)
+  setMainLocale('en')
+  await assert.rejects(manager.send('chat', 'unsaved'), error => error instanceof OrcaError && error.key === 'assistantChat.historyStorage')
+  assert.match(manager.snapshot('chat').error!, /^Could not save history\./)
+  assert.match(events.at(-1)!.snapshot!.error!, /^Could not save history\./)
+  assert.equal(events.at(-1)!.snapshot!.messages[0].text, 'unsaved')
+  setMainLocale('ru')
+  assert.match(manager.snapshot('chat').error!, /^Не удалось сохранить историю\./)
+})
+
+it('Desktop history ошибки имеют локализуемые ключи, CLI не запускается при повреждённом файле', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'orca-desktop-history-'))
+  t.after(() => { rmSync(dir, { recursive: true, force: true }); setMainLocale('ru') })
+  const file = join(dir, 'dialogs.json')
+  const repository = createDialogRepository(file)
+  repository.save({ id: 'old', createdAt: 1, updatedAt: 1, revision: 0,
+    conversation: { id: 'old', agent: 'claude', status: 'done', messages: [], interactions: [] } }, null)
+  const { manager, sent } = fixture(repository)
+  t.after(() => manager.dispose())
+  assert.equal(manager.open(80, 30, false).ptyId, 'old')
+  assert.throws(() => manager.send('old', 'hello'), error => {
+    assert.ok(error instanceof OrcaError)
+    assert.equal(error.key, 'assistantChat.historyOnly')
+    setMainLocale('en')
+    assert.equal((ipcError(error) as Error).message, 'Saved conversations are read-only. Start a new conversation.')
+    return true
+  })
+  assert.equal(sent(), 0)
+  manager.dispose()
+  writeFileSync(file, 'corrupt')
+  assert.throws(() => manager.open(80, 30, false), error => error instanceof OrcaError && error.key === 'assistantChat.historyLoad')
 })
 
 it('IPC переводит ошибку сессии на текущий язык, сохраняя код и русский socket message', t => {

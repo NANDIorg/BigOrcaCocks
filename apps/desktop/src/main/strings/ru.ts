@@ -326,6 +326,9 @@ export default {
 
   'assistantChat.unknownPty': "Этот диалог ассистента больше не активен.",
   'assistantChat.emptyText': 'пустое сообщение чата',
+  'assistantChat.historyOnly': 'Сохранённый диалог доступен только для чтения. Начните новый диалог.',
+  'assistantChat.historyLoad': 'Не удалось прочитать историю диалогов. Файл dialogs.json не изменён. Проверьте доступ к файлу и его формат; история из более новой версии требует подходящей версии Orca.',
+  'assistantChat.historyStorage': 'Не удалось сохранить историю. Диалог остановлен; последние изменения доступны в памяти до закрытия приложения. Проверьте доступ к файлу dialogs.json и свободное место, затем начните новый диалог.',
 
   'onboarding.invalidInput': 'мастер первого запуска: ожидается объект с полем skipped (boolean)'
 } satisfies Record<string, string | { one: string; few: string; many: string }>

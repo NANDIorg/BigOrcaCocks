@@ -1,5 +1,5 @@
 import type { AgentKind } from '@orca-board/core'
-import type { ConversationMessage, ConversationStatus, ConversationToolCall, ConversationInteraction } from './conversation.ts'
+import type { ConversationBinding, ConversationMessage, ConversationStatus, ConversationToolCall, ConversationInteraction } from './conversation.ts'
 
 // ---------- Чат-режим ассистента (docs/assistant-chat.md) ----------
 //
@@ -27,9 +27,13 @@ export interface AssistantChatSnapshot {
   transport?: 'chat' | 'terminal'
   interactions?: ConversationInteraction[]
   error?: string
+  providerBinding?: ConversationBinding
+  readOnly?: true
+  requiresNewConversation?: true
+  storageFailed?: true
 }
 
-export type AssistantChatUpdate = { ptyId: string; revision?: number } & (
+export type AssistantChatUpdate = { ptyId: string; revision?: number; readOnly?: true; requiresNewConversation?: true; snapshot?: AssistantChatSnapshot } & (
   | { message: AssistantChatMessage }
   | { status: AssistantChatStatus; error?: string }
   | { interaction: ConversationInteraction }

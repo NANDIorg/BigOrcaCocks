@@ -8,6 +8,7 @@ export interface DialogSnapshot {
   dialog: DialogRecord
   readOnly?: true
   requiresNewConversation?: true
+  storageFailed?: true
 }
 export interface DialogRegistryUpdate {
   id: string
@@ -15,11 +16,12 @@ export interface DialogRegistryUpdate {
   update: ConversationUpdate
   readOnly?: true
   requiresNewConversation?: true
+  snapshot?: DialogSnapshot
 }
 export interface DialogRegistryDependencies {
   repository?: DialogRepository
   create(settings: AssistantSettings, onUpdate: (update: ConversationUpdate) => void): AssistantConversation
-  errors: { unknown(): Error; emptyText(): Error; readOnly(): Error; storage(error: unknown): Error }
+  errors: { unknown(): Error; emptyText(): Error; readOnly(): Error; storage(error: unknown): Error; load?(error: unknown): Error }
   onError?(error: Error): void
 }
 interface Entry {
@@ -48,15 +50,19 @@ export class DialogRegistry {
   private readonly entries = new Map<string, Entry>()
   private readonly deps: DialogRegistryDependencies
   constructor(deps: DialogRegistryDependencies) { this.deps = deps }
+  private read<T>(operation: () => T): T {
+    try { return operation() }
+    catch (error) { throw this.deps.errors.load?.(error) ?? error }
+  }
 
   list(projectId?: string): DialogRecord[] {
-    const records = new Map((this.deps.repository?.list(projectId) ?? []).map(record => [record.id, record]))
+    const records = new Map(this.read(() => this.deps.repository?.list(projectId) ?? []).map(record => [record.id, record]))
     for (const [id, entry] of this.entries) if (projectId === undefined || entry.record.projectId === projectId) records.set(id, copy(entry.record))
     return [...records.values()]
   }
   latest(projectId?: string): DialogRecord | undefined {
     return this.list(projectId).filter(record => record.projectId === projectId)
-      .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || b.id.localeCompare(a.id))[0]
+      .sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
   }
 
   create(settings: AssistantSettings, projectId?: string): string {
@@ -80,8 +86,8 @@ export class DialogRegistry {
 
   snapshot(id: string): DialogSnapshot {
     const entry = this.entries.get(id)
-    if (entry) return entry.driver ? { dialog: copy(entry.record) } : dialogHistory(entry.record)
-    const record = this.deps.repository?.get(id)
+    if (entry) return entry.driver ? { dialog: copy(entry.record) } : { ...dialogHistory(entry.record), ...(entry.fault ? { storageFailed: true } as const : {}) }
+    const record = this.read(() => this.deps.repository?.get(id))
     if (!record) throw this.deps.errors.unknown()
     return dialogHistory(record)
   }
@@ -122,7 +128,7 @@ export class DialogRegistry {
 
   private publish(entry: Entry, update: ConversationUpdate): void {
     const event: DialogRegistryUpdate = { id: entry.record.id, revision: entry.record.revision, update,
-      ...(!entry.driver ? { readOnly: true, requiresNewConversation: true } as const : {}) }
+      ...(!entry.driver ? { readOnly: true, requiresNewConversation: true, snapshot: this.snapshot(entry.record.id) } as const : {}) }
     for (const observer of [...entry.observers]) {
       try { observer(copy(event)) }
       catch (error) { this.deps.onError?.(error instanceof Error ? error : new Error(String(error))) }

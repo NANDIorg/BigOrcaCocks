@@ -3,6 +3,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { writeFileAtomic } from './persistence.ts'
+import { DIALOGS_FILE } from './dialog-repository.ts'
 
 /** Сколько бэкапов хранится: старше удаляются при создании нового. */
 export const BACKUPS_KEEP = 3
@@ -51,11 +52,13 @@ export function readLastRunVersion(userData: string): string | undefined {
   }
 }
 
-/** Копия projects.json и boards/*.json в `backups/<version>/`. Возвращает каталог или undefined, если копировать нечего. */
+/** Копия projects.json, dialogs.json и boards/*.json до миграций, без разбора схемы. */
 export function copyStateTo(userData: string, version: string): string | undefined {
   const files: Array<[string, string]> = []
   const projects = join(userData, PROJECTS_FILE)
   if (existsSync(projects)) files.push([projects, PROJECTS_FILE])
+  const dialogs = join(userData, DIALOGS_FILE)
+  if (existsSync(dialogs)) files.push([dialogs, DIALOGS_FILE])
   const boards = join(userData, 'boards')
   if (existsSync(boards)) {
     for (const f of readdirSync(boards)) if (f.endsWith('.json')) files.push([join(boards, f), join('boards', f)])
@@ -117,4 +120,3 @@ export function backupOnVersionChange(userData: string, currentVersion: string):
   // Без записи о прошлой версии сравнивать нечего: «обновились с неизвестной» — тост не про это, бэкап всё равно сделан.
   return { previous: last, backupDir, updated: last !== undefined && compareVersions(last, currentVersion) < 0 }
 }
-

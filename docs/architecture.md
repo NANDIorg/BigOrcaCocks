@@ -157,6 +157,13 @@ Native backend импортируется только тестовым host Des
 
 Это часть этапа исполнения. Dialog drivers и AssistantSession вынесены в runtime;
 Desktop подключает их через host adapters.
+Structured lifecycle теперь принадлежит общему `DialogRegistry`: несколько диалогов,
+scoped history, revisions, persistence до событий, detach observer без stop. Desktop
+адаптер выбирает один глобальный чат и явно задаёт `userData/dialogs.json` под
+single-instance lock. Первый open после restart читает последний созданный глобальный
+диалог без CLI; история read-only, новый чат — прежней кнопкой «+». Backup версии
+копирует также этот файл до загрузки схемы. Ошибка записи останавливает затронутый
+driver и оставляет актуальный error snapshot в памяти; остальные диалоги живут.
 Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription

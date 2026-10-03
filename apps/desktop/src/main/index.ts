@@ -18,6 +18,7 @@ import { transcriptEnv } from './transcripts'
 import { getReview } from './review'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
+import { createDialogRepository, DIALOGS_FILE } from '@orca-board/runtime'
 import { attachmentCapabilities, coordinatorObjective, hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
@@ -580,6 +581,8 @@ function runFinished(store: TaskStore, runId: string): boolean {
 
 /** Чат живёт независимо от окна и выбранного проекта. Amp/Shell используют отдельный PTY. */
 const assistantSession = new AssistantSession({
+  repository: createDialogRepository(join(app.getPath('userData'), DIALOGS_FILE)),
+  onError: error => console.error(error),
   settings: () => projects.settings().assistant,
   assertUsable: (agent) => assertAgentUsable(agentInfos(undefined), agent),
   isAlive,

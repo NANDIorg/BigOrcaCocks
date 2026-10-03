@@ -109,6 +109,18 @@ it('latest различает global/project, profiles и новое созда�
   assert.equal(f.registry.latest()!.id, next)
 })
 
+it('stop прежнего диалога после создания нового не делает прежний последним при reload', t => {
+  let clock = 1000
+  t.mock.method(Date, 'now', () => clock)
+  const f = fixture(t)
+  const old = f.registry.create({ agent: 'claude' })
+  clock = 2000
+  const next = f.registry.create({ agent: 'codex' })
+  clock = 3000
+  f.registry.stop(old)
+  assert.equal(f.registry.latest()!.id, next)
+})
+
 it('ошибка создания записи закрывает новый driver и сохраняет чужую историю', t => {
   const f = fixture(t)
   const id = f.registry.create({ agent: 'claude' })
