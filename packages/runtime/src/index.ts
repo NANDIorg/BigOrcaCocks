@@ -19,3 +19,6 @@ export type { MergeTarget, RunMergeResult, RunBranchSyncDeps } from './run-branc
 export type { PtyAlive } from './coordinator-resume.ts'
 export type { ReturnImagesPlace } from './attachments.ts'
 export * from './workers.ts'
+export * from './workflow-messages.ts'
+export * from './review.ts'
+export * from './request-params.ts'

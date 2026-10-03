@@ -1,7 +1,7 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Разбор флагов ask, request resolve и decision choose.
+// Запуск: pnpm --filter @orca-board/runtime test. Разбор флагов ask, request resolve и decision choose.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { askOptions, findOption, resolutionFromParams, singleOption } from './request-params'
+import { askOptions, findOption, resolutionFromParams, singleOption } from '../src/request-params.ts'
 
 describe('askOptions', () => {
   it('--option "метка|пояснение" повторяется, запятые в метке остаются', () => {

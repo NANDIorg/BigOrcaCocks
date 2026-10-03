@@ -41,11 +41,11 @@
 - `createReviewServices({ resources: ExecutionResources, messages: WorkflowMessages })` → getReview, mergeTaskBranch, acceptReview, resolveHumanRequest с прежними сигнатурами. MergeTargetOf/MergeResult/ResolveOutcome — общие types.
 - `askOptions`, `findOption`, `singleOption`, `resolutionFromParams` сохраняют подписи, Desktop reexports runtime.
 
-- [ ] Добавить API-тесты настоящих Git/store: мерж в ветку прогона без изменения master, missing target до dirty commit/cleanup, старый ответ до effects, уже решённый request до start, UI displayError отдельно от причины escalation; два review host не смешивают ошибки.
-- [ ] Run: `node --test packages/runtime/test/review-services.test.ts`. Expected: FAIL — createReviewServices отсутствует.
-- [ ] Перенести review/parser, внедрить ресурсы и сообщения, сохранить Desktop facades. Перенести самостоятельные suites, меняя только host imports/ожидания кода ошибки; Git/store assertions сохраняются.
-- [ ] Run: runtime/desktop typecheck и runtime tests; core docs tests. Expected: PASS.
-- [ ] Commit: `refactor: вынести приёмку и решения человека в runtime`.
+- [x] Добавить API-тесты настоящих Git/store: мерж в ветку прогона без изменения master, missing target до dirty commit/cleanup, старый ответ до effects, уже решённый request до start, UI displayError отдельно от причины escalation; два review host не смешивают ошибки.
+- [x] Run: `node --test packages/runtime/test/review-services.test.ts`. Expected: FAIL — createReviewServices отсутствует.
+- [x] Перенести review/parser, внедрить ресурсы и сообщения, сохранить Desktop facades. Перенести самостоятельные suites, меняя только host imports/ожидания кода ошибки; Git/store assertions сохраняются.
+- [x] Run: runtime/desktop typecheck и runtime tests; core docs tests. Expected: PASS.
+- [x] Commit: `refactor: вынести приёмку и решения человека в runtime`.
 
 ## Task 2: Исполнитель задач
 

@@ -155,12 +155,28 @@ Native backend импортируется только тестовым host Des
 завершается после assertions с ненулевым кодом при ошибке. Это проверка исполнения
 без окна, а не установленного Linux артефакта или native cleanup долгоживущего owner.
 
-Это часть этапа исполнения. Workflow/review executors и wiring main/index.ts,
+Это часть этапа исполнения. Workflow executors и wiring main/index.ts,
 обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
 Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
 сама по себе не является авторизацией для удалённого клиента.
+
+### Общая приёмка и решения человека
+
+`createReviewServices({ resources, messages })` выполняет review/merge и решения
+запросов на переданных store и репозитории. Пропавшая цель мержа и устаревший ответ
+отвергаются до коммита хвостов/уборки; конфликт сохраняет ветку и worktree, остальные
+ошибки Git сохраняют прежнюю классификацию. Повтор после завершённого мержа безопасен.
+Решённый запрос не запускает воркера повторно. При отказе запуска после уточнения
+store сохраняет решение и escalation с исходной причиной, UI получает displayError
+хоста. Код ошибки и его перевод не привязаны к Electron или глобальному языку runtime.
+
+Desktop `main/review.ts` сохраняет прежние функции через общую singleton factory;
+`main/workflow-services.ts` передаёт OrcaError/mt и executionResources. Разбор вариантов
+и решений запросов также общий (`request-params.ts`), legacy agent client/HELP не меняются.
+Самостоятельные review/request-params suites перенесены в runtime; Desktop интеграции
+по-прежнему проверяют совместимые входы и сообщения.
 
 ## Процессы
 

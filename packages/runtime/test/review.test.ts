@@ -1,4 +1,4 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Приёмка задачи на настоящем git-репозитории.
+// Запуск: pnpm --filter @orca-board/runtime test. Приёмка задачи на настоящем git-репозитории.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -6,8 +6,10 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, realpathSync } from 'no
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { TaskStore, DEFAULT_COLUMNS, WORKFLOW_VERSION, type HumanRequest, type Workflow } from '@orca-board/core'
-import { acceptReview, mergeTaskBranch, resolveHumanRequest } from './review'
-import { OrcaError } from './i18n'
+import { createReviewServices } from '../src/index.ts'
+import { workflowMessages, workflowResources, WorkflowHostError as OrcaError } from './workflow-test-host.ts'
+
+const { acceptReview, mergeTaskBranch, resolveHumanRequest } = createReviewServices({ resources: workflowResources, messages: workflowMessages() })
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
@@ -163,7 +165,7 @@ describe('resolveHumanRequest', () => {
     assert.equal(branchExists(branch), false)
     assert.equal(store.getTask(task.id)!.status, 'done')
     assert.equal(store.listEvents().find((e) => e.type === 'answer_accepted')!.payload.decision, 'делаем B')
-    assert.throws(() => resolveHumanRequest(store, repo, req.id, { action: 'accept' }, noStart), /уже решено/)
+    assert.throws(() => resolveHumanRequest(store, repo, req.id, { action: 'accept' }, noStart), e => e instanceof OrcaError && e.key === 'request.alreadyResolved')
   })
 
   it('clarify — сразу стартует воркера', () => {
