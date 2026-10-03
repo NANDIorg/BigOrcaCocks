@@ -26,7 +26,7 @@ TypeScript проверяет публичные exports и компиляцию
 Это первый перенос [общего фундамента Desktop/CLI/Web](superpowers/specs/2026-10-02-orca-shared-foundation-design.md).
 `OrcaApi` пока использует активный проект Desktop и системные диалоги; нового серверного
 API здесь нет. Application services/runtime с явным project/client context, общий client/UI,
-headless owner и product-aware релизные инструменты выполняются следующими этапами.
+полный headless host и product-aware релизные инструменты выполняются следующими этапами.
 Web и самостоятельный терминальный чат CLI строятся после готовности этой базы.
 
 ## Общий Node runtime: хранение, резервные копии и Git
@@ -39,9 +39,48 @@ JSON persistence и версионные резервные копии. Host п�
 Desktop использует совместимые `main/persistence.ts` и `main/backup.ts`; флаг для
 тоста «приложение обновилось» остаётся в Desktop. Runtime — private TS-пакет,
 встраиваемый в main bundle; его тесты запускаются обычным Node 24 без Electron.
-Это часть этапа 2: application services с явным клиентским контекстом и single-owner lifecycle
-пока остаются следующими переносами. Нельзя запускать несколько writers одного
-каталога данных; owner lock здесь ещё не реализован.
+Application services с явным клиентским контекстом остаются следующим переносом.
+Общий startup/shutdown и межпроцессный owner уже находятся в runtime; подключение
+полного headless host требует ещё operator API, сериализации команд и replay.
+
+### Владение профилем и общий bootstrap
+
+`startProfileRuntime({ dataDir, start })` приобретает ownership до вызова initializer.
+Контекст содержит canonical dataDir, identity владельца и `deferCleanup`: менеджеры
+ресурсов регистрируются во время startup. `stop()` закрывает их в обратном порядке,
+затем освобождает guard; повторные и одновременные stop не дублируют cleanup.
+При ошибке cleanup guard остаётся занят, повтор stop закрывает оставшиеся ресурсы.
+Ошибка частичного startup с неудачным cleanup возвращает `ProfileRuntimeStartupError`
+с исходной причиной и `retryCleanup()`. Успешный cleanup возвращает исходную ошибку.
+
+`acquireProfileOwnership` защищает один физический каталог локальной файловой системы
+одного host. Profile id вычисляется из dev/ino canonical directory: symlink/junction
+не позволяют запустить второго writer. На Linux guard — abstract Unix socket, на
+Windows — named pipe, на macOS/прочих Unix — exclusive TCP listener на 127.0.0.1.
+OS освобождает guard при смерти процесса; PID и TTL сами по себе не разрешают takeover.
+Детерминированный TCP port может столкнуться с другим listener: startup отказывает
+до initializer, альтернативный endpoint не выбирается.
+
+`.orca-owner.json` содержит schema/protocol, profile id/path, hostname, PID, instance UUID
+и endpoint. Новый bind проверяет прежний record, затем атомарно заменяет stale identity;
+unknown metadata сохраняются. Повреждённый/future/oversize/non-regular/symlink record
+блокирует startup и остаётся на месте. `release()` удаляет только record своей instance.
+Перенос/rename профиля требует отдельной offline процедуры; guard не является lock
+сетевого каталога или защитой от локального процесса с правами владельца.
+
+Guard отвечает только на ограниченный read-only identity handshake с protocol/profile/nonce:
+это внутренний endpoint проверки liveness, не operator API и не legacy agent socket.
+`probeProfileOwner` не меняет состояние и не останавливает host при disconnect.
+Фреймы ограничены 4096 bytes, соединения — 16, idle timeout — 1000 ms, probe — 1500 ms.
+Owner record не входит в version backup: это identity процесса, а не пользовательские данные.
+
+Desktop получает guard до backup, ProjectManager, миграций и IPC/socket. Electron
+single-instance lock по-прежнему фокусирует другое окно Desktop; общий guard исключает
+одновременный Node owner. Legacy endpoints живут до quit, поэтому Desktop удерживает
+guard до выхода процесса, в том числе при ошибке частичной инициализации. Ошибка startup
+показывает локализованный native error box и завершает процесс. Node integration
+проверяет два конкурирующих процесса, disconnect, crash/restart и неизменные байты
+проектов, доски и диалогов без DISPLAY/Electron или запуска provider CLI.
 
 Git-операции также находятся в runtime: `createGitOperations(messages)` создаёт
 экземпляр с прежними функциями worktree/merge/branch/fetch/pull/checkout/initial commit
@@ -160,12 +199,12 @@ Desktop подключает их через host adapters.
 Structured lifecycle теперь принадлежит общему `DialogRegistry`: несколько диалогов,
 scoped history, revisions, persistence до событий, detach observer без stop. Desktop
 адаптер выбирает один глобальный чат и явно задаёт `userData/dialogs.json` под
-single-instance lock. Первый open после restart читает последний созданный глобальный
+общим profile guard. Первый open после restart читает последний созданный глобальный
 диалог без CLI; история read-only, новый чат — прежней кнопкой «+». Backup версии
 копирует также этот файл до загрузки схемы. Ошибка записи останавливает затронутый
 driver и оставляет актуальный error snapshot в памяти; остальные диалоги живут.
-Single-owner lifecycle, writer leases,
-client context и ограниченный журнал replay остаются обязательными до подключения Web.
+Writer leases, client context и ограниченный журнал replay остаются обязательными
+до подключения Web; общий single-owner bootstrap уже подключён к Desktop.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
 сама по себе не является авторизацией для удалённого клиента.
 
@@ -3370,6 +3409,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Рамка главного окна | на macOS `hidden` + нативные кнопки в панели, WCO для zoom/fullscreen; на Linux обычная системная рамка | `hidden` + нативные caption-кнопки справа, WCO для zoom/fullscreen, палитра через `setTitleBarOverlay`, авторский popup меню из rail | `main/window-chrome.ts`, `shared/window-chrome.ts`, `renderer/windowChrome.ts`, `WindowMenu.tsx`, `PopupMenu.tsx` |
 | Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
 | Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
+| Guard профиля | Linux: abstract socket; macOS/прочие Unix: exclusive TCP на 127.0.0.1, port из profile id | named pipe из profile id | `packages/runtime/src/profile-ownership.ts`; Desktop startup — `src/main/index.ts` |
 | Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |
 | Env для PTY | как есть | имена регистронезависимы: `PATH` пишется в существующий `Path` | `mergeEnv()` — `src/main/pty.ts` |
 | PATH пользователя | из `$SHELL -ilc` | `shellPath()` → `null`, берётся PATH процесса | `shellPath()` — `src/main/index.ts` |
@@ -3987,9 +4027,9 @@ Runtime `createDialogRepository(absoluteFile)` хранит новый изол�
 Unknown JSON metadata сохраняются при read/update того же DTO и соседних записей.
 Фильтр project id относится только к переданному profile-файлу. Caller уже должен
 владеть profile: revision check не заменяет межпроцессный lock. Backend пока
-синхронный. Desktop задаёт файл userData/dialogs.json под single-instance lock,
-registry сохраняет record до отправки update observers. Асинхронный backend и
-межпроцессный owner для headless остаются следующими этапами.
+синхронный. Desktop задаёт файл userData/dialogs.json под общим profile guard,
+registry сохраняет record до отправки update observers. Межпроцессный ownership
+находится в runtime; асинхронный backend и полный headless host — следующие этапы.
 
 Integration проверяет настоящие fixture CLI Claude/Codex в двух profiles и
 завершённый ACP turn: snapshot записывается на диск, процессы закрываются,

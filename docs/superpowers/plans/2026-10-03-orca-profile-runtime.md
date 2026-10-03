@@ -58,9 +58,9 @@ getProfileLocation(dataDir:string):Promise<ProfileLocation>; acquireProfileOwner
 ProfileOwnership {info, release():Promise<void>}; probeProfileOwner(info):Promise<boolean>;
 ProfileOwnershipError {code, cause?}; PROFILE_OWNER_FILE='.orca-owner.json'.
 
-- [ ] RED: реальные tmp directories/net проверяют acquisition/busy/handshake, aliases, разные profiles, release/idempotency, corrupt/future/symlink/oversize и foreign listener. Run `node --test packages/runtime/test/profile-ownership.test.ts`; Expected FAIL missing API.
-- [ ] Implement guard, metadata validation, bounded protocol, exact-identity release и cleanup на failed startup. Expected targeted PASS, runtime typecheck PASS.
-- [ ] Commit feat: защитить профиль общим владельцем; task-done ownership suite.
+- [x] RED: реальные tmp directories/net проверяют acquisition/busy/handshake, aliases, разные profiles, release/idempotency, corrupt/future/symlink/oversize и foreign listener. Run `node --test packages/runtime/test/profile-ownership.test.ts`; Expected FAIL missing API.
+- [x] Implement guard, metadata validation, bounded protocol, exact-identity release и cleanup на failed startup. Expected targeted PASS, runtime typecheck PASS.
+- [x] Commit feat: защитить профиль общим владельцем; task-done ownership suite.
 
 ## Task 2: Общий bootstrap lifecycle
 
@@ -70,9 +70,9 @@ ProfileRuntimeContext {dataDir, owner:ProfileOwnerInfo, deferCleanup(()=>void|Pr
 ProfileRuntime<T> {value, owner, stop():Promise<void>}; ProfileRuntimeStartupError
 extends AggregateError with retryCleanup():Promise<void> only when initial cleanup fails.
 
-- [ ] RED: busy refuses initializer/file writes; canonical context; LIFO real filesystem cleanup; startup failure cleanup/reacquisition; slow shutdown keeps ownership; failed stop retains guard and retry succeeds; concurrent stop runs cleanup once; failed partial cleanup retry via error. Expected missing bootstrap FAIL.
-- [ ] Implement ownership before start, reverse cleanup, memoized stop/retry; original startup error retained when cleanup succeeds. Expected lifecycle+ownership suites/typecheck PASS.
-- [ ] Commit feat: запускать runtime под владельцем профиля; task-done both suites.
+- [x] RED: busy refuses initializer/file writes; canonical context; LIFO real filesystem cleanup; startup failure cleanup/reacquisition; slow shutdown keeps ownership; failed stop retains guard and retry succeeds; concurrent stop runs cleanup once; failed partial cleanup retry via error. Expected missing bootstrap FAIL.
+- [x] Implement ownership before start, reverse cleanup, memoized stop/retry; original startup error retained when cleanup succeeds. Expected lifecycle+ownership suites/typecheck PASS.
+- [x] Commit feat: запускать runtime под владельцем профиля; task-done both suites.
 
 ## Task 3: Desktop wiring и реальные Node процессы
 
@@ -84,10 +84,10 @@ localized native error box + app.exit1; early quit does not access uninitialized
 Node fixture uses public runtime, ProjectManager, backup and dialog repository;
 host cleanup is real and no process.exit masks successful cleanup.
 
-- [ ] RED: Desktop error mapper ru/en; two simultaneous Node hosts execute only one initializer; probe/disconnect leaves owner; SIGKILL restart reclaims record and preserves projects/dialog bytes; failed initializer releases guard naturally. Expected tests FAIL missing mapping/fixture behavior.
-- [ ] Wrap Desktop initialization before backup/migrations; retain guard until process exit, preserve current agent socket/quit policy. Add fixtures/integration. Expected targeted tests/typecheck/core PASS.
+- [x] RED: Desktop error mapper ru/en; two simultaneous Node hosts execute only one initializer; probe/disconnect leaves owner; SIGKILL restart reclaims record and preserves projects/dialog bytes; failed initializer releases guard naturally. Expected tests FAIL missing mapping/fixture behavior.
+- [x] Wrap Desktop initialization before backup/migrations; retain guard until process exit, preserve current agent socket/quit policy. Add fixtures/integration. Expected targeted tests/typecheck/core PASS.
 - [ ] Native Node rebuild; full pnpm verify. One fresh final reviewer; Important/Critical single RED→GREEN fix pass, Minors ledger. Expected PASS.
-- [ ] Commit refactor: запускать Desktop через общий bootstrap; task-done integration/error suites.
+- [x] Commit refactor: запускать Desktop через общий bootstrap; task-done integration/error suites.
 
 ## Завершение
 

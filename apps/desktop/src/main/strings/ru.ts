@@ -2,6 +2,12 @@
 // получают сокет и CLI: `OrcaError.message` строится отсюда. Порядок — по областям: трей, диалоги, уведомления,
 // ошибки по модулям.
 export default {
+  'runtime.startupTitle': 'Не удалось запустить Orca',
+  'runtime.profileBusy': 'Этот профиль Orca уже открыт в другом процессе. Закройте его перед запуском Desktop.',
+  'runtime.profileUnavailable': 'Не удалось получить защиту профиля: локальный адрес занят или недоступен.',
+  'runtime.profileInvalid': 'Запись владельца профиля повреждена или относится к другому профилю. Требуется проверка каталога данных.',
+  'runtime.profileUnsupported': 'Запись владельца профиля создана несовместимой версией Orca. Используйте совместимую версию приложения.',
+  'runtime.startupFailed': 'Не удалось открыть профиль Orca: {error}',
   'agentLaunch.settingsInvalid': 'Не удалось прочитать настройки Amp: {path}. Проверьте JSON/JSONC и доступ к файлу.',
   'assistantTransport.missingCli': 'Не найден CLI {command}. Установите агент и проверьте PATH.',
   'assistantTransport.windowsLauncher': 'CLI {command} использует неподдерживаемый Windows launcher. Укажите native executable или стандартный npm shim.',

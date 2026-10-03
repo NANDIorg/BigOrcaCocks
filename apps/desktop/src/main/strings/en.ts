@@ -2,6 +2,12 @@ import type ru from './ru'
 
 // Английские тексты main: ровно те же ключи, что в ru.ts (лишний или пропущенный — ошибка типа).
 export default {
+  'runtime.startupTitle': 'Could not start Orca',
+  'runtime.profileBusy': 'This Orca profile is already open in another process. Close it before starting Desktop.',
+  'runtime.profileUnavailable': 'Could not acquire profile ownership: the local endpoint is occupied or unavailable.',
+  'runtime.profileInvalid': 'The profile owner record is damaged or belongs to another profile. Check the data directory.',
+  'runtime.profileUnsupported': 'The profile owner record was created by an incompatible Orca version. Use a compatible version of the application.',
+  'runtime.startupFailed': 'Could not open the Orca profile: {error}',
   'agentLaunch.settingsInvalid': 'Could not read Amp settings: {path}. Check the JSON/JSONC and file access.',
   'assistantTransport.missingCli': 'CLI {command} was not found. Install the agent and check PATH.',
   'assistantTransport.windowsLauncher': 'CLI {command} uses an unsupported Windows launcher. Use a native executable or a standard npm shim.',

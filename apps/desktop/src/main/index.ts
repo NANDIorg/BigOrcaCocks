@@ -18,7 +18,8 @@ import { transcriptEnv } from './transcripts'
 import { getReview } from './review'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE } from '@orca-board/runtime'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime } from '@orca-board/runtime'
+import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities, coordinatorObjective, hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
@@ -1121,8 +1122,7 @@ function registerIpc(): void {
   handle('review:reject', (_e, taskId: string, feedback: string, images?: unknown) => reviewDecision(resolveProject().id, taskId, 'reject', feedback, images))
 }
 
-app.whenReady().then(() => {
-  if (!gotSingleInstanceLock) return
+function initializeDesktop(): void {
   app.setAppUserModelId('orca-board')
   if (process.platform === 'darwin') app.dock?.setIcon(appIconPath)
   protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
@@ -1299,11 +1299,44 @@ app.whenReady().then(() => {
   createWindow()
   // Клик по иконке в Dock (macOS) — вернуть окно.
   app.on('activate', () => showWindow())
-})
+}
+
+function failDesktopStartup(error: unknown): void {
+  quitting = true
+  console.error(error)
+  const message = profileStartupMessage(error)
+  try {
+    dialog.showErrorBox(mt('runtime.startupTitle'), mt(message.key, message.params))
+  } finally {
+    app.exit(1)
+  }
+}
+
+app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock || quitting) return
+  await startProfileRuntime({
+    dataDir: app.getPath('userData'),
+    start: () => {
+      if (quitting) return
+      try {
+        initializeDesktop()
+      } catch (error) {
+        // Частичный Desktop startup может уже открыть IPC/PTY: процесс выходит до освобождения guard.
+        failDesktopStartup(error)
+        throw error
+      }
+    }
+  })
+  // Legacy IPC/socket живут до quit, поэтому Desktop удерживает ownership до выхода процесса.
+}).catch(failDesktopStartup)
 
 // Cmd+Q, «Выйти» из меню приложения, app.quit() — всё идёт через подтверждение.
 app.on('before-quit', (e) => {
   if (quitting) return
+  if (!projects) {
+    quitting = true
+    return
+  }
   e.preventDefault()
   void requestQuit()
 })
