@@ -1,7 +1,7 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Разбор транскрипта в чат ассистента — на временных папках.
+// Запуск: pnpm --filter @orca-board/runtime test. Разбор транскрипта в чат ассистента — на временных папках.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
@@ -14,8 +14,8 @@ import {
   drainChatUpdates,
   chatInputBytes,
   type ChatBuildState
-} from './assistant-chat'
-import { claudeSlug, type TranscriptEnv } from './transcripts'
+} from '../src/assistant-chat.ts'
+import { claudeSlug, type TranscriptEnv } from '../src/transcripts.ts'
 import { ASSISTANT_START_PROMPT } from '@orca-board/core'
 
 const iso = (ms: number): string => new Date(ms).toISOString()
@@ -293,6 +293,19 @@ describe('AssistantChatCache: инкрементальное чтение', () =
       a?.messages.map((m) => m.text),
       ['hi', 'second']
     )
+  })
+
+  it('AssistantChatCache обновляет историю после переписывания файла того же размера', async () => {
+    const file = sessionFile(path.join(tmp, 'assistant'), 'same-size')
+    writeFileSync(file, human(T0, 'u1', 'old'))
+    utimesSync(file, T0 / 1000, T0 / 1000)
+    const size = statSync(file).size
+    const cache = new AssistantChatCache()
+    assert.deepEqual((await cache.read(file))!.messages.map(message => message.text), ['old'])
+    writeFileSync(file, human(T0, 'u2', 'new'))
+    assert.equal(statSync(file).size, size)
+    utimesSync(file, (T0 + 1000) / 1000, (T0 + 1000) / 1000)
+    assert.deepEqual((await cache.read(file))!.messages.map(message => message.text), ['new'])
   })
 
   it('drainChatUpdates: новые/изменённые сообщения и смена статуса — по одному разу, потом пусто', async () => {

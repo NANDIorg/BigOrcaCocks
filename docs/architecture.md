@@ -203,7 +203,14 @@ Desktop `main/agents.ts` создаёт singleton discovery/selection без ove
 OrcaError: message по-русски для socket/CLI, IPC переводит её при доставке;
 смена языка не требует пересоздания service. Общий поиск и выбор роли проверяются
 через package entrypoint под Node без Electron loader/DISPLAY. Следующий перенос —
-dialog drivers, transcripts и AssistantSession; owner/client lifecycle ещё предстоит.
+dialog drivers и AssistantSession; owner/client lifecycle ещё предстоит.
+
+Читатели истории `transcripts.ts` и `assistant-chat.ts` уже находятся в runtime;
+Desktop оставляет совместимые re-exports. `TranscriptCache` и `AssistantChatCache`
+принадлежат отдельным экземплярам и получают пути явно. `transcriptEnv` поддерживает
+host homeDir; прежние defaults Desktop сохранены. При переписывании файла того же
+размера с новым mtime кэш пересчитывается; дописанный хвост и незавершённая UTF-8
+строка сохраняют инкрементальное чтение. Чтение истории не выполняет tool calls.
 
 ### Общая приёмка и решения человека
 
@@ -2815,7 +2822,7 @@ Renderer вызывает канал через проверку наличия 
   расход сессий приходит функцией `usage(session) → SessionUsage { records: UsageRecord[], lastAt? }` (нет — «неизвестно»),
   плюс `isAlive`, `roleTitle`, `dayKey` (по умолчанию `localDayKey`). `packages/core/src/pricing.ts` — `MODEL_PRICES`,
   `findModelPrice`, `tokensCost`.
-- `src/main/transcripts.ts` — поиск и разбор транскриптов (`collectSessionUsage`, `parseClaudeLine`, `parseCodexLine`),
+- `packages/runtime/src/transcripts.ts` — поиск и разбор транскриптов (`collectSessionUsage`, `parseClaudeLine`, `parseCodexLine`),
   кэш `TranscriptCache`; `src/main/stats.ts` — `projectStats(deps)`: снапшот → транскрипты → `buildProjectStats`,
   найденные id сессий codex → `store.setDispatchSessionId`. `registerIpc` (`collectProjectStats` в `src/main/index.ts`)
   добавляет названия ролей из типов всех глобальных задач проекта и `isAlive` из `pty.ts`.
