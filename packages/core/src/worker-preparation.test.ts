@@ -7,7 +7,7 @@ const node = (value: NodeInput): WfNode => ({ x: 0, y: 0, ...value }) as WfNode
 function graph(first: 'work' | 'ask' = 'work'): Workflow {
   return {
     version: WORKFLOW_VERSION_TASK_SCOPE,
-    nodes: [node({ id: 'start', type: 'start' }), node({ id: 'work', type: first, roleId: 'reviewer' }), node({ id: 'human', type: 'human' })],
+    nodes: [node({ id: 'start', type: 'start' }), node({ id: 'work', type: first, roleId: 'reviewer', instructions: 'Ask' }), node({ id: 'human', type: 'human' })],
     edges: [{ id: 'a', from: 'start', outcome: 'next', to: 'work' }, { id: 'b', from: 'work', outcome: 'next', to: 'human' }]
   }
 }

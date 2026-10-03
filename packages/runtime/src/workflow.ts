@@ -29,6 +29,13 @@ export interface WorkflowDeps {
   mergeTarget?: MergeTargetOf
 }
 
+export interface WorkerPreparationOptions {
+  /** Явная роль этого запуска имеет приоритет над ролью ask и ролью задачи. */
+  roleId?: string
+  /** Синхронная проверка выбранной роли; callback не должен менять store или конфигурацию. */
+  validateRole?: (roleId: string) => void
+}
+
 export type TaskEngine = 'legacy' | 'path' | 'run'
 export interface TaskWorkflowServiceDeps {
   resources: ExecutionResources
@@ -109,15 +116,34 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
    * «Вопрос человеку» (если задача стоит на нём и роль задана): её `runWorker` передаёт в запуск, а на задачу
    * не переносит — иначе следующая «Работа» без своей роли запустилась бы ролью опросника.
    */
-  function enterWork(deps: WorkflowDeps, taskId: string): { roleId?: string } {
-    let action = deps.store.enterWork(taskId, fallback(deps, mustTask(deps, taskId)))
+  function enterWork(deps: WorkflowDeps, taskId: string, opts: WorkerPreparationOptions = {}): { roleId?: string } {
+    const task = mustTask(deps, taskId)
+    const fb = fallback(deps, task)
+    const preview = deps.store.previewEnterWork(taskId, fb)?.action
+    // Для Git роль без override известна только после результата операции. Другие входы проверяются до записи.
+    if (preview?.type !== 'git' || opts.roleId !== undefined) validateWorkerRole(deps, task, preview, opts)
+    let action = deps.store.enterWork(taskId, fb)
     // Первым этапом стоит нода «Git» (`start → git(create_branch) → work`): ветка и worktree готовятся до запуска
     // агента, а сам запуск остаётся за вызывающим (`runWorker`) — иначе воркер стартовал бы дважды.
-    if (action?.type === 'git') action = prepareBeforeWork(deps, taskId, action)
+    if (action?.type === 'git') action = prepareBeforeWork(deps, taskId, action, opts)
     const node = stageNode(deps, mustTask(deps, taskId))
     if (node?.type === 'ask') return node.roleId ? { roleId: node.roleId } : {}
     if (action?.type === 'start_worker' && action.roleId) applyWorkRole(deps, taskId, action.roleId)
     return {}
+  }
+
+  function validateWorkerRole(deps: WorkflowDeps, task: Task, action: WfAction | undefined, opts: WorkerPreparationOptions): void {
+    if (!opts.validateRole) return
+    const ask = stageNode(deps, task)
+    const stageRole = action?.type === 'start_worker' ? action.roleId : ask?.type === 'ask' ? ask.roleId : undefined
+    opts.validateRole(opts.roleId ?? stageRole ?? task.roleId)
+  }
+
+  function validateNextWorker(deps: WorkflowDeps, taskId: string, outcome: WfOutcome, opts: WorkerPreparationOptions): void {
+    if (!opts.validateRole) return
+    const task = mustTask(deps, taskId)
+    const next = deps.store.previewAdvanceStage(taskId, outcome, fallback(deps, task)).action
+    if (next.type === 'start_worker') validateWorkerRole(deps, task, next, opts)
   }
 
   /**
@@ -125,8 +151,8 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
    * Цепочка ушла в другое место (ошибка git → человек, конец графа) или упёрлась в настройку — воркера здесь нет:
    * бросаем понятную причину, задача остаётся на своём этапе (запрос человеку уже создан), а не запускаем агента мимо графа.
    */
-  function prepareBeforeWork(deps: WorkflowDeps, taskId: string, first: WfAction): Extract<WfAction, { type: 'start_worker' }> {
-    const parked = withStatusSource('workflow', () => executeSteps(deps, taskId, first, true))
+  function prepareBeforeWork(deps: WorkflowDeps, taskId: string, first: WfAction, opts: WorkerPreparationOptions): Extract<WfAction, { type: 'start_worker' }> {
+    const parked = withStatusSource('workflow', () => executeSteps(deps, taskId, first, true, opts))
     if (parked?.type === 'start_worker') return parked
     const task = mustTask(deps, taskId)
     const node = stageNode(deps, task)
@@ -161,7 +187,7 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
    * `deferWorker` — не запускать воркера, а вернуть его действие (`enterWork`: воркера стартует вызывающий). Возвращает
    * отложенное действие; во всех остальных случаях — undefined.
    */
-  function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction, deferWorker = false): WfAction | undefined {
+  function executeSteps(deps: WorkflowDeps, taskId: string, first: WfAction, deferWorker = false, opts: WorkerPreparationOptions = {}): WfAction | undefined {
     const { store } = deps
     let action = first
     // Текст конфликта мержа или отказа git — в запрос человеку, если следующий этап — человек.
@@ -207,7 +233,9 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
               store.updateTask(taskId, { worktree: undefined, branch: undefined, branchForeign: undefined })
             }
           } else note = { title: 'Мерж не удался', text: result.error }
-          action = store.advanceStage(taskId, result.ok ? 'ok' : 'conflict', fallback(deps, task)).action
+          const outcome = result.ok ? 'ok' : 'conflict'
+          if (deferWorker) validateNextWorker(deps, taskId, outcome, opts)
+          action = store.advanceStage(taskId, outcome, fallback(deps, task)).action
           continue
         }
         case 'git': {
@@ -230,6 +258,7 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
               return
             }
           } else note = undefined
+          if (deferWorker) validateNextWorker(deps, taskId, outcome, opts)
           action = store.advanceStage(taskId, outcome, fallback(deps, task)).action
           continue
         }

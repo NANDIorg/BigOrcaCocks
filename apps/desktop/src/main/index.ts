@@ -23,6 +23,7 @@ import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePre
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { removeShowcaseDir, showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
 import { enterWork, type WorkflowDeps } from './workflow'
+import { validateWorkerRole } from './worker-preflight'
 import {
   acceptRun, escalateDecision, finishRunStage, isRunScope, returnRun, runDecision,
   hasIdleStage, settleIdleRunStages, startRunWorkflow,
@@ -434,13 +435,12 @@ function runWorker(taskId: string, projectId?: string, cols?: number, rows?: num
     const type = projects.resolveRun(p.id, task0.runId)
     // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды «Работа» становится ролью
     // задачи). Роль этапа «Вопрос человеку» на задачу не переносится: она едет в запуск отдельным параметром.
-    const entered = enterWork(workflowDeps(p.id), taskId)
+    const agents = projectAgents(p.id)
+    const entered = enterWork(workflowDeps(p.id), taskId, {
+      roleId: opts.roleId,
+      validateRole: roleId => { validateWorkerRole(type, agents, roleId) }
+    })
     const stageRoleId = opts.roleId ?? entered.roleId
-    const roleId = stageRoleId ?? p.store.getTask(taskId)?.roleId ?? task0.roleId
-    const role = type.roles.find((r) => r.id === roleId)
-    if (!role) throw new OrcaError('worker.cannotStart', { reason: missingRoleText(roleId, type) })
-    assertAgentUsable(projectAgents(p.id), role.agent)
-    // Перезапуск: старый терминал задачи (если ещё жив) закрываем до запуска нового.
     closeTaskWorkers(p.store, taskId)
     return startWorker(p.store, p.root, ctx(p.id, task0.runId), taskId, cols, rows, stageRoleId)
   }

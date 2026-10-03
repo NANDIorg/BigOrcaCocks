@@ -188,8 +188,14 @@ supportsExtraArgs сохраняют прежние правила. На сер�
 agent.unknown/notInstalled/disabled и role.missing создаёт host; вложенные подсказки
 common.none/role.missing.* остаются сообщениями для перевода. Список нескольких
 ролей без --role сохраняет прежнюю русскую инструкцию agent client. Общие guards
-не меняют inputs и не запускают процессы; вызывающий service применяет их до
-эффектов store/Git. Каждый host использует свою error factory.
+не меняют inputs и не запускают процессы. Каждый host использует свою error factory.
+`createWorkerPreflight` проверяет выбранную роль, её агента и extraArgs; Desktop
+передаёт эту проверку в общий enterWork до прямого входа/перезапуска и закрытия
+прежнего PTY. Preview store сохраняет этап, visits, stageBlock и pending approvals
+при отказе. Явный role override проверяется до входа, включая Git. Без override
+Git может определить роль исходом ok/error: операция и её записи сохраняются,
+но фактическая роль проверяется до перехода к work/ask. Альтернативные агенты
+не проверяются заранее; асинхронная подготовка с EffectToken ещё предстоит.
 
 Desktop `main/agents.ts` создаёт singleton discovery/selection без overrides,
 сохраняет прежние exports и assertion signature. AgentInfo/supportsExtraArgs,
