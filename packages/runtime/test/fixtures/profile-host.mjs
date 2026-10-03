@@ -49,7 +49,8 @@ try {
   }
   // Disconnect закрывает reader, но OS guard сохраняет owner; остановка только явная.
 } catch (error) {
-  emit({ type: 'error', code: error.code ?? 'startup.failed', message: error.message })
+  emit({ type: 'error', code: error.code ?? 'startup.failed', message: error.message,
+    cause: error.cause instanceof Error ? error.cause.message : undefined })
   process.exitCode = 1
   input.close()
   process.stdin.destroy()

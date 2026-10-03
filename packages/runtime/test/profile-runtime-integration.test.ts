@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { createProjectServices, createRuntimeSettings, createDialogRepository, probeProfileOwner, PROFILE_OWNER_FILE,
   type ProfileOwnerInfo, type ProjectMessageKey, type ProjectMessageParams } from '../src/index.ts'
 
-interface Frame { type: 'waiting' | 'ready' | 'error' | 'stopped'; owner?: ProfileOwnerInfo; code?: string }
+interface Frame { type: 'waiting' | 'ready' | 'error' | 'stopped'; owner?: ProfileOwnerInfo; code?: string; message?: string }
 class HostError extends Error { constructor(key: ProjectMessageKey, _params?: ProjectMessageParams) { super(key) } }
 
 function host(t: TestContext, dataDir: string, mode = 'normal') {
@@ -126,6 +126,7 @@ test('ошибка initializer закрывает ресурс и естеств
   assert.equal(existsSync(join(dir, PROFILE_OWNER_FILE)), false)
   const next = host(t, dir)
   t.after(() => rmSync(dir, { recursive: true, force: true }))
-  assert.equal((await next.start()).type, 'ready')
+  const recovered = await next.start()
+  assert.equal(recovered.type, 'ready', JSON.stringify(recovered))
   await next.stop()
 })
