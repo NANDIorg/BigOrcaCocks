@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
-import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type Attachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type TaskPriority, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type Attachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, pruneLaunchTempFiles, type WorkerEnvContext } from './worker'
 import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
@@ -18,7 +18,9 @@ import { transcriptEnv } from './transcripts'
 import { getReview } from './review'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime } from '@orca-board/runtime'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection } from '@orca-board/runtime'
+import type { BoardCommands } from '@orca-board/contracts'
+import { registerDesktopBoardCommands } from './board-commands'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities, coordinatorObjective, hasImageInput, rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
@@ -48,7 +50,7 @@ import { createTray, refreshTray } from './tray'
 import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, TaskPatch, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
+import type { AppSettingsPatch, UpdateInstallWhen, ProjectTaskTypesInput, TaskTypeInput, NodeTemplateInput, RequestListOptions, RequestFocus, GlobalTaskInput, GlobalTaskPatch, PtySpawnOptions, SubtaskInput, OnboardingCompleteInput, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -96,6 +98,7 @@ else app.on('second-instance', () => { if (desktopInitialized && !quitting) show
 let win: BrowserWindow | null = null
 let windowFullscreen = false
 let projects: ProjectManager
+let boardCommands: BoardCommands
 let updater: Updater
 /** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
 const runBranchSync = new RunBranchSync({ isAlive })
@@ -916,20 +919,14 @@ function registerIpc(): void {
   handle('nodeTemplates:save', (_e, input: NodeTemplateInput) => projects.saveNodeTemplate(input))
   handle('nodeTemplates:delete', (_e, id: string) => projects.deleteNodeTemplate(id))
 
-  handle('board:get', () =>
-    projects.active() ? projects.activeStore().snapshot() : { tasks: [], dispatches: [], events: [], questions: [], runs: [] }
-  )
+  registerDesktopBoardCommands(handle, {
+    commands: boardCommands,
+    activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
+  })
   handle('runs:list', () => (projects.active() ? projects.activeStore().listRuns() : []))
   handle('runs:close', (_e, runId: string) => projects.activeStore().closeRun(runId))
-  handle('tasks:create', (_e, input: { title: string; spec?: string; deps?: string[]; roleId?: string; priority?: TaskPriority }) => {
-    const p = resolveProject()
-    // «Входящие» — по типу проекта по умолчанию.
-    const role = pickRole(projects.resolveRun(p.id), projectAgents(p.id), input.roleId)
-    return p.store.createTask({ ...input, roleId: role.id, agent: role.agent })
-  })
-  handle('tasks:move', (_e, id: string, status: string) => projects.activeStore().moveTask(id, status))
-  handle('tasks:update', (_e, id: string, patch: TaskPatch) => projects.activeStore().editTask(id, patch ?? {}))
-  handle('tasks:remove', (_e, id: string) => projects.activeStore().deleteTask(id))
 
   // Глобальные задачи активного проекта (docs/nested-kanban.md). Изменения — в board:changed.
   handle('globalTasks:list', () => (projects.active() ? projects.activeStore().listGlobalTasks() : []))
@@ -1132,6 +1129,14 @@ function initializeDesktop(): void {
   // До первого запуска агентов: system prompt прошлых запусков на Windows (`win32Launch`) больше никто не читает.
   pruneLaunchTempFiles()
   projects = new ProjectManager(app.getPath('userData'))
+  boardCommands = createBoardCommands({
+    project: id => projects.get(id) ? {
+      store: projects.store(id), roles: () => projects.resolveRun(id), agents: () => projectAgents(id)
+    } : undefined,
+    authorize: context => Boolean(win && !win.isDestroyed() && context.clientId === `desktop:${win.webContents.id}`
+      && context.actor.kind === 'operator' && context.actor.id === 'local-user'),
+    selection: createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
+  })
   syncMainAppearance()
   setMainLocale(projects.settings().language)
   refreshApplicationMenu()

@@ -2,6 +2,12 @@ import type ru from './ru'
 
 // Английские тексты main: ровно те же ключи, что в ru.ts (лишний или пропущенный — ошибка типа).
 export default {
+  'command.invalidContext': 'Invalid command context.',
+  'command.forbidden': 'Access to this command is denied.',
+  'command.invalidInput': 'Invalid command field: {field}.',
+  'command.projectNotFound': 'Project “{projectId}” was not found.',
+  'command.taskNotFound': 'Task “{taskId}” was not found in the selected project.',
+  'command.rejected': 'The command failed: {reason}.',
   'runtime.startupTitle': 'Could not start Orca',
   'runtime.profileBusy': 'This Orca profile is already open in another process. Close it before starting Desktop.',
   'runtime.profileUnavailable': 'Could not acquire profile ownership: the local endpoint is occupied or unavailable.',

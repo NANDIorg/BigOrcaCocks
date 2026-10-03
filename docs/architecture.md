@@ -146,6 +146,14 @@ human/cli/app; операции синхронны и не держат глоб
 Это application API owner, пока без сетевого transport, revision/idempotency/replay
 и async actor sequencing. Legacy agent socket мигрирует отдельно.
 
+Desktop `main/board-commands.ts` регистрирует прежние `board:get` и четыре `tasks:*`
+без изменения preload/renderer. Он проверяет текущие webContents/mainFrame и только
+потом фиксирует legacy activeId в context этого вызова. Пустая доска без проекта
+остаётся прежней, null/undefined patch совместимо превращается в `{}`. Runtime policy
+отдельно проверяет текущий Desktop client/operator. Старый renderer не присылает
+actor; будущим Web/CLI этот адаптер выбора проекта не нужен. Boundary ошибки
+переводятся main ru/en, вложенный OrcaError выбора роли сохраняет прежний перевод.
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,

@@ -2,6 +2,12 @@
 // получают сокет и CLI: `OrcaError.message` строится отсюда. Порядок — по областям: трей, диалоги, уведомления,
 // ошибки по модулям.
 export default {
+  'command.invalidContext': 'Невалидный контекст команды.',
+  'command.forbidden': 'Нет доступа к команде.',
+  'command.invalidInput': 'Невалидное поле команды: {field}.',
+  'command.projectNotFound': 'Проект «{projectId}» не найден.',
+  'command.taskNotFound': 'Задача «{taskId}» не найдена в выбранном проекте.',
+  'command.rejected': 'Команда не выполнена: {reason}.',
   'runtime.startupTitle': 'Не удалось запустить Orca',
   'runtime.profileBusy': 'Этот профиль Orca уже открыт в другом процессе. Закройте его перед запуском Desktop.',
   'runtime.profileUnavailable': 'Не удалось получить защиту профиля: локальный адрес занят или недоступен.',
