@@ -4,7 +4,7 @@
 
 **Goal:** Перенести существующие structured transports, сессию ассистента и чтение истории в общий runtime, сохранив работу Desktop.
 
-**Architecture:** Runtime владеет процессом/протоколом и состоянием экземпляра сессии; host задаёт сообщения, env, homeDir, executablePath и platform. Desktop сохраняет совместимые facade exports, OrcaError, текущую локализацию и wiring окна. DTO и чистые interfaces находятся в contracts; backend suites идут вместе с реализацией.
+**Architecture:** Runtime владеет процессом/протоколом и состоянием экземпляра сессии; host задаёт сообщения, env, homeDir, executablePath и platform. Desktop сохраняет совместимые facade exports, OrcaError, текущую локализацию и wiring окна. DTO находятся в contracts; host-интерфейсы драйвера — в pure runtime leaf без Node imports; backend suites идут вместе с реализацией.
 
 **Tech Stack:** TypeScript strict, Node 24, node:test, существующие contracts/runtime/Electron; без новых dependencies.
 
@@ -38,40 +38,40 @@
 - Produces: `transcriptEnv(env?: NodeJS.ProcessEnv, homeDir?: string): TranscriptEnv`; optional homeDir сохраняет Desktop defaults и позволяет явный host path.
 - Produces: прежние `AssistantChatCache`, `ChatBuildState`, `applyChatLine`, `emptyChatState`, `chatSnapshot`, `drainChatUpdates`, `chatInputBytes`, `assistantTranscriptPath`, `assistantChatAvailable`, `ASSISTANT_CHAT_MESSAGE_LIMIT`.
 
-- [ ] Написать regressions реальных cache read: история и usage после переписывания файла того же размера/нового mtime должны обновиться; путь определяется явно переданным env/homeDir. Run Desktop cache suites. Expected: FAIL на старом содержимом/отсутствующем homeDir.
-- [ ] Перенести parsers/cache/usage в runtime, заменить shared IPC imports на contracts. Перенести backend tests; ProjectStats E2E оставить Desktop. Исправить invalidation для неизменного размера и изменённого mtime, сохраняя чтение дописанного хвоста и partial-line semantics.
-- [ ] Run runtime typecheck и runtime cache suites; Desktop cache/stats suites и core tests для docs. Expected: PASS.
-- [ ] Commit `refactor: вынести историю ассистента в общий runtime`.
+- [x] Написать regressions реальных cache read: история и usage после переписывания файла того же размера/нового mtime должны обновиться; путь определяется явно переданным env/homeDir. Run Desktop cache suites. Expected: FAIL на старом содержимом/отсутствующем homeDir.
+- [x] Перенести parsers/cache/usage в runtime, заменить shared IPC imports на contracts. Перенести backend tests; ProjectStats E2E оставить Desktop. Исправить invalidation для неизменного размера и изменённого mtime, сохраняя чтение дописанного хвоста и partial-line semantics.
+- [x] Run runtime typecheck и runtime cache suites; Desktop cache/stats suites и core tests для docs. Expected: PASS.
+- [x] Commit `refactor: вынести историю ассистента в общий runtime`.
 
 ## Task 2: Общие structured transports
 
-**Files:** modify `packages/contracts/src/conversation.ts`, Desktop `shared/assistant-conversation.ts`, `main/assistant-conversation.ts` и tests; create runtime `src/assistant-conversation.ts`, `src/assistant-conversation-messages.ts`, `test/assistant-conversation.test.ts`, `test/conversation-services.test.ts`, `test/conversation-fixture.ts`, `test/fixtures/assistant-cli.mjs`; modify runtime `src/index.ts`, docs architecture/assistant-chat. Перенести прежний fixture из Desktop после проверки consumers.
+**Files:** modify Desktop `shared/assistant-conversation.ts`, `main/assistant-conversation.ts` и tests; create runtime `src/assistant-conversation.ts`, `src/assistant-conversation-types.ts`, `src/assistant-conversation-messages.ts`, `test/assistant-conversation.test.ts`, `test/conversation-services.test.ts`, `test/conversation-fixture.ts`, `test/fixtures/assistant-cli.mjs`; modify runtime `src/index.ts`, docs architecture/assistant-chat. Перенести прежний fixture из Desktop после проверки consumers.
 
 **Interfaces:**
-- Produces contracts: прежние pure `AssistantConversation` и `ConversationOptions` без Node types.
+- Produces runtime pure leaf: прежние `AssistantConversation` и `ConversationOptions` без Node imports. DTO contracts не меняются (Ruling: boundary guard запрещает provider interfaces в public contracts).
 - Produces: `AssistantTransportMessageKey` — union существующих assistantTransport keys; `AssistantTransportMessages(key, params?: Record<string, string | number>): string`.
 - Produces: `ConversationServicesDeps { messages: AssistantTransportMessages; env(): NodeJS.ProcessEnv; homeDir: string; executablePath: string; platform: NodeJS.Platform }`.
 - Produces: `createAssistantConversationServices(deps)` с `create(options: ConversationOptions): AssistantConversation` и `structuredLaunch(command: string, args: string[], env: NodeJS.ProcessEnv, platform?: NodeJS.Platform): { command: string; args: string[]; env: NodeJS.ProcessEnv }`.
 - Desktop facade сохраняет `createAssistantConversation(options)` и `structuredLaunch(command,args,env,platform?)`.
 
-- [ ] Написать service regressions через public package entry: два host env/messages, реальные permission/send/cancel, отсутствие Electron/DISPLAY, configured Node для Windows shim. Run новых tests. Expected: FAIL — shared factory отсутствует.
-- [ ] Перенести существующий engine, внедрить сообщения и host process config. Сохранить argv/env sanitization, очередь notifications до ACK, handoff, provider request scoping и собственное cleanup. Перенести backend suites и fixture, оставить Desktop renderer/provider integration и проверки локализации facade.
-- [ ] Run contracts/runtime/Desktop typecheck, provider/services и Desktop compatibility suites; core docs tests. Expected: PASS.
-- [ ] Commit `refactor: вынести транспорты чата в общий runtime`.
+- [x] Написать service regressions через public package entry: два host env/messages, реальные permission/send/cancel, отсутствие Electron/DISPLAY, configured Node для Windows shim. Run новых tests. Expected: FAIL — shared factory отсутствует.
+- [x] Перенести существующий engine, внедрить сообщения и host process config. Сохранить argv/env sanitization, очередь notifications до ACK, handoff, provider request scoping и собственное cleanup. Перенести backend suites и fixture, оставить Desktop renderer/provider integration и проверки локализации facade.
+- [x] Run contracts/runtime/Desktop typecheck, provider/services и Desktop compatibility suites; core docs tests. Expected: PASS.
+- [x] Commit `refactor: вынести транспорты чата в общий runtime`.
 
 ## Task 3: Общая сессия и Desktop binding
 
 **Files:** create `packages/runtime/src/assistant-session.ts`, `packages/runtime/test/assistant-session.test.ts`; modify runtime `src/index.ts`, Desktop `main/assistant-session.ts`/tests; docs architecture/assistant-chat.
 
 **Interfaces:**
-- Consumes Task 2 contracts `AssistantConversation`, `ConversationOptions`, updates/answers.
+- Consumes Task 2 runtime pure `AssistantConversation`; DTO updates/answers из contracts.
 - Produces: `AssistantSessionDependencies` с прежними callbacks settings/assertUsable/create/startTerminal/isAlive/killTerminal/onUpdate и обязательными `errors { unknownPty(): Error; emptyText(): Error }`.
 - Produces: `AssistantSession(deps)` с прежними open/available/snapshot/send/interrupt/respond/dispose. Desktop subclass добавляет существующие OrcaError factories, сохраняя constructor callers.
 
-- [ ] Написать shared session regressions: reset/stale events, сохранение старого диалога при guard refusal, два независимых instances и host error identity, terminal exit/dispose, invalid empty send. Run новых tests. Expected: FAIL — shared class отсутствует.
-- [ ] Перенести class/state/revision; заменить OrcaError на deps.errors. Перенести backend tests, сохранить Desktop error/i18n совместимость. Main wiring остаётся совместимым.
-- [ ] Run runtime/Desktop session/provider compatibility suites, `pnpm verify`. Expected: PASS, нет новых schemas/commands/UI.
-- [ ] Commit `refactor: перенести сессию ассистента в общий runtime`.
+- [x] Написать shared session regressions: reset/stale events, сохранение старого диалога при guard refusal, два независимых instances и host error identity, terminal exit/dispose, invalid empty send. Run новых tests. Expected: FAIL — shared class отсутствует.
+- [x] Перенести class/state/revision; заменить OrcaError на deps.errors. Перенести backend tests, сохранить Desktop error/i18n совместимость. Main wiring остаётся совместимым.
+- [x] Run runtime/Desktop session/provider compatibility suites, `pnpm verify`. Expected: PASS, нет новых schemas/commands/UI.
+- [x] Commit `refactor: перенести сессию ассистента в общий runtime`.
 
 ## Завершение и оставшийся объём
 

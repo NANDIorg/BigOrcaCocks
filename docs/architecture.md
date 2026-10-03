@@ -155,7 +155,8 @@ Native backend импортируется только тестовым host Des
 завершается после assertions с ненулевым кодом при ошибке. Это проверка исполнения
 без окна, а не установленного Linux артефакта или native cleanup долгоживущего owner.
 
-Это часть этапа исполнения. Dialog drivers и AssistantSession пока в Desktop.
+Это часть этапа исполнения. Dialog drivers и AssistantSession вынесены в runtime;
+Desktop подключает их через host adapters.
 Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
 Текущие registry input/resize — внутренний доверенный API хоста; observer subscription
@@ -212,7 +213,15 @@ ConversationOptions находятся в pure runtime leaf без Node imports;
 в contracts. Прежний shared-путь типов временно переэкспортирует этот leaf,
 сохраняя совместимость и не импортируя Node/Electron граф runtime barrel.
 Provider frames, approvals, contextual acceptance, cancellation и terminal-only
-Amp/shell сохраняются. AssistantSession и owner/client lifecycle ещё предстоит.
+Amp/shell сохраняются.
+
+`AssistantSession` в runtime владеет одним экземпляром диалога/terminal fallback и
+его revision. Настройки, guard агента, создание conversation, терминальный backend
+и публикация событий приходят от host. Guard выполняется до dispose старого диалога;
+reset/dispose отбрасывает его поздние события. Error factories возвращают ошибки host;
+Desktop subclass добавляет прежние OrcaError keys для socket/IPC. Окно лишь подписано
+на события. Отдельные сессии/hosts не разделяют state. Полный registry диалогов,
+persistence, idempotent send, replay и owner/client lifecycle ещё предстоят.
 
 Читатели истории `transcripts.ts` и `assistant-chat.ts` уже находятся в runtime;
 Desktop оставляет совместимые re-exports. `TranscriptCache` и `AssistantChatCache`
