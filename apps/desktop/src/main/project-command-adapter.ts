@@ -10,12 +10,19 @@ export interface DesktopProjectCommandHost<Event> {
 
 export type DesktopCommandHandle<Event> = <Args extends unknown[]>(channel: string, callback: (event: Event, ...args: Args) => unknown) => void
 
+function translateCommandError(error: unknown): never {
+  if (!(error instanceof CommandError)) throw error
+  if (error.code === 'command.rejected' && error.cause instanceof Error) throw error.cause
+  if (error.code === 'command.invalidInput' && error.details.field === 'images' && error.cause instanceof Error) throw error.cause
+  throw new OrcaError(error.code, error.details)
+}
+
 export function invokeDesktopCommand<T>(operation: () => T): T {
-  try { return operation() } catch (error) {
-    if (!(error instanceof CommandError)) throw error
-    if (error.code === 'command.rejected' && error.cause instanceof Error) throw error.cause
-    if (error.code === 'command.invalidInput' && error.details.field === 'images' && error.cause instanceof Error) throw error.cause
-    throw new OrcaError(error.code, error.details)
+  try {
+    const result = operation()
+    return result instanceof Promise ? result.catch(translateCommandError) as T : result
+  } catch (error) {
+    return translateCommandError(error)
   }
 }
 

@@ -9,6 +9,10 @@ if (mode === 'claude-child') {
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
   if (log) appendFileSync(log, JSON.stringify({ fixtureChildPid: child.pid }) + '\n')
 }
+if (mode === 'acp-unknown-client-delayed') {
+  if (log) appendFileSync(log, JSON.stringify({ fixtureHeldPid: process.pid }) + '\n')
+  setInterval(() => {}, 1000)
+}
 let writeTail = Promise.resolve()
 const write = (value) => {
   const line = JSON.stringify(value) + '\n'
@@ -120,8 +124,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       rpc(value.id, { stopReason: 'end_turn' })
       return
     }
-    if (mode === 'acp-unknown-client') {
+    if (mode === 'acp-unknown-client' || mode === 'acp-unknown-client-delayed') {
       write({ jsonrpc: '2.0', id: 'unsupported-client', method: 'terminal/create', params: { sessionId: 'session-1', command: 'sh' } })
+      // Реальный CLI занят после отправки запроса и ещё не читает ответ из stdin.
+      if (mode === 'acp-unknown-client-delayed') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250)
     } else if (currentPrompt === 'question') {
       write({ jsonrpc: '2.0', id: 'cursor-question', method: 'cursor/ask_question', params: { toolCallId: 'question-tool', title: 'Choose project', questions: [{ id: 'project', prompt: 'Which project?', allowMultiple: false, options: [{ id: 'one', label: 'One' }, { id: 'two', label: 'Two' }] }] } })
     } else {

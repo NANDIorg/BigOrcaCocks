@@ -130,6 +130,7 @@ class Conversation implements AssistantConversation {
   private codexDeferred: JsonObject[] = []
   private promptAcceptance?: PromptAcceptance
   private killTimer?: ReturnType<typeof setTimeout>
+  private replyFlushTimer?: ReturnType<typeof setTimeout>
 
   constructor(options: ConversationOptions, deps: ConversationServicesDeps) {
     this.options = options
@@ -344,11 +345,17 @@ class Conversation implements AssistantConversation {
     this.clearInteractions(false)
     this.rejectRequests(new Error(message))
     this.setState('error', message)
-    if (flushReply) setTimeout(() => this.stopChild(), 50).unref()
-    else this.stopChild()
+    if (flushReply && !this.closed && this.child && !this.child.stdin.destroyed && this.child.stdin.writable) {
+      // EOF идёт после уже записанного ответа: занятый CLI сможет прочитать его.
+      // Если CLI не завершится сам, ограничиваем ожидание перед остановкой своей группы.
+      this.child.stdin.end()
+      this.replyFlushTimer = setTimeout(() => this.stopChild(), 1500)
+      this.replyFlushTimer.unref()
+    } else this.stopChild()
   }
 
   private stopChild(): void {
+    if (this.replyFlushTimer) { clearTimeout(this.replyFlushTimer); this.replyFlushTimer = undefined }
     const child = this.child
     if (!child?.pid || this.killTimer) return
     const pid = child.pid
@@ -468,6 +475,7 @@ class Conversation implements AssistantConversation {
     this.child.on('error', (error: Error) => this.fail(this.deps.messages('assistantTransport.startFailed', { command, error: error.message })))
     this.child.on('close', (code: number | null) => {
       if (!this.closed && !this.failed) this.fail(this.deps.messages('assistantTransport.processExited', { command, code: code ?? 'signal', detail: this.stderr.trim() }).trim())
+      else if (this.replyFlushTimer) this.stopChild()
     })
     if (this.protocol === 'claude') await this.control('initialize', { hooks: null }, HANDSHAKE_TIMEOUT)
     else if (this.protocol === 'codex') {

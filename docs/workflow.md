@@ -1335,6 +1335,8 @@ Settings/types/templates IPC подключены к тому же manager, UI/p
 проверяет текущую identity проекта и dispatch; async executor сохраняет авторство
 только внутри синхронного commit. Это не перенос workflow Git effects: очередь
 по commonDir и их EffectToken реализуются следующим рубежом.
+Desktop и socket уже используют общий rules service; прежние stats IPC вызывают
+scoped commands, которые отклоняют поздний результат удалённого проекта.
 
 ```
 orca-board workflow show [--run <id>]     # этапы и переходы: снимок прогона (координатору --run из $ORCA_RUN_ID) или граф проекта

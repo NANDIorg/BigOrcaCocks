@@ -45,6 +45,8 @@ Desktop profile adapter передаёт explicit id при настройке �
 транскриптов работает с detached snapshot; найденный session id не применяется
 после удаления проекта или замены dispatch. Полноценные async Git effects остаются
 следующим рубежом, существующий workflow engine не заменён.
+Desktop stats:global вызывает этот общий API с explicit project id; shared deps
+сохраняют названия ролей из снимка удалённого типа и не выбирают соседнюю доску.
 
 Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
 channels. UI/preload не меняются, active selection переводится в явный context

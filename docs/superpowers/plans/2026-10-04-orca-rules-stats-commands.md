@@ -48,15 +48,17 @@ Task1: targeted34/34, runtime764/764, contracts50/50, core943/943; contracts/run
 
 ### Task 2: Desktop IPC/socket и compatibility facades
 
-**Files:** modify Desktop `rules.ts`, `stats.ts` как common facades, main/index.ts и project-command-adapter.ts (async error translation); create `rules-stats-commands.ts` и `.test.ts`; четыре docs/dashboard/план обновляются вместе с подключением.
+**Files:** modify Desktop `rules.ts`, `stats.ts` как common facades, main/index.ts и project-command-adapter.ts (async error translation); create `rules-stats-commands.ts` и `.test.ts`; runtime stats-commands.ts/test получают statsProjectDeps для общих названий ролей/columns; четыре docs/dashboard/план обновляются вместе с подключением. Обнаруженная полным verify гонка ACP reply/kill исправляется в assistant-conversation.ts с регрессией настоящего занятого CLI в assistant-conversation.test.ts/fixtures/assistant-cli.mjs.
 
 **Interfaces:**
 - `registerDesktopRulesStatsCommands(handle, host)` регистрирует ровно `rules:list/save`, `stats:project/task/global`; RuleCommands/StatsCommands и verified caller внедряются.
 - Rules сохраняют legacy active selection, stats — explicit projectId. Common stats deps захватывают project/store identity; socket rules использует общий facade без новых agent полномочий.
 - `invokeDesktopCommand` переводит синхронную и Promise ошибку без удержания общего attribution через await.
 
-- [ ] **Step 1:** Failing adapter tests с real services/manager/файлами/транскриптами: caller до selection, A/B и legacy DTO, invalid range/id, sync/async ru/en ошибки, удаление проекта во время чтения.
-- [ ] **Step 2:** `pnpm --filter @orca-board/desktop exec node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/rules-stats-commands.test.ts`; Expected FAIL missing register factory при успешном импорте.
-- [ ] **Step 3:** Подключить пять IPC к общим commands, заменить facades; оставить protocol/caller authorization прежними.
-- [ ] **Step 4:** Desktop affected rules/stats/socket suites, typecheck, полный `pnpm verify`; Expected PASS.
-- [ ] **Step 5:** Docs/diff/staged diff/commit, task-done affected suite; продолжить оставшийся application API без handoff.
+- [x] **Step 1:** Failing adapter tests с real services/manager/файлами/транскриптами: caller до selection, A/B и legacy DTO, invalid range/id, sync/async ru/en ошибки, удаление проекта во время чтения.
+- [x] **Step 2:** `pnpm --filter @orca-board/desktop exec node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/rules-stats-commands.test.ts`; Expected FAIL missing register factory при успешном импорте.
+- [x] **Step 3:** Подключить пять IPC к общим commands, заменить facades; оставить protocol/caller authorization прежними.
+- [x] **Step 4:** Desktop affected rules/stats/socket suites, typecheck, полный `pnpm verify`; Expected PASS.
+- [x] **Step 5:** Docs/diff/staged diff/commit, task-done affected suite; продолжить оставшийся application API без handoff.
+
+Task2: adapter8/8 + старые rules/stats/socket =40/40; full verify3764/3764 (scripts49/core943/CLI38/contracts50/runtime766/Desktop1918), typecheck/build PASS, fail/cancel/skip0. ACP busy regression RED lost reply → GREEN bounded EOF grace; код и все прежние suites остаются включены.

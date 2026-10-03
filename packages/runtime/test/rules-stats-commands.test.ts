@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DEFAULT_COLUMNS } from '@orca-board/core'
+import { DEFAULT_COLUMNS, DEFAULT_ROLES } from '@orca-board/core'
 import * as runtime from '../src/index.ts'
 import { profileFixture, operator } from './profile-command-test-host.ts'
 
@@ -148,4 +148,21 @@ it('статистика: изменение соседней задачи не 
     cache.gate.resolve(); await pending
     assert.equal(store.getDispatch(d.id)?.sessionId, 'found')
   } finally { cache.gate.resolve(); f.close() }
+})
+it('общие stats deps захватывают названия ролей default и снимка удалённого типа', () => {
+  assert.equal(typeof runtime.statsProjectDeps, 'function')
+  const f = fixture()
+  try {
+    const roles = structuredClone(DEFAULT_ROLES); roles.find(r => r.id === 'developer')!.title = 'Default developer'
+    f.manager.patchTaskType('general', { roles })
+    const historic = f.manager.saveTaskType({ title: 'Historic', settings: { roles: [{ id: 'old-role', title: 'Historic role', agent: 'claude' }] } })
+    f.manager.store(f.b.id).createGlobalTask({ title: 'История', type: f.manager.runType(f.b.id, historic.id) })
+    f.manager.deleteTaskType(historic.id)
+    const deps = runtime.statsProjectDeps(f.manager, runtime.statsProject(f.manager, f.b.id)!, { isAlive: () => false })
+    assert.equal(deps.repoRoot, f.b.root); assert.equal(deps.store, f.manager.store(f.b.id))
+    assert.equal(deps.roleTitle('developer'), 'Default developer')
+    assert.equal(deps.roleTitle('old-role'), 'Historic role')
+    roles.find(r => r.id === 'developer')!.title = 'Later'; f.manager.patchTaskType('general', { roles })
+    assert.equal(deps.roleTitle('developer'), 'Default developer')
+  } finally { f.close() }
 })

@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
-import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, withStatusSource, STATS_RANGES, type StatsRange, type ProjectStats, type TaskStats, type GlobalTaskStats, type Attachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type ResolvedRunType } from '@orca-board/core'
+import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, withStatusSource, type Attachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type ResolvedRunType } from '@orca-board/core'
 import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, pruneLaunchTempFiles, type WorkerEnvContext } from './worker'
 import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
@@ -17,14 +17,15 @@ import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
 import { registerDesktopWorkerCommands } from './worker-commands'
 import { registerDesktopReviewRequestCommands } from './review-request-commands'
 import { registerDesktopProfileCommands } from './profile-commands'
+import { registerDesktopRulesStatsCommands } from './rules-stats-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities } from './attachments'
@@ -40,7 +41,7 @@ import {
 } from './workflow-run'
 import { docSourceRoot, docTasks, listDocGroups, readDoc } from './docs'
 import { docsOpenPath, docsPreviewUrl, docsRevealPath, readDocBytes, viewDoc } from './docs-view'
-import { listRules, readRule, writeRule } from './rules'
+import { ruleServices, readRule, writeRule } from './rules'
 import { listProjectDir, resolveProjectPath } from './project-files'
 import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
 import { mergeTarget, RunBranchSync } from './run-branch'
@@ -51,7 +52,7 @@ import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
 import { BUILTIN_PROMPTS } from './prompts'
 import { createTray, refreshTray } from './tray'
-import { projectStats, taskStats, globalTaskStats, type StatsDeps } from './stats'
+import { statsServices } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
 import type { AppSettings, AppSettingsPatch, UpdateInstallWhen, RequestFocus, PtySpawnOptions, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
@@ -113,6 +114,8 @@ let humanRequestCommands: HumanRequestCommands
 let reviewOperations: ReturnType<typeof createReviewOperations>
 let profileCommands: ProfileCommands<AppSettings, AppSettingsPatch>
 let projectConfigCommands: ProjectConfigCommands
+let ruleCommands: RuleCommands
+let statsCommands: StatsCommands
 const taskWorkerLifecycle = createTaskWorkerLifecycle({ isAlive, killPty })
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
@@ -366,43 +369,6 @@ function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
 /** Агенты с учётом настроек проекта; refresh — пересканировать PATH. */
 function projectAgents(projectId: string, refresh = false): AgentInfo[] {
   return agentInfos(projects.get(projectId)?.enabledAgents, refresh)
-}
-
-/**
- * Статистика проекта `projectId` за период. Названия ролей — из типов всех его глобальных задач и типа по
- * умолчанию: роль удалённого типа остаётся в снимке прогона.
- */
-function statsDeps(projectId: string): StatsDeps & { projectId: string } {
-  const p = resolveProject(projectId)
-  const titles = new Map<string, string>()
-  const addRoles = (runId?: string): void => {
-    for (const r of projects.roles(p.id, runId)) if (!titles.has(r.id)) titles.set(r.id, r.title)
-  }
-  addRoles()
-  for (const run of p.store.snapshot().runs) addRoles(run.id)
-  return {
-    projectId: p.id,
-    store: p.store,
-    repoRoot: p.root,
-    columns: projects.columns(p.id),
-    roleTitle: (id) => titles.get(id),
-    isAlive
-  }
-}
-
-function collectProjectStats(projectId: string, range: StatsRange): Promise<ProjectStats> {
-  return projectStats({ ...statsDeps(projectId), range })
-}
-
-function collectTaskStats(projectId: string, taskId: string): Promise<TaskStats> {
-  const deps = statsDeps(projectId)
-  // Граф прогона задачи — только для названий этапов; без прогона («Входящие») берётся граф типа по умолчанию.
-  const workflow = runnableWorkflow(projects.resolveRun(deps.projectId, deps.store.getTask(taskId)?.runId).workflow)
-  return taskStats({ ...deps, taskId, ...(workflow ? { workflow } : {}) })
-}
-
-function collectGlobalTaskStats(projectId: string, runId: string): Promise<GlobalTaskStats> {
-  return globalTaskStats({ ...statsDeps(projectId), runId })
 }
 
 /** Снимки показа проекта (`<userData>/showcase`, `showcase-snapshot.ts`): пишет `worker.done`, читают IPC `showcase:*`. */
@@ -952,16 +918,11 @@ function registerIpc(): void {
   handle('files:reveal', async (_e, projectId: unknown, path: unknown) => {
     shell.showItemInFolder(await resolveProjectPath(projectRoot(String(projectId)), path, false))
   })
-  // Правила — всегда корень репозитория проекта; имя сверяется с белым списком в rules.ts.
-  handle('rules:list', () => listRules(resolveProject().root))
-  handle('rules:save', (_e, name: unknown, text: unknown) => writeRule(resolveProject().root, name, text))
-  // Сбор по запросу: снапшот store + транскрипты агентов (docs/architecture.md, «Статистика»).
-  handle('stats:project', (_e, projectId: string, range: StatsRange) => {
-    if (!STATS_RANGES.includes(range)) throw new OrcaError('stats.badRange', { range: String(range), expected: STATS_RANGES.join(' | ') })
-    return collectProjectStats(projectId, range)
+  registerDesktopRulesStatsCommands<IpcMainInvokeEvent>(handle, {
+    rules: ruleCommands, stats: statsCommands, activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
   })
-  handle('stats:task', (_e, projectId: string, taskId: string) => collectTaskStats(projectId, taskId))
-  handle('stats:global', (_e, projectId: string, runId: string) => collectGlobalTaskStats(projectId, runId))
 }
 
 function initializeDesktop(): void {
@@ -979,6 +940,12 @@ function initializeDesktop(): void {
     settingsKeys: ['keepInBackground', 'updates'], workflowAssistant: createWorkflowAssistantServices({ messages: { Error: OrcaError } }),
     exportMeta: () => ({ appVersion: app.getVersion(), exportedAt: new Date().toISOString() }) })
   projectConfigCommands = createProjectConfigCommands({ manager: () => projects, authorize })
+  ruleCommands = createRuleCommands({ project: id => projects.get(id), authorize, rules: ruleServices })
+  statsCommands = createStatsCommands({ project: id => statsProject(projects, id), authorize,
+    isCurrent: project => isStatsProjectCurrent(projects, project), stats: statsServices,
+    messages: { Error: OrcaError }, deps: project => statsProjectDeps(projects, project, { isAlive }),
+    workflow: (project, taskId) => runnableWorkflow(projects.resolveRun(project.id, project.store.getTask(taskId)?.runId).workflow)
+  })
   const selection = createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
   const removal = {
     resources: executionResources, dataDir: app.getPath('userData'),

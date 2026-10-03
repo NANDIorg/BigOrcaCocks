@@ -304,7 +304,7 @@ Caller проверяется до selection/manager/native dialogs; explicit pr
 DTO/error. Settings refresh menu/tray/updater выполняется после успешной записи.
 `main/assistant-workflow.ts` — совместимый factory facade; socket сохраняет прежние
 trusted ProjectManager methods и agent policy. Selection/native dialogs не входят в
-общий API. Git проекта, files/docs/stats/dialog/PTY commands переносятся далее.
+общий API. Git проекта, files/docs/dialog/PTY commands переносятся далее.
 
 ### Общие правила проекта и статистика
 
@@ -324,7 +324,14 @@ task/gate/run и периоды прежние. Найденный Codex session
 синхронным commit и выдачей detached результата; устаревший проект — `command.stale`.
 Источник human/cli/app охватывает только commit, не чтение через await. Это первая
 async граница; EffectToken для workflow и очередь Git ещё не реализованы.
-Desktop IPC/socket подключаются следующим шагом; их старые facades пока работают.
+`statsProjectDeps` собирает default/run role titles (включая snapshot удалённого типа)
+и отделяет columns; Desktop передаёт только живость процессов. Desktop adapter
+`main/rules-stats-commands.ts` подключает прежние rules:list/save и
+stats:project/task/global. Caller проверяется до legacy selection; rules сохраняют
+выбор окна, stats используют explicit project id и работают без selection.
+Sync/Promise ошибки переводятся одинаково через общий Desktop command adapter.
+`main/rules.ts`/`stats.ts` — compatibility facades; socket project.rules.* читает
+и пишет через тот же rules service, HELP/envelope и agent policy прежние.
 
 ### Общий запуск агентов и терминальные сессии
 
@@ -1583,6 +1590,10 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
 
 ## Ассистент (`main/assistant-session.ts`, `main/assistant-conversation.ts`, `skills/assistant.md`)
 
+ACP при неподдерживаемом запросе отдаёт JSON-RPC `-32601` и закрывает stdin после ответа.
+Занятый CLI получает время прочитать очередь; зависший процесс завершается по ограниченному
+таймауту вместе со своей process group, без завершения чужих процессов.
+
 Ассистент управляет доской через `orca-board`: задачи, проекты, настройки и запуск агентов. Он один на приложение и не принадлежит типу задачи или текущему проекту; явный `--project` адресует проект, без флага CLI берёт активный.
 
 - **Настройки** — `AppSettings.assistant {agent, model?, effort?, systemPrompt?, extraArgs?}` в `projects.json`. Нормализация и мерж принадлежат `main/assistant.ts`; смена агента сбрасывает прежние модель/effort/extraArgs, если новые не заданы тем же патчем. Пустая строка очищает поле; инструкции и флаги хранятся как введены. Негодные флаги при загрузке выпадают, при сохранении дают локализованную ошибку; старый патч без extraArgs оставляет прежнее значение. Перед запуском assistantLaunch разбирает строку в argv, без shell. Настройки действуют со следующего «Нового диалога». Системные инструкции, дополнительные инструкции роли и язык собирает `assistantLaunch`; собственных project rules у ассистента нет.
@@ -1980,7 +1991,7 @@ Claude Code `BASH_DEFAULT_TIMEOUT_MS=1800000`, `BASH_MAX_TIMEOUT_MS=3600000` (д
     Просмотр — `Markdown variant="doc"`; «Редактировать» — textarea с исходником, «Сохранить» (⌘S/Ctrl+S) / «Отмена»
     (Esc), признак несохранённых изменений (`isDirty` без учёта CRLF/LF), уход с черновика — через `confirm`.
     Нет файла — «Создать» открывает редактор с заготовкой `RULE_TEMPLATES` (CLAUDE.md — каркас «Нельзя / Обязательно /
-    Стиль кода / Проверки перед сдачей / Git и ветки», AGENTS.md — отсылка к CLAUDE.md). Пишет main (`src/main/rules.ts`):
+    Стиль кода / Проверки перед сдачей / Git и ветки», AGENTS.md — отсылка к CLAUDE.md). Пишет runtime (`packages/runtime/src/rules.ts`, main facade `src/main/rules.ts`):
     имя только из белого списка `RULE_FILE_NAMES` (`shared/ipc.ts`), симлинк — только внутрь проекта (пишется цель),
     запись атомарная (tmp рядом + `rename`, права сохраняются), перевод строк — как в файле (renderer получает `\n` и
     `eol`), не больше 1 МБ. Ничего не коммитит. Старые main/preload — `rulesApi()` / `rulesStaleMessage()`.
@@ -3097,9 +3108,9 @@ Renderer вызывает канал через проверку наличия 
   плюс `isAlive`, `roleTitle`, `dayKey` (по умолчанию `localDayKey`). `packages/core/src/pricing.ts` — `MODEL_PRICES`,
   `findModelPrice`, `tokensCost`.
 - `packages/runtime/src/transcripts.ts` — поиск и разбор транскриптов (`collectSessionUsage`, `parseClaudeLine`, `parseCodexLine`),
-  кэш `TranscriptCache`; `src/main/stats.ts` — `projectStats(deps)`: снапшот → транскрипты → `buildProjectStats`,
-  найденные id сессий codex → `store.setDispatchSessionId`. `registerIpc` (`collectProjectStats` в `src/main/index.ts`)
-  добавляет названия ролей из типов всех глобальных задач проекта и `isAlive` из `pty.ts`.
+  кэш `TranscriptCache`; `packages/runtime/src/stats.ts` — `projectStats(deps)` (main facade `src/main/stats.ts`): снапшот → транскрипты → `buildProjectStats`,
+  найденные id сессий codex → `store.setDispatchSessionId`. `StatsCommands` и общий `statsProjectDeps` добавляют названия ролей из типов всех
+  глобальных задач проекта; Desktop передаёт `isAlive` из `pty.ts`.
 - Запись сессий: `startWorker` → `store.startDispatch(taskId, ptyId, id, {roleId, agent, model, sessionId})`;
   `startCoordinator` → `store.setRunPty(runId, ptyId, agent, {roleId, agent, model, sessionId})` добавляет `AgentSession`
   в `Run.coordinatorSessions`, выход PTY — `store.coordinatorExited(runId, ptyId)` (`endedAt`).
@@ -3253,8 +3264,7 @@ $2,50 запись кэша / $10 выход за миллион, провере
 подзадач, сортировка как в проекте). Своих `stages`, `dispatches`, `rejections`, `coordinatorQuestions` у глобальной задачи нет.
 
 IPC `stats:task(projectId, taskId)` → `TaskStats` и `stats:global(projectId, runId)` → `GlobalTaskStats`
-(`OrcaApi.stats.task` / `.global`; `taskStats` / `globalTaskStats` в `apps/desktop/src/main/stats.ts`, обвязка — `collectTaskStats` /
-`collectGlobalTaskStats` в `main/index.ts`). Собираются как `stats:project`, но `include` в `collectSessionUsage` отбирает только
+(`OrcaApi.stats.task` / `.global`; `taskStats` / `globalTaskStats` в `packages/runtime/src/stats.ts`, команды — `StatsCommands.task/global`, Desktop adapter `main/rules-stats-commands.ts`). Собираются как `stats:project`, но `include` в `collectSessionUsage` отбирает только
 сессии задачи и её проверок (для глобальной — подзадач прогона и его координатора): транскрипты других задач не читаются.
 Кэш транскриптов общий с проектом, найденные id сессий codex пишутся в store (`setDispatchSessionId`). Граф для названий этапов
 (`workflow`) main берёт из типа прогона задачи. UI — «Интерфейс — статистика задачи» ниже.

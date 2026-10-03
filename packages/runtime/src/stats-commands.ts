@@ -17,6 +17,18 @@ export function isStatsProjectCurrent(manager: StatsManager, project: StatsProje
   return manager.get(project.id) === project.registration && project.registration.root === project.root
     && manager.loadedStores().some(([id, store]) => id === project.id && store === project.store)
 }
+
+export function statsProjectDeps(manager: Pick<RuntimeProjectManager, 'roles' | 'columns'>, project: StatsProject,
+  host: Pick<StatsDeps, 'isAlive' | 'now' | 'env' | 'cache'>): StatsDeps {
+  const titles = new Map<string, string>()
+  const addRoles = (runId?: string) => {
+    for (const role of manager.roles(project.id, runId)) if (!titles.has(role.id)) titles.set(role.id, role.title)
+  }
+  addRoles()
+  for (const run of project.store.snapshot().runs) addRoles(run.id)
+  return { ...host, store: project.store, repoRoot: project.root, columns: structuredClone(manager.columns(project.id)),
+    roleTitle: id => titles.get(id) }
+}
 export interface StatsCommandHost extends AsyncProjectCommandHost<StatsProject, StatsCommandName> {
   stats: ReturnType<typeof createStatsServices>
   messages: StatsMessages

@@ -215,6 +215,17 @@ test('unknown ACP blocking client request returns method-not-found and a capabil
   assert.ok(wire().some((frame) => frame.id === 'unsupported-client' && (frame.error as { code: number }).code === -32601))
 })
 
+test('unsupported ACP reply reaches a busy CLI before the owned process is stopped', async (t) => {
+  const { engine, wire } = fixture(t, 'acp-unknown-client-delayed', 'gemini')
+  await engine.send('unknown')
+  await until(() => engine.snapshot().status === 'error')
+  await until(() => wire().some((frame) => frame.id === 'unsupported-client' && frame.error !== undefined))
+  assert.ok(wire().some((frame) => frame.id === 'unsupported-client' && (frame.error as { code: number }).code === -32601))
+  const pid = wire().find((frame) => typeof frame.fixtureHeldPid === 'number')?.fixtureHeldPid as number
+  assert.ok(pid > 0)
+  await until(() => { try { process.kill(pid, 0); return false } catch { return true } })
+})
+
 test('unsupported explicit effort and model are visible capabilities, not silently ignored', async (t) => {
   for (const selection of [{ effort: 'high' }, { model: 'selected-model' }]) {
     const { engine } = fixture(t, 'acp', 'goose', selection)
