@@ -3978,3 +3978,10 @@ Unknown JSON metadata сохраняются при read/update того же DT
 Фильтр project id относится только к переданному profile-файлу. Caller уже должен
 владеть profile: revision check не заменяет межпроцессный lock. Backend пока
 синхронный; его подключение к registry/Desktop и async I/O остаются следующим шагом.
+
+Integration проверяет настоящие fixture CLI Claude/Codex в двух profiles и
+завершённый ACP turn: snapshot записывается на диск, процессы закрываются,
+отдельный plain Node читает public repository/history. На reload пути запрещены
+subprocess APIs; DISPLAY/Electron не нужны. Проверяются native ids, все сообщения,
+metadata и неизменные исходные байты. Это проверка общего слоя, а не обещание
+resume или восстановления чата нынешним Desktop.
