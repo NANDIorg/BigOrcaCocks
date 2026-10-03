@@ -50,12 +50,19 @@ export type InteractionAnswer =
   | { kind: 'answers'; answers: { questionId: string; optionIds: string[]; text?: string }[] }
   | { kind: 'cancel' }
 
+/** Native session identity; наличие id само по себе не обещает resume. */
+export interface ConversationBinding {
+  transport: 'claude-stream-json' | 'codex-app-server' | 'acp'
+  sessionId?: string
+}
+
 export interface ConversationSnapshot {
   id: string
   agent: AgentKind
   messages: ConversationMessage[]
   status: ConversationStatus
   interactions: ConversationInteraction[]
+  providerBinding?: ConversationBinding
   error?: string
 }
 

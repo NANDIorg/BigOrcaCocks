@@ -3953,3 +3953,15 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 - SQLite вместо JSON, если событий станет много.
 - Предоставление владельцем Apple credentials и реальная проверка первого signed/notarized выпуска
   на Intel/Apple Silicon, включая переход с ad-hoc 1.0.0 (цепочка подготовлена, см. «Сборка»).
+
+
+### Сохранённая история и provider binding
+
+Snapshot общего driver содержит optional `providerBinding`: transport и native
+sessionId (Claude configured UUID, Codex thread id, ACP session id после handshake).
+Наличие id не означает поддержку resume; frames/permissions не меняются.
+Contracts `DialogRecord` связывает transcript с opaque dialog/project id, revision
+и временем. Чистый `dialogHistory` отдаёт отдельный JSON snapshot только для чтения:
+незавершённый turn → interrupted, старые interactions очищены, running tools →
+cancelled. История не запускает CLI/tools и требует нового разговора. Это общий
+слой рубежа 4; подключение persistence к registry/Desktop ещё предстоит.

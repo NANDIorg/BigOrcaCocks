@@ -7,7 +7,7 @@ import type { AssistantConversation, ConversationOptions } from './assistant-con
 import { CONVERSATION_MESSAGE_LIMIT } from '@orca-board/contracts'
 import type {
   ConversationInteraction, ConversationMessage,
-  ConversationSnapshot, ConversationStatus, ConversationToolCall, ConversationUpdate,
+  ConversationSnapshot, ConversationBinding, ConversationStatus, ConversationToolCall, ConversationUpdate,
   InteractionAnswer, InteractionOption, InteractionQuestion
 } from '@orca-board/contracts'
 
@@ -141,7 +141,11 @@ class Conversation implements AssistantConversation {
   }
 
   snapshot(): ConversationSnapshot {
-    return copy({ id: this.id, agent: this.options.agent, messages: this.messages, status: this.state, interactions: [...this.interactions.values()].map((pending) => pending.value), ...(this.error ? { error: this.error } : {}) })
+    const providerBinding: ConversationBinding = {
+      transport: this.protocol === 'claude' ? 'claude-stream-json' : this.protocol === 'codex' ? 'codex-app-server' : 'acp',
+      ...(this.protocol === 'claude' ? { sessionId: this.id } : this.threadId ? { sessionId: this.threadId } : {})
+    }
+    return copy({ providerBinding, id: this.id, agent: this.options.agent, messages: this.messages, status: this.state, interactions: [...this.interactions.values()].map((pending) => pending.value), ...(this.error ? { error: this.error } : {}) })
   }
 
   async send(text: string, context?: string): Promise<void> {

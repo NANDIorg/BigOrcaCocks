@@ -270,3 +270,15 @@ Claude поддерживает `can_use_tool`, `AskUserQuestion`, `control_canc
 Тесты используют реальные fixture-процессы без inference: фрагментация JSONL, разные протоколы, разрешения, вопросы, отмена, старые запросы, запуск, завершение и Windows launcher. Отдельные тесты проверяют lifecycle одной сессии и гонки IPC-снимка, скрытие служебного вывода, краткие описания действий, обновление их статусов и жизненный цикл индикатора ожидания. Пользователь проверяет UI на рабочем билде самостоятельно.
 
 Протоколы: [Claude Code headless](https://code.claude.com/docs/en/headless), [Codex app-server](https://github.com/openai/codex/tree/main/codex-rs/app-server), [ACP schema](https://agentclientprotocol.com/protocol/schema), [Cursor ACP](https://cursor.com/docs/cli/acp), [Gemini CLI ACP](https://geminicli.com/docs/cli/acp-mode/), [OpenCode ACP](https://opencode.ai/docs/acp/), [Copilot CLI ACP](https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server).
+
+
+### Сохранённая история и provider binding
+
+Snapshot общего driver содержит optional `providerBinding`: transport и native
+sessionId (Claude configured UUID, Codex thread id, ACP session id после handshake).
+Наличие id не означает поддержку resume; frames/permissions не меняются.
+Contracts `DialogRecord` связывает transcript с opaque dialog/project id, revision
+и временем. Чистый `dialogHistory` отдаёт отдельный JSON snapshot только для чтения:
+незавершённый turn → interrupted, старые interactions очищены, running tools →
+cancelled. История не запускает CLI/tools и требует нового разговора. Это общий
+слой рубежа 4; подключение persistence к registry/Desktop ещё предстоит.
