@@ -17,7 +17,7 @@ import {
   WORKFLOW_VERSION, decisionOptions, defaultSubflow, defaultWorkflow, legacyDefaultWorkflow, nextRunStage, nextStage, runStageAction, stageAction,
   startRunStage, startStage, toTaskScopeWorkflow, wfNodeTitle, wfWorkRoleIds, wfWorkStage,
   type WfAction, type WfDecisionOption, type WfNode, type WfNodeType, type WfOutcome, type WfPort, type WfShowcase, type WfStage,
-  type WfWorkStage, type Workflow
+  type WfWorkStage, type WfStep, type Workflow
 } from './workflow.ts'
 import {
   globalStoredColumns, globalColumnKind, globalTaskInProgress, globalTaskStatus, globalTaskTitle, runTypeLockReason,
@@ -1170,14 +1170,8 @@ export class TaskStore {
     return changed
   }
 
-  /**
-   * Переход задачи по воркфлоу прогона: `nextStage` по исходу `outcome` текущего этапа. Задача без `stage`
-   * входит в граф из старта (только `next`). Меняет только `stage` — колонку, воркера, гейт и мерж по
-   * `action` делает исполнитель в main. Событие `stage_changed`, если этап сменился, и `workflow_blocked`,
-   * если дальше идти нельзя. `opts` — роли типа прогона (проверка роли гейта, дефолтный граф) и граф типа для
-   * прогона без снимка (`runWorkflow`).
-   */
-  advanceStage(taskId: string, outcome: WfOutcome, opts: RunWorkflowFallback = {}): { task: Task; action: WfAction } {
+  /** Только расчёт перехода: те же проверки, без записи этапа, событий и отмены подтверждений. */
+  previewAdvanceStage(taskId: string, outcome: WfOutcome, opts: RunWorkflowFallback = {}): WfStep {
     const task = this.mustTask(taskId)
     if (task.answerFor) throw new Error(`задача ${taskId} — задача-ответ, она идёт мимо воркфлоу`)
     if (task.gateFor) throw new Error(`задача ${taskId} — проверка ${task.gateFor.taskId !== undefined ? `задачи ${task.gateFor.taskId}` : `глобальной задачи ${task.gateFor.runId}`}, у неё нет своего этапа`)
@@ -1190,7 +1184,20 @@ export class TaskStore {
     }
     const wf = this.taskWorkflow(task, opts)
     const ctx = this.taskStageCtx(task, onPath, opts)
-    const step = task.stage ? nextStage(wf, task.stage, outcome, ctx) : startStage(wf, ctx)
+    return task.stage ? nextStage(wf, task.stage, outcome, ctx) : startStage(wf, ctx)
+  }
+
+  /**
+   * Переход задачи по воркфлоу прогона: `nextStage` по исходу `outcome` текущего этапа. Задача без `stage`
+   * входит в граф из старта (только `next`). Меняет только `stage` — колонку, воркера, гейт и мерж по
+   * `action` делает исполнитель в main. Событие `stage_changed`, если этап сменился, и `workflow_blocked`,
+   * если дальше идти нельзя. `opts` — роли типа прогона (проверка роли гейта, дефолтный граф) и граф типа для
+   * прогона без снимка (`runWorkflow`).
+   */
+  advanceStage(taskId: string, outcome: WfOutcome, opts: RunWorkflowFallback = {}): { task: Task; action: WfAction } {
+    const step = this.previewAdvanceStage(taskId, outcome, opts)
+    const task = this.mustTask(taskId)
+    const wf = this.taskWorkflow(task, opts)
     const from = task.stage?.nodeId
     const moved = step.stage.nodeId !== from && step.stage.nodeId !== ''
     // Любой переход — новая попытка идти дальше: прошлая остановка больше не актуальна.
@@ -1214,6 +1221,23 @@ export class TaskStore {
     return { task, action: step.action }
   }
 
+  /** Предварительный вход/перезапуск: visits учитываются, прежний этап и requests остаются нетронутыми. */
+  previewEnterWork(taskId: string, opts: RunWorkflowFallback = {}): WfStep | undefined {
+    const task = this.mustTask(taskId)
+    const onPath = this.pathOwner(task, opts) !== undefined
+    if (task.answerFor || task.gateFor || (this.isRunScope(task) && !onPath)) return undefined
+    const wf = this.taskWorkflow(task, opts)
+    const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
+    if (current?.type === 'work' || current?.type === 'ask') return undefined
+    if (!task.stage) return this.previewAdvanceStage(taskId, 'next', opts)
+    const ctx = this.taskStageCtx(task, onPath, opts)
+    const step = startStage(wf, ctx)
+    if (step.action.type === 'blocked') return step
+    const visits = { ...task.stage.visits }
+    for (const [id, n] of Object.entries(step.stage.visits)) visits[id] = (visits[id] ?? 0) + n
+    return { ...step, stage: { nodeId: step.stage.nodeId, visits } }
+  }
+
   /**
    * Задача снова идёт в работу (`worker start`, перезапуск, «Уточнить» не в счёт — у задач-ответов этапа нет):
    * этап, который не «Работа» и не «Вопрос человеку» (задачу вернули вручную с ревью, переоткрыли из done),
@@ -1225,25 +1249,19 @@ export class TaskStore {
    * Возвращает действие нового этапа или undefined, если этап не менялся.
    */
   enterWork(taskId: string, opts: RunWorkflowFallback = {}): WfAction | undefined {
+    const step = this.previewEnterWork(taskId, opts)
+    if (!step) return undefined
     const task = this.mustTask(taskId)
-    const onPath = this.pathOwner(task, opts) !== undefined
-    if (task.answerFor || task.gateFor || (this.isRunScope(task) && !onPath)) return undefined
-    const wf = this.taskWorkflow(task, opts)
-    const current = task.stage ? wf.nodes.find((n) => n.id === task.stage!.nodeId) : undefined
-    if (current?.type === 'work' || current?.type === 'ask') return undefined
     if (!task.stage) return this.advanceStage(taskId, 'next', opts).action
-    const ctx = this.taskStageCtx(task, onPath, opts)
-    const step = startStage(wf, ctx)
+    const wf = this.taskWorkflow(task, opts)
     this.clearStageBlock(task)
     if (step.action.type === 'blocked') {
       this.markStageBlocked(task, step.action.nodeId, step.action.reason)
       this.commit()
       return step.action
     }
-    const visits = { ...task.stage.visits }
-    for (const [id, n] of Object.entries(step.stage.visits)) visits[id] = (visits[id] ?? 0) + n
     const from = task.stage.nodeId
-    task.stage = { nodeId: step.stage.nodeId, visits }
+    task.stage = step.stage
     task.updatedAt = Date.now()
     this.cancelStaleApprovals(task)
     const node = wf.nodes.find((n) => n.id === step.stage.nodeId)
