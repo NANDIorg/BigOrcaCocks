@@ -120,12 +120,16 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
     const task = mustTask(deps, taskId)
     const fb = fallback(deps, task)
     const preview = deps.store.previewEnterWork(taskId, fb)?.action
-    // Для Git роль без override известна только после результата операции. Другие входы проверяются до записи.
-    if (preview?.type !== 'git' || opts.roleId !== undefined) validateWorkerRole(deps, task, preview, opts)
+    // Проверяем запуск только там, где граф действительно ведёт к воркеру. Для Git override известен заранее.
+    if (!preview || preview.type === 'start_worker' || (preview.type === 'git' && opts.roleId !== undefined)) {
+      validateWorkerRole(deps, task, preview, opts)
+    }
     let action = deps.store.enterWork(taskId, fb)
     // Первым этапом стоит нода «Git» (`start → git(create_branch) → work`): ветка и worktree готовятся до запуска
     // агента, а сам запуск остаётся за вызывающим (`runWorker`) — иначе воркер стартовал бы дважды.
-    if (action?.type === 'git') action = prepareBeforeWork(deps, taskId, action, opts)
+    if (action && (action.type === 'git' || (opts.validateRole && action.type !== 'start_worker'))) {
+      action = prepareBeforeWork(deps, taskId, action, opts)
+    }
     const node = stageNode(deps, mustTask(deps, taskId))
     if (node?.type === 'ask') return node.roleId ? { roleId: node.roleId } : {}
     if (action?.type === 'start_worker' && action.roleId) applyWorkRole(deps, taskId, action.roleId)
@@ -147,7 +151,7 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
   }
 
   /**
-   * Выполнить git-ноды, стоящие перед первой «Работой»/«Вопросом человеку», и вернуть действие запуска воркера.
+   * Выполнить эффекты перед первой «Работой»/«Вопросом человеку» и вернуть действие запуска воркера.
    * Цепочка ушла в другое место (ошибка git → человек, конец графа) или упёрлась в настройку — воркера здесь нет:
    * бросаем понятную причину, задача остаётся на своём этапе (запрос человеку уже создан), а не запускаем агента мимо графа.
    */

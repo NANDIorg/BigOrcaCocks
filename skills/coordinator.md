@@ -114,6 +114,8 @@ Copilot и Goose. При полном доступе подтверждения 
      Если запуск отказал из-за роли, агента или флагов, новый воркер не запущен: сообщи человеку причину,
      не повторяй запуск вслепую. Отказ не откатывает предварительные Git-операции: перед повтором проверь
      `orca-board task get --task <id>` и `orca-board workflow show --task <id>`, чтобы учесть уже выполненную подготовку.
+     Если граф до работы создал запрос человеку, завершился или заблокирован, следуй его запросам и причине остановки;
+     не запускай обычного воркера в обход этапа.
 3. Жди события. Ты работаешь в своём прогоне (`ORCA_RUN_ID` в окружении; задачи из `task create`
    попадают в него автоматически), поэтому `check` показывает только события твоих задач.
    Типы: `worker_done,question,escalation,task_ready,question_answered,answer_accepted,run_done,request_created,request_resolved,answer_clarified,workflow_blocked,stage_started,stage_tasks_done` — `stage_started` и `run_done` в списке,

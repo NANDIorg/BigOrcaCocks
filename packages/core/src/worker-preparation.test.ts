@@ -125,3 +125,23 @@ it('preview путь подзадачи использует subflow; run scope 
   assert.equal(store.previewEnterWork(question.id), undefined)
   assert.throws(() => store.previewAdvanceStage(question.id, 'next'), /вне этапа/)
 })
+
+it('advance самоперехода сохраняет preview visits и условие attempts выходит после второй работы', () => {
+  const wf = graph()
+  wf.nodes.push({ id: 'c', type: 'condition', test: { kind: 'attempts', node: 'work', atLeast: 2 }, x: 0, y: 0 })
+  wf.edges = [wf.edges[0], { id: 'b', from: 'work', outcome: 'next', to: 'c' },
+    { id: 'yes', from: 'c', outcome: 'yes', to: 'human' }, { id: 'no', from: 'c', outcome: 'no', to: 'work' }]
+  const { store, task } = fixture(wf)
+  store.enterWork(task.id)
+  const before = structuredClone(store.snapshot())
+  const preview = store.previewAdvanceStage(task.id, 'next')
+  assert.deepEqual(preview.stage, { nodeId: 'work', visits: { start: 1, work: 2, c: 1 } })
+  assert.deepEqual(store.snapshot(), before)
+  store.advanceStage(task.id, 'next')
+  assert.deepEqual(store.getTask(task.id)!.stage, preview.stage)
+  assert.equal(store.getTask(task.id)!.stageHistory!.length, 2)
+  const event = store.listEvents().filter(e => e.type === 'stage_changed').at(-1)!
+  assert.deepEqual([event.payload.from, event.payload.to], ['work', 'work'])
+  store.advanceStage(task.id, 'next')
+  assert.deepEqual(store.getTask(task.id)!.stage, { nodeId: 'human', visits: { start: 1, work: 2, c: 2, human: 1 } })
+})

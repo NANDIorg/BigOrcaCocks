@@ -221,3 +221,19 @@ it('Git → merge → work проверяет роль после фактиче
   assert.equal(f.store.getTask(f.task.id)!.stage!.nodeId, 'm')
   assert.equal(f.store.snapshot().dispatches.length, 0)
 })
+
+for (const first of ['human', 'end', 'blocked', 'merge'] as const) {
+  it(`guarded first ${first} не пропускает обычного воркера мимо графа`, () => {
+    const wf = graph('work', 'reviewer')
+    wf.edges[0] = { ...wf.edges[0], to: 'first' }
+    if (first !== 'blocked') wf.nodes.push({ id: 'first', type: first, x: 0, y: 0 })
+    if (first === 'merge') wf.edges.push({ id: 'm', from: 'first', outcome: 'ok', to: 'w' })
+    const f = fixture(wf)
+    assert.throws(() => prepare(f), first === 'merge' ? { message: 'agent.disabled' } : /воркер не запущен/)
+    assert.equal(f.store.snapshot().dispatches.length, 0)
+    if (first === 'human') { assert.equal(f.store.pendingRequests().length, 1); assert.equal(f.store.getTask(f.task.id)!.stage!.nodeId, 'first') }
+    if (first === 'end') assert.equal(f.store.getTask(f.task.id)!.status, 'done')
+    if (first === 'blocked') assert.ok(f.store.getTask(f.task.id)!.stageBlock)
+    if (first === 'merge') assert.equal(f.store.getTask(f.task.id)!.stage!.nodeId, 'first')
+  })
+}

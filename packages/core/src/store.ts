@@ -1190,7 +1190,7 @@ export class TaskStore {
   /**
    * Переход задачи по воркфлоу прогона: `nextStage` по исходу `outcome` текущего этапа. Задача без `stage`
    * входит в граф из старта (только `next`). Меняет только `stage` — колонку, воркера, гейт и мерж по
-   * `action` делает исполнитель в main. Событие `stage_changed`, если этап сменился, и `workflow_blocked`,
+   * `action` делает исполнитель в main. Событие `stage_changed`, если этап сменился или начался новый заход в ту же ноду, и `workflow_blocked`,
    * если дальше идти нельзя. `opts` — роли типа прогона (проверка роли гейта, дефолтный граф) и граф типа для
    * прогона без снимка (`runWorkflow`).
    */
@@ -1199,7 +1199,9 @@ export class TaskStore {
     const task = this.mustTask(taskId)
     const wf = this.taskWorkflow(task, opts)
     const from = task.stage?.nodeId
-    const moved = step.stage.nodeId !== from && step.stage.nodeId !== ''
+    // Новый заход через условие может вернуть ту же ноду: visits и лимит attempts всё равно должны сохраниться.
+    const moved = step.stage.nodeId !== '' && (step.stage.nodeId !== from ||
+      Object.entries(step.stage.visits).some(([id, visits]) => visits !== task.stage?.visits[id]))
     // Любой переход — новая попытка идти дальше: прошлая остановка больше не актуальна.
     this.clearStageBlock(task)
     if (moved) {
