@@ -40,6 +40,12 @@ task scope перезапускает его; failed launch после реше�
 Desktop profile adapter передаёт explicit id при настройке доступных типов/default,
 сохраняя старые IPC DTO; legacy selection после add остаётся только в Desktop.
 
+Статистика прогона имеет общий `StatsCommands.global` с явным проектом; builder
+по-прежнему включает координатора и подзадачи выбранного run. Async чтение
+транскриптов работает с detached snapshot; найденный session id не применяется
+после удаления проекта или замены dispatch. Полноценные async Git effects остаются
+следующим рубежом, существующий workflow engine не заменён.
+
 Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
 channels. UI/preload не меняются, active selection переводится в явный context
 одного вызова на IPC границе; runtime не зависит от выбора проекта в окне.

@@ -1329,6 +1329,13 @@ Application API библиотеки workflow общий: `ProfileCommands.workf
 а assistantChat контекст и socket используют совместимый facade общей factory.
 Settings/types/templates IPC подключены к тому же manager, UI/preload signatures прежние.
 
+`RuleCommands` правит только два известных файла правил выбранного проекта;
+`StatsCommands` считает прежние метрики по отделённому snapshot, без исполнения
+сохранённых tool calls или workflow. Запись session id после чтения транскрипта
+проверяет текущую identity проекта и dispatch; async executor сохраняет авторство
+только внутри синхронного commit. Это не перенос workflow Git effects: очередь
+по commonDir и их EffectToken реализуются следующим рубежом.
+
 ```
 orca-board workflow show [--run <id>]     # этапы и переходы: снимок прогона (координатору --run из $ORCA_RUN_ID) или граф проекта
 orca-board task create --title "..." --stage <nodeId>   # подзадача этапа «Работа» пути, когда открыто несколько этапов

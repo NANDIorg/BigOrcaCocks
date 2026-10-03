@@ -306,6 +306,26 @@ DTO/error. Settings refresh menu/tray/updater выполняется после 
 trusted ProjectManager methods и agent policy. Selection/native dialogs не входят в
 общий API. Git проекта, files/docs/stats/dialog/PTY commands переносятся далее.
 
+### Общие правила проекта и статистика
+
+`RuleCommands`/`StatsCommands` в contracts и runtime factories адресуют явный
+project/client/actor. Проверка context, обязательная policy и payload предшествуют
+lookup. Правила читаются и пишутся через `createRuleServices`: whitelist
+`CLAUDE.md`/`AGENTS.md`, 1 MiB UTF-8, внутренние symlink, EOL/права и atomic rename.
+Проверяется также размер после CRLF-конвертации до замены исходного файла.
+
+`createStatsServices` использует прежние core builders и общий parser транскриптов;
+кэш принадлежит экземпляру service. Snapshot отделён от store до await, subset
+task/gate/run и периоды прежние. Найденный Codex session id сохраняется только
+для того же dispatch и существующей задачи, при актуальном project/store.
+Общие statsProject/isStatsProjectCurrent захватывают registration object: remove+add
+одного пути даёт тот же hash id и не должен оживлять старый запрос.
+`createAsyncProjectCommandExecutor` повторно проверяет host policy/identity перед
+синхронным commit и выдачей detached результата; устаревший проект — `command.stale`.
+Источник human/cli/app охватывает только commit, не чтение через await. Это первая
+async граница; EffectToken для workflow и очередь Git ещё не реализованы.
+Desktop IPC/socket подключаются следующим шагом; их старые facades пока работают.
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,
@@ -3788,6 +3808,16 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 снимка. Тесты — `assistant-settings.test.ts`.
 
 ## Грабли разработки
+
+- **Лимит текста до CRLF-конвертации не защищает размер файла.** LF-текст меньше
+  1 MiB мог превратиться в файл больше лимита и дать ошибку уже после замены.
+  Runtime rules проверяет реальные UTF-8 байты с нужным EOL до atomic rename;
+  regression сохраняет исходный CRLF-файл и проверяет отсутствие временных файлов.
+
+- **Snapshot store содержит ссылки на изменяемые сущности.** Для async статистики
+  его отделяют до чтения транскриптов; найденный session id проверяет захваченную
+  identity dispatch и живой project/store. Иначе поздний результат способен писать
+  в доску удалённого проекта или dispatch с повторно использованным id.
 
 - **Небольшой SVG при обычном импорте становится `data:` URL.** Vite делает это автоматически,
   а `img-src` renderer не разрешает `data:`: значок работает в dev, но пропадает в рабочей сборке.

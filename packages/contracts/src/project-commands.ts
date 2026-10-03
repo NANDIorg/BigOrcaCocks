@@ -10,7 +10,7 @@ export interface ProjectCommandContext extends ClientCommandContext {
 
 export type CommandErrorCode = 'command.invalidContext' | 'command.forbidden' | 'command.invalidInput'
   | 'command.projectNotFound' | 'command.taskNotFound' | 'command.globalTaskNotFound'
-  | 'command.requestNotFound' | 'command.questionNotFound' | 'command.rejected'
+  | 'command.requestNotFound' | 'command.questionNotFound' | 'command.stale' | 'command.rejected'
 
 export interface CommandErrorData {
   code: CommandErrorCode

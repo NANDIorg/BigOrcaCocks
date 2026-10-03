@@ -36,13 +36,15 @@
 - `createStatsServices({messages})` → `projectStats/taskStats/globalTaskStats`; StatsDeps дополнены `isCurrent?` и синхронным `commit?`, cache factory-local.
 - `createAsyncProjectCommandExecutor(host)` → async execute; host `project/authorize/isCurrent`, operation `(project, context, scope)`; scope `isCurrent()` и `commit(operation)`.
 - `createRuleCommands(host)` → list/read/save с явным ProjectCommandContext.
-- `createStatsCommands(host)` → project/task/global с явным ProjectCommandContext, StatsDeps/workflow от хоста; range и id проверяются до lookup.
+- `createStatsCommands(host)` → project/task/global с явным ProjectCommandContext, StatsDeps/workflow от хоста; общие statsProject/isStatsProjectCurrent сохраняют registration identity; range и id проверяются до lookup.
 
-- [ ] **Step 1:** Failing factory/assertion tests с реальным ProjectManager/Git/JSON, реальными Claude/Codex транскриптами; invalid/forbidden ordering, explicit A/B, detached DTO, whitelist/UTF-8/EOL/symlink, subset stats, cache isolation, delayed project removal/dispatch replacement и независимый sync attribution во время await.
-- [ ] **Step 2:** Targeted `node --test packages/runtime/test/{rules,stats,rules-stats-commands,async-project-commands}.test.ts` под Node24; Expected FAIL из-за отсутствующего API при успешных импортах.
-- [ ] **Step 3:** Реализовать factories/contracts/executor; перенести алгоритмы без замены статистической модели и JSON.
-- [ ] **Step 4:** Targeted + полный runtime и contracts suites, contracts/runtime/Desktop typecheck; Expected PASS, без выключения прежних suites.
-- [ ] **Step 5:** Docs/diff/staged diff и commit точных paths; task-done повтор targeted suite.
+- [x] **Step 1:** Failing factory/assertion tests с реальным ProjectManager/Git/JSON, реальными Claude/Codex транскриптами; invalid/forbidden ordering, explicit A/B, detached DTO, whitelist/UTF-8/EOL/symlink, subset stats, cache isolation, delayed project removal/dispatch replacement и независимый sync attribution во время await.
+- [x] **Step 2:** Targeted `node --test packages/runtime/test/{rules,stats,rules-stats-commands,async-project-commands}.test.ts` под Node24; Expected FAIL из-за отсутствующего API при успешных импортах.
+- [x] **Step 3:** Реализовать factories/contracts/executor; перенести алгоритмы без замены статистической модели и JSON.
+- [x] **Step 4:** Targeted + полный runtime и contracts suites, contracts/runtime/Desktop typecheck; Expected PASS, без выключения прежних suites.
+- [x] **Step 5:** Docs/diff/staged diff и commit точных paths; task-done повтор targeted suite.
+
+Task1: targeted34/34, runtime764/764, contracts50/50, core943/943; contracts/runtime/Desktop typecheck PASS, fail/cancel/skip0. Desktop подключается Task2.
 
 ### Task 2: Desktop IPC/socket и compatibility facades
 
@@ -54,7 +56,7 @@
 - `invokeDesktopCommand` переводит синхронную и Promise ошибку без удержания общего attribution через await.
 
 - [ ] **Step 1:** Failing adapter tests с real services/manager/файлами/транскриптами: caller до selection, A/B и legacy DTO, invalid range/id, sync/async ru/en ошибки, удаление проекта во время чтения.
-- [ ] **Step 2:** `pnpm --filter @orca-board/desktop exec tsx --test src/main/rules-stats-commands.test.ts`; Expected FAIL missing register factory при успешном импорте.
+- [ ] **Step 2:** `pnpm --filter @orca-board/desktop exec node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/rules-stats-commands.test.ts`; Expected FAIL missing register factory при успешном импорте.
 - [ ] **Step 3:** Подключить пять IPC к общим commands, заменить facades; оставить protocol/caller authorization прежними.
 - [ ] **Step 4:** Desktop affected rules/stats/socket suites, typecheck, полный `pnpm verify`; Expected PASS.
 - [ ] **Step 5:** Docs/diff/staged diff/commit, task-done affected suite; продолжить оставшийся application API без handoff.

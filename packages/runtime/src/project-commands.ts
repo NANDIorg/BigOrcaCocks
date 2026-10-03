@@ -10,6 +10,7 @@ const messages: Record<CommandErrorCode, string> = {
   'command.globalTaskNotFound': 'Глобальная задача не найдена',
   'command.requestNotFound': 'Запрос не найден',
   'command.questionNotFound': 'Вопрос не найден',
+  'command.stale': 'Результат команды устарел',
   'command.rejected': 'Команда не выполнена'
 }
 
@@ -45,7 +46,7 @@ function clientContextFrom(raw: unknown): ClientCommandContext {
   return { clientId: value.clientId, actor: { kind: actor.kind, id: actor.id } }
 }
 
-function contextFrom(raw: unknown): ProjectCommandContext {
+export function projectCommandContextFrom(raw: unknown): ProjectCommandContext {
   const context = clientContextFrom(raw)
   const projectId = (raw as Record<string, unknown>).projectId
   if (typeof projectId !== 'string' || !projectId.trim()) throw new CommandError('command.invalidContext')
@@ -76,7 +77,7 @@ export function createClientCommandExecutor<Name extends string>(host: ClientCom
 export function createProjectCommandExecutor<Project, Name extends string>(host: ProjectCommandHost<Project, Name>) {
   return function execute<T>(raw: unknown, command: Name, validate: () => (project: Project, context: ProjectCommandContext) => T): T {
     try {
-      const context = contextFrom(raw)
+      const context = projectCommandContextFrom(raw)
       if (host.authorize(structuredClone(context), command) !== true) throw new CommandError('command.forbidden')
       const operation = validate()
       const project = host.project(context.projectId)
