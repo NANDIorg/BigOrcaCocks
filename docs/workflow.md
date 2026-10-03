@@ -624,11 +624,14 @@ push ветки прогона — нода `git push` или человек.
 Путь вопроса (main, `apps/desktop/src/main`):
 
 - **Запуск.** `executeSteps` (`workflow.ts`) для ноды `ask` не зовёт `applyWorkRole`: роль ноды едет в запуск параметром
-  `WorkflowDeps.startWorker(taskId, {roleId})` → `runWorker` (`index.ts`) → `startWorker(…, roleId)` (`worker.ts`), а
+  `WorkflowDeps.startWorker(taskId, {roleId})` → Desktop `runWorker` (выбор project ports) → общий
+  `WorkerOperations.start` (`packages/runtime/src/worker-operations.ts`) → `WorkerServices.startWorker(…, roleId)`, а
   `task.roleId` и `task.agent` остаются прежними — иначе следующая «Работа» без своей роли запустилась бы ролью
-  опросника. Проверки роли и агента в `runWorker` идут по роли этапа. `Dispatch.roleId` — роль ноды. Без параметра
+  опросника. Проверки роли и агента в общем preflight идут по роли этапа до enterWork/kill. `Dispatch.roleId` — роль ноды. Без параметра
   (`worker start`, перезапуск, автоперезапуск) роль этапа `runWorker` берёт из графа (`enterWork` из `workflow.ts` возвращает
   `{roleId}` ноды `ask`). `store.enterWork` этап `ask` не сбрасывает: агент входит в него при каждом запуске.
+  IPC `worker:start` вызывает явный project `WorkerCommands`, а socket/workflow — ту же trusted orchestration;
+  `TaskWorkerLifecycle` закрывает старые dispatch до PTY, не создавая эскалацию от обычного kill.
 - **Первый этап.** `ask` сразу после `start`: первый запуск (`worker start`) входит в граф в `ask`; worktree и ветка
   создаются как обычно, после `next` «Работа» идёт в том же worktree.
 - **Адресат.** `worker.ask` (`socket.ts`) спрашивает у store ноду задачи (`taskStageNode`, граф прогона или запасной граф

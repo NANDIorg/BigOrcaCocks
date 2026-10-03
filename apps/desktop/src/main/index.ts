@@ -18,18 +18,19 @@ import { transcriptEnv } from './transcripts'
 import { getReview } from './review'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, type CoordinatorProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, ProjectCommandContext } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ProjectCommandContext } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
+import { registerDesktopWorkerCommands } from './worker-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities, hasImageInput, rejectWithImages, resolveWithImages } from './attachments'
 import { readShowcaseFile, resolveShowcasePath, showcasePreviewBase, showcasePreviewUrl, showcaseSource } from './showcase'
 import { PREVIEW_SCHEME, PreviewTokens, allowFrameNavigation, handlePreviewRequest, isExternalWebUrl } from './preview-protocol'
 import { showcaseSnapshotsRoot, snapshotDispatchShowcase, type ShowcaseSnapshots } from './showcase-snapshot'
-import { enterWork, type WorkflowDeps } from './workflow'
+import type { WorkflowDeps } from './workflow'
 import { validateWorkerRole } from './worker-preflight'
 import {
   escalateDecision, finishRunStage, runDecision,
@@ -105,6 +106,9 @@ let boardCommands: BoardCommands
 let globalTaskCommands: GlobalTaskCommands
 let coordinatorCommands: CoordinatorCommands
 let coordinatorOperations: ReturnType<typeof createCoordinatorOperations>
+let workerCommands: WorkerCommands
+let workerOperations: ReturnType<typeof createWorkerOperations>
+const taskWorkerLifecycle = createTaskWorkerLifecycle({ isAlive, killPty })
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
 /** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
@@ -407,57 +411,17 @@ function resolveProject(projectId?: string): { id: string; root: string; store: 
   return { id: p.id, root: p.root, store: projects.store(p.id) }
 }
 
-/**
- * Закрыть терминалы воркеров задачи: живые dispatch'и помечаются завершёнными (иначе ptyExited
- * примет kill за падение), PTY убиваются — реестр pty.ts сам разошлёт terminals:changed. PTY координатора
- * не привязан к dispatch и сюда не попадает.
- */
-function closeTaskWorkers(store: TaskStore, taskId: string): void {
-  const ptyIds = new Set<string>()
-  for (const d of store.closeDispatches(taskId)) ptyIds.add(d.ptyId)
-  // Старые dispatch'и уже закрыты (например, после `orca-board done`), но их PTY может жить до сих пор.
-  for (const d of store.snapshot().dispatches) if (d.taskId === taskId && isAlive(d.ptyId)) ptyIds.add(d.ptyId)
-  for (const ptyId of ptyIds) killPty(ptyId)
-}
-
-/**
- * Задача попала в колонку kind=done — её воркерам больше нечего делать. Смотрим не только
- * незакрытые dispatch'и, но и живые PTY уже закрытых: после `orca-board done` dispatch завершён,
- * а терминал агента ещё открыт до самого review accept.
- */
-function closeDoneWorkers(store: TaskStore): void {
-  const doneTasks = new Set<string>()
-  for (const d of store.snapshot().dispatches) {
-    if (d.endedAt && !isAlive(d.ptyId)) continue
-    const task = store.getTask(d.taskId)
-    if (task && store.columnKind(task.status) === 'done') doneTasks.add(task.id)
-  }
-  for (const taskId of doneTasks) closeTaskWorkers(store, taskId)
-}
-
-/**
- * Запуск воркера с проверками роли и агента. `opts.roleId` — роль этапа «Вопрос человеку» (`WorkflowDeps.startWorker`);
- * без неё роль этапа берётся из графа (`worker start`, перезапуск), иначе — роль задачи.
- */
+/** Legacy socket/workflow выбирают проект здесь, проверки и orchestration выполняет runtime. */
 function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number, opts: { roleId?: string } = {}): ReturnType<typeof startWorker> {
   const p = resolveProject(projectId)
-  // Роль могли удалить, а её агента — выключить в проекте после создания задачи.
-  const task0 = p.store.getTask(taskId)
-  if (task0) {
-    if (p.store.columnKind(task0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
-    const type = projects.resolveRun(p.id, task0.runId)
-    // Рабочая задача входит в воркфлоу или возвращается на этап «Работа» (роль ноды «Работа» становится ролью
-    // задачи). Роль этапа «Вопрос человеку» на задачу не переносится: она едет в запуск отдельным параметром.
-    const agents = projectAgents(p.id)
-    const entered = enterWork(workflowDeps(p.id), taskId, {
-      roleId: opts.roleId,
-      validateRole: roleId => { validateWorkerRole(type, agents, roleId) }
-    })
-    const stageRoleId = opts.roleId ?? entered.roleId
-    closeTaskWorkers(p.store, taskId)
-    return startWorker(p.store, p.root, ctx(p.id, task0.runId), taskId, cols, rows, stageRoleId)
-  }
-  return startWorker(p.store, p.root, ctx(p.id, undefined), taskId, cols, rows)
+  return workerOperations.start(workerProject(p.id)!, taskId, { cols, rows, roleId: opts.roleId })
+}
+
+/** Host предоставляет ports конкретного проекта; создание callback не запускает workflow. */
+function workerProject(projectId: string): WorkerProject | undefined {
+  const project = projects.get(projectId)
+  return project ? { store: projects.store(projectId), root: project.root,
+    environment: runId => ctx(projectId, runId), agents: () => projectAgents(projectId), workflow: workflowDeps(projectId) } : undefined
 }
 
 /**
@@ -544,18 +508,6 @@ function reviewDecision(projectId: string, taskId: string, decision: 'accept' | 
   if (decision === 'accept') return workflow.reviewDecision(taskId, decision, text)
   return rejectWithImages(p.store, p.root, taskId, images, text ?? '', paths =>
     workflow.reviewDecision(taskId, decision, text, paths))
-}
-
-/**
- * `orca-board worker stop`: закрыть воркеров задачи (dispatch'и — unknown без эскалации, PTY убиты)
- * и вернуть задачу из in_progress в ready. Задачу в другой колонке не двигает.
- */
-function stopTaskWorker(store: TaskStore, taskId: string): { stopped: string[] } {
-  const stopped = store.activeDispatches().filter((d) => d.taskId === taskId).map((d) => d.id)
-  closeTaskWorkers(store, taskId)
-  const task = store.getTask(taskId)
-  if (task && store.columnKind(task.status) === 'in_progress') store.moveTask(taskId, store.columnId('ready'))
-  return { stopped }
 }
 
 function runCoordinator(
@@ -971,7 +923,11 @@ function registerIpc(): void {
   ipcMain.on('pty:kill', (_e, id: string) => killPty(id))
   handle('terminals:list', () => terminalSnapshots())
 
-  handle('worker:start', (_e, taskId: string, cols: number, rows: number) => runWorker(taskId, undefined, cols, rows))
+  registerDesktopWorkerCommands(handle, {
+    commands: workerCommands, activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
+  })
   handle('assistant:open', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, false))
   handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
   handle('assistantChat:available', (_e, id: string) => assistantSession.available(id))
@@ -1094,6 +1050,10 @@ function initializeDesktop(): void {
   }
   coordinatorOperations = createCoordinatorOperations(coordinatorHost)
   coordinatorCommands = createCoordinatorCommands({ ...coordinatorHost, project: coordinatorProject, authorize })
+  const workerHost = { workers: { startWorker }, workflow: workflowServices.task,
+    preflight: { validate: validateWorkerRole }, lifecycle: taskWorkerLifecycle }
+  workerOperations = createWorkerOperations(workerHost)
+  workerCommands = createWorkerCommands({ ...workerHost, project: workerProject, authorize })
   syncMainAppearance()
   setMainLocale(projects.settings().language)
   refreshApplicationMenu()
@@ -1108,7 +1068,7 @@ function initializeDesktop(): void {
   projects.onChange((projectId, store) => {
     if (win && !win.isDestroyed()) win.webContents.send('board:changed', { projectId, snapshot: store.snapshot() })
     // Любой путь в done (review accept, task move, tasks:move из UI) проходит через commit store — ловим здесь.
-    closeDoneWorkers(store)
+    taskWorkerLifecycle.closeDoneWorkers(store)
     // Закрытие и «Сделано» глобальной задачи — тоже любой путь (runs finish, перенос, выход координатора).
     const project = projects.get(projectId)
     if (project) runBranchSync.sync(store, project.root)
@@ -1173,7 +1133,7 @@ function initializeDesktop(): void {
       return {
         store: p.store,
         startWorker: (taskId) => runWorker(taskId, p.id),
-        stopWorker: (taskId) => stopTaskWorker(p.store, taskId),
+        stopWorker: (taskId) => workerOperations.stop(p, taskId),
         review: (taskId) => getReview(p.store, p.root, taskId),
         accept: (taskId, decision) => void reviewDecision(p.id, taskId, 'accept', decision),
         reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),

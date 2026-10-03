@@ -43,11 +43,11 @@
 - Produces: `WorkerProject { store, root, environment(runId?), agents(), workflow: WorkflowDeps }`; `createWorkerOperations(host).start(project, taskId, input?) / stop(project, taskId)`.
 - Produces: `createTaskWorkerLifecycle(sessions).closeTaskWorkers(store, taskId) / closeDoneWorkers(store) / syncWorkerLiveness(store, taskId)`; explicit store, без состояния выбранного окна.
 
-- [ ] **Step 1:** Написать failing tests на настоящий store/Git/launcher: start в A не меняет B, policy и невалидные размеры до lookup, чужой task → `command.taskNotFound`, caller mutation не меняет context; stop возвращает dispatch ids и ready с human/cli/app source. В fixture подменяется только native PTY, не services.
-- [ ] **Step 2:** `node --test packages/runtime/test/worker-commands.test.ts`. Expected: assertion FAIL на отсутствии factory, не import error.
-- [ ] **Step 3:** Реализовать указанные interfaces; общий size parser используется также координатором. Trusted start сохраняет старые missing/global-task причины socket; публичные commands предварительно проверяют task scope. Роль проверяет общий preflight до старого kill; `enterWork` сохраняет существующие Git/human guards.
-- [ ] **Step 4:** Добавить случаи work/ask/override, disabled/missing/notInstalled/extraArgs, Git success/error/human, restart с прежним PTY, stop по закрытому dispatch, done cleanup и mixed liveness. Выполнить runtime/contracts typecheck и оба package test. Expected: все tests PASS, boundaries PASS.
-- [ ] **Step 5:** Проверить diff, закоммитить точные paths: `refactor: вынести команды и lifecycle воркеров в runtime`; task-done повторяет `pnpm --filter @orca-board/runtime test`.
+- [x] **Step 1:** Написать failing tests на настоящий store/Git/launcher: start в A не меняет B, policy и невалидные размеры до lookup, чужой task → `command.taskNotFound`, caller mutation не меняет context; stop возвращает dispatch ids и ready с human/cli/app source. В fixture подменяется только native PTY, не services.
+- [x] **Step 2:** `node --test packages/runtime/test/worker-commands.test.ts`. Expected: assertion FAIL на отсутствии factory, не import error.
+- [x] **Step 3:** Реализовать указанные interfaces; общий size parser используется также координатором. Trusted start сохраняет старые missing/global-task причины socket; публичные commands предварительно проверяют task scope. Роль проверяет общий preflight до старого kill; `enterWork` сохраняет существующие Git/human guards.
+- [x] **Step 4:** Добавить случаи work/ask/override, disabled/missing/notInstalled/extraArgs, Git success/error/human, restart с прежним PTY, stop по закрытому dispatch, done cleanup и mixed liveness. Выполнить runtime/contracts typecheck и оба package test. Expected: все tests PASS, boundaries PASS.
+- [x] **Step 5:** Проверить diff, закоммитить точные paths: `refactor: вынести команды и lifecycle воркеров в runtime`; task-done повторяет `pnpm --filter @orca-board/runtime test`.
 
 ### Task 2: Desktop, workflow и старый socket используют общий путь
 
@@ -61,11 +61,11 @@
 - Produces: `registerDesktopWorkerCommands(handle, {commands,activeProjectId,clientId})`, прежний `worker:start(taskId, cols, rows)` → WorkerLaunchResult. Нет нового канала.
 - Produces: main собирает project ports, raw WorkerServices и shared preflight; workflow/agent socket идут через trusted operations. Socket answerQuestion/resolveRequest используют общий sync liveness.
 
-- [ ] **Step 1:** Написать failing adapter tests: caller до selection, projects.none, capture selection один раз, реальные Git/dispatch/DTO/размеры, wrong project и host localized errors. Создать пустой adapter `export {}` только как import scaffold.
-- [ ] **Step 2:** `node --experimental-transform-types --no-warnings --import ./apps/desktop/test/ts-resolve.mjs --test apps/desktop/src/main/worker-commands.test.ts`. Expected: assertion FAIL на отсутствии register factory.
-- [ ] **Step 3:** Реализовать adapter и заменить локальные runWorker/stop/close/liveness orchestration вызовами Task 1; main оставляет только project selection/ports. Workflow callback не вызывает public command policy и не входит повторно в run graph. Обновить четыре документа текущими путями, без новых CLI команд.
-- [ ] **Step 4:** Desktop typecheck, targeted adapter test, затем `pnpm verify` после восстановления Node ABI node-pty. Expected: все package tests/types/build PASS. Проверить существующие socket/worker/preflight/workflow tests в полном suite.
-- [ ] **Step 5:** Проверить diff, закоммитить точные paths: `refactor: подключить Desktop к общим командам воркеров`; task-done повторяет adapter command из Step 2.
+- [x] **Step 1:** Написать failing adapter tests: caller до selection, projects.none, capture selection один раз, реальные Git/dispatch/DTO/размеры, wrong project и host localized errors. Создать пустой adapter `export {}` только как import scaffold.
+- [x] **Step 2:** `node --experimental-transform-types --no-warnings --import ./apps/desktop/test/ts-resolve.mjs --test apps/desktop/src/main/worker-commands.test.ts`. Expected: assertion FAIL на отсутствии register factory.
+- [x] **Step 3:** Реализовать adapter и заменить локальные runWorker/stop/close/liveness orchestration вызовами Task 1; main оставляет только project selection/ports. Workflow callback не вызывает public command policy и не входит повторно в run graph. Обновить четыре документа текущими путями, без новых CLI команд.
+- [x] **Step 4:** Desktop typecheck, targeted adapter test, затем `pnpm verify` после восстановления Node ABI node-pty. Expected: все package tests/types/build PASS. Проверить существующие socket/worker/preflight/workflow tests в полном suite.
+- [x] **Step 5:** Проверить diff, закоммитить точные paths: `refactor: подключить Desktop к общим командам воркеров`; task-done повторяет adapter command из Step 2.
 
 ## Итоговая проверка и доставка
 

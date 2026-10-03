@@ -24,8 +24,11 @@ guards и общие resources. Общая операция `createGlobalTaskRem
 agent socket. Run scope решает approval без закрытия живого координатора, legacy
 task scope перезапускает его; failed launch после решения сохраняет feedback/files.
 Подробности — «Общие команды глобальных задач» и «Общие команды координатора»
-в [architecture.md](architecture.md). Worker/review/requests/lifecycle команды и
-transport guarantees ещё переносятся отдельно.
+в [architecture.md](architecture.md). Запуск/остановка подзадач идут через общий
+`WorkerCommands` с тем же context; workflow и agent socket используют одну trusted
+`WorkerOperations`. Lifecycle закрывает dispatch до PTY, включая терминалы уже
+закрытых запусков после done. Review/requests/остальные lifecycle команды и transport
+guarantees ещё переносятся отдельно.
 
 Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
 channels. UI/preload не меняются, active selection переводится в явный context

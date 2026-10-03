@@ -11,6 +11,14 @@
 (`resolveHumanRequest`), `socket.ts` (`request.*`, `worker.ask`), `request-params.ts` (разбор флагов CLI),
 `notify.ts`. Тесты — `packages/core/src/answers.test.ts`, `requests.test.ts`.
 
+Перед ответом человеку Desktop/socket сверяют живость через общий
+`TaskWorkerLifecycle.syncWorkerLiveness` (`packages/runtime/src/task-worker-lifecycle.ts`):
+dispatch закрываются только если все активные PTY задачи мертвы. Сам sync не
+переносит колонку; дальнейший переход делает прежний request/question guard.
+Перезапуск после уточнения использует общую `WorkerOperations.start`: preflight
+фактической роли и enterWork предшествуют закрытию старого PTY. Application API
+`WorkerCommands` уже общий; public request/review commands — следующий перенос.
+
 ## Модель
 
 ```ts

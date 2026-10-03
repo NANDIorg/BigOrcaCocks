@@ -181,8 +181,8 @@ gateFor клиент не задаёт. Subtask привязывается к п
 удаляется принудительно, ветка остаётся. Ошибки cleanup сохраняют прежние semantics;
 это пока синхронная операция без transaction/reconciliation.
 
-Запуск координатора и accept/return входят в общий API ниже. Остальные worker,
-review, requests и lifecycle команды ещё требуют такого application API.
+Запуск координатора и accept/return, а также worker start/stop входят в общий API
+ниже. Review, requests и остальные lifecycle команды ещё требуют такого application API.
 Native reveal/open остаются Desktop capabilities.
 
 Desktop `main/global-task-commands.ts` регистрирует прежние 12 globalTasks channels
@@ -221,8 +221,35 @@ application API, без transaction/effect tokens/reconciliation и очеред
 Desktop `main/coordinator-commands.ts` использует общий project adapter: проверенный
 caller прежде единственного capture activeId, старые четыре IPC signatures/defaults
 и ptyId строки сохраняются. Ошибки boundary и host переводятся прежним ru/en путём.
-Самостоятельные Web/CLI transports и auth, lifecycle/worker/review/request commands,
+Самостоятельные Web/CLI transports и auth, остальные lifecycle/review/request commands,
 revisions/idempotency/replay остаются дальнейшими этапами.
+
+### Общие команды и lifecycle воркеров
+
+`WorkerCommands` в contracts и `createWorkerCommands` в runtime дают start/stop
+с явным project/client/actor. Общий executor проверяет policy, taskId и whitelist
+до lookup/effects; cols/rows — положительные safe integers, roleId — непустая
+строка. Task проверяется именно в выбранном store (`command.taskNotFound`), launch
+DTO сохраняет ptyId/dispatchId/worktree/branch, stop возвращает список dispatch ids.
+
+`createWorkerOperations` связывает общий preflight, enterWork и WorkerServices.
+Проверка фактической work/ask/override роли предшествует переходу и закрытию старого
+PTY; Git выбирает свою success/error ветку по прежним guards, ожидание человека не
+обходится запуском агента. Ask роль относится к dispatch, постоянная роль задачи
+сохраняется. Эта trusted orchestration используется также workflow и agent socket,
+с прежними причинами missing/global id и stop no-op неизвестной задачи в socket.
+
+`createTaskWorkerLifecycle` закрывает dispatch до kill, включает живые PTY уже
+закрытых dispatch и убирает их после done. Sync закрывает dispatch только если все
+активные PTY задачи мертвы; сам он не переносит колонку. Stop переводит только
+in_progress в ready, сохраняя human/cli/app либо прежний trusted status source.
+Desktop предоставляет реальные isAlive/killPty, native backend остаётся host port.
+
+`main/worker-commands.ts` сохраняет один worker:start IPC и его DTO/defaults;
+caller проверяется раньше единственного capture activeId. Main оставляет project
+ports, legacy selection и lifecycle subscriptions, socket использует общий sync
+перед ответом человеку. Это ещё синхронные операции: async Git/queues/effect tokens,
+request/review commands, remote PTY leases и полный headless host идут дальше.
 
 ### Общий запуск агентов и терминальные сессии
 
@@ -2535,7 +2562,7 @@ offline без открытия store/recovery; обнаруженная оши�
 | `project.rules.get` | `file` (`CLAUDE.md`\|`AGENTS.md`) | `RuleFile` (`readRule`, корень репозитория проекта) |  |
 | `project.rules.set` | `file`, `text` (CLI читает `--rules-file` или берёт `--text`) | `RuleFile` после записи (`writeRule`; не коммитит) |  |
 
-`worker.stop` — `ProjectDeps.stopWorker` (`stopTaskWorker` в `src/main/index.ts`): `closeTaskWorkers` закрывает живые
+`worker.stop` — `ProjectDeps.stopWorker` → общий `WorkerOperations.stop` (`packages/runtime/src/worker-operations.ts`): `TaskWorkerLifecycle.closeTaskWorkers` закрывает живые
 dispatch'и как `outcome=unknown` (`store.closeDispatches`, без `escalation` — `ptyExited` видит `endedAt` и молчит) и убивает PTY
 (и живые PTY уже закрытых dispatch'ей); задача из `kind=in_progress` переносится в первую колонку `kind=ready`, из других колонок
 не двигается. `worker.restart` на задаче в `kind=review`/`done` отказывает с подсказкой `task reopen --start`
@@ -2718,13 +2745,13 @@ GitHub PR по [Git Flow](git-flow.md)).
   и `tasks:create`/`globalTasks:createTask` принимают `priority`; приоритет самой глобальной задачи —
   через `globalTasks:create`/`globalTasks:update` (`GlobalTaskInput`/`GlobalTaskPatch`). Внутри — `updateTask`,
   так что `updatedAt` и `board:changed` идут как обычно.
-- **Автозакрытие**: main в `projects.onChange` (любой `commit` store) вызывает `closeDoneWorkers`:
+- **Автозакрытие**: main в `projects.onChange` (любой `commit` store) вызывает общий `TaskWorkerLifecycle.closeDoneWorkers` (`packages/runtime/src/task-worker-lifecycle.ts`):
   у задач в колонке `kind=done` закрываются dispatch'и (`store.closeDispatches` ставит `endedAt`/`outcome=unknown`
   незакрытым — иначе `ptyExited` принял бы kill за падение), живые PTY убиваются (`killPty`) — реестр `pty.ts` сам шлёт
   renderer'у `terminals:changed` без них (см. «Реестр терминалов»). Ловятся все пути в done:
   `review accept`, `task move`, `tasks:move` из UI. После `orca-board done` dispatch уже закрыт, а PTY жив —
   поэтому проверяется и живость PTY у закрытых dispatch'ей (`isAlive`).
-- **Перезапуск** (`runWorker`, общий путь для IPC `worker:start` и сокета `worker.start`): задача в
+- **Перезапуск** (`WorkerOperations.start`, общий путь для IPC `worker:start`, сокета `worker.start` и workflow; Desktop `runWorker` только выбирает project ports): задача в
   `kind=in_progress` отвергается, роль и агент перепроверяются, затем старые терминалы задачи закрываются
   тем же `closeTaskWorkers`, и только потом стартует новый PTY (оба изменения renderer видит через `terminals:changed`).
 - PTY координатора не привязан к dispatch и ни в одном сценарии приложением не закрывается
