@@ -52,15 +52,15 @@
 **Interfaces:**
 - Consumes: executor и валидаторы Task 1, `AgentSelectionServices`, `ExecutionResources`, настоящие TaskStore/JSON persistence.
 - Produces: `GlobalTaskCommands` с `list/get/create/update/changeType/move/remove/tasks/createTask/addImages/removeImage/image(context, ...)`; существующие `GlobalTaskInput/Patch/SubtaskInput`, `AttachmentInput[]`, outputs GlobalTask/Task/DTO bytes.
-- Produces: `GlobalTaskCommandProject { store, root, runType(typeId?), roles(globalTaskId), agents() }`; `GlobalTaskCommandHost` extends project host, `selection`, `resources`, `dataDir`, `sessions {isAlive,kill}`.
-- Produces: `createGlobalTaskRemoval({resources,dataDir,sessions})` → `(project:{id,store,root}, globalTaskId:string, cascade:boolean) => {deleted:string,tasks:string[]}`; trusted operation для service и существующего socket helper.
+- Produces: `GlobalTaskCommandProject { store, root, runType(typeId?), roles(globalTaskId), agents() }`; `GlobalTaskCommandHost` extends project host, `selection`, `resources`, `dataDir`, `sessions {isAlive,kill}`, `messages.error(global.coordinatorAlive)`.
+- Produces: `createGlobalTaskRemoval({resources,dataDir,sessions,messages})` → `(project:{id,store,root}, globalTaskId:string, cascade:boolean) => {deleted:string,tasks:string[]}`; trusted operation для service и существующего socket helper.
 - Поля create: title/description/status/priority/typeId; update: title/description/priority; subtask: title/spec/priority/roleId/deps/answerFor. Только dense массивы. Тип выбирается из проекта до создания; роль — из типа глобальной задачи и stageDefaultRole. Существующие guards и rollback resources сохраняются.
 
-- [ ] Написать тесты с настоящими двумя persisted store и resources: project isolation после reload; policy всех 12 методов до lookup; context и policy mutation; mass assignment, invalid patch/status/type/answerFor/deps/attachments; foreign run; тип недоступен и locked; scoped subtask deps/default role/attribution/copy; удаление cascade/live coordinator/live dispatch без cleanup; разрешённое удаление чистит только свои attachments/showcase/PTY/worktree; настоящие bytes/MIME и rollback записи.
-- [ ] Запустить `node --test packages/runtime/test/global-task-commands.test.ts`: Expected FAIL нет executable factory.
-- [ ] Реализовать service и removal с существующими ресурсами, без Desktop imports; добавлять файлы/убивать PTY только после core guards. Error DTO не содержит paths/stack/cause как отдельные поля, legacy cause остаётся локальным.
-- [ ] Запустить обе command suites, contracts test и runtime/contracts typecheck: Expected PASS.
-- [ ] Обновить docs, проверить diff, закоммитить; task-done: `node --test packages/runtime/test/board-commands.test.ts packages/runtime/test/global-task-commands.test.ts` → PASS.
+- [x] Написать тесты с настоящими двумя persisted store и resources: project isolation после reload; policy всех 12 методов до lookup; context и policy mutation; mass assignment, invalid patch/status/type/answerFor/deps/attachments; foreign run; тип недоступен и locked; scoped subtask deps/default role/attribution/copy; удаление cascade/live coordinator/live dispatch без cleanup; разрешённое удаление чистит только свои attachments/showcase/PTY/worktree; настоящие bytes/MIME и rollback записи.
+- [x] Запустить `node --test packages/runtime/test/global-task-commands.test.ts`: Expected FAIL нет executable factory.
+- [x] Реализовать service и removal с существующими ресурсами, без Desktop imports; добавлять файлы/убивать PTY только после core guards. Error DTO не содержит paths/stack/cause как отдельные поля, legacy cause остаётся локальным.
+- [x] Запустить обе command suites, contracts test и runtime/contracts typecheck: Expected PASS.
+- [x] Обновить docs, проверить diff, закоммитить; task-done: `node --test packages/runtime/test/board-commands.test.ts packages/runtime/test/global-task-commands.test.ts` → PASS.
 
 ### Task 3: Desktop compatibility adapter
 

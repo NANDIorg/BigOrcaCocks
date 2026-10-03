@@ -160,6 +160,30 @@ Desktop `main/board-commands.ts` регистрирует прежние `board:
 actor; будущим Web/CLI этот адаптер выбора проекта не нужен. Boundary ошибки
 переводятся main ru/en, вложенный OrcaError выбора роли сохраняет прежний перевод.
 
+### Общие команды глобальных задач
+
+`createGlobalTaskCommands` использует тот же executor и явный context для
+list/get/create/update/changeType/move/remove/tasks/createTask/addImages/removeImage/image.
+Host предоставляет конкретную доску, root, разрешённый тип, роли снимка глобальной
+задачи, доступных агентов, resources/dataDir и session liveness/kill. В create/patch/
+subtask входят только поля соответствующих contracts; runId, workflow, agent и
+gateFor клиент не задаёт. Subtask привязывается к проверенной глобальной задаче,
+роль по умолчанию учитывает stageDefaultRole; ограничения зависимостей остаются core.
+Несуществующий run в указанном проекте — `command.globalTaskNotFound`.
+
+Вложения проверяются по байтам/лимитам до открытия проекта, sparse массивы
+отклоняются. Общие resources сохраняют создание metadata/files, rollback при ошибке
+записи и ограничения редактирования после начала работы. Preview отдаёт Uint8Array;
+сетевое кодирование этого DTO относится к будущему transport.
+`createGlobalTaskRemoval` — одна trusted операция удаления и для command service,
+и для legacy socket: живой координатор и core cascade/dispatch guards предшествуют
+очистке вложений/showcase, закрытых живых PTY и Git worktree. Грязный worktree не
+удаляется принудительно, ветка остаётся. Ошибки cleanup сохраняют прежние semantics;
+это пока синхронная операция без transaction/reconciliation.
+
+Запуск координатора, accept/return и остальные workflow/requests команды ещё
+требуют такого application API. Native reveal/open остаются Desktop capabilities.
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,

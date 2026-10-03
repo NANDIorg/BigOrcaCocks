@@ -15,6 +15,14 @@ needs_input — **вычисляемая** колонка: там карточк
 
 ## Модель: глобальная задача = прогон (`Run`)
 
+Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime
+адресуют project/client/actor явно: CRUD, типы, подзадачи и вложения используют core
+guards и общие resources. Общая операция `createGlobalTaskRemoval` проверяет живого
+координатора и cascade/dispatch до очистки файлов/PTY/worktree; ветка сохраняется.
+Запуск координатора и accept/return пока используют существующие workflow services,
+их вход через общий command API — следующий этап. Подробности — «Общие команды
+глобальных задач» в [architecture.md](architecture.md).
+
 Отдельной сущности нет. Прогон (`Run`, `packages/core/src/types.ts`) уже был «набором задач одного
 координатора» со своим жизненным циклом (`closedAt`, `run_done`, `runs finish`), а связь задача → прогон
 (`Task.runId`) уже хранилась, была неизменяемой и учитывалась в фильтре событий. Поэтому:
