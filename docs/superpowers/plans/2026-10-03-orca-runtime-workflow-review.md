@@ -69,11 +69,11 @@
 - `createRunWorkflowServices({ resources, workflow: TaskWorkflowServices, messages })` → прежние exports функций; SUBTASK_MERGE_NODE='subtask-merge' остаётся общим constant. RunWorkflowDeps сохраняет startCoordinator/isAlive.
 - branchHead остаётся argument-based Git read, внутри runtime. Request option parser из Task 1, showcase helper из contracts, ошибки/три approval текста через WorkflowMessages.
 
-- [ ] Добавить API-сценарии: fork с двумя human approvals, неоднозначная карточка без мутаций, принятие одного пути не двигает другой, повтор effects после восстановления не дублирует gate/ask, stale decision/gate без продвижения, два независимых host с разными approval текстами, отказ одного worker не мешает соседнему пути.
-- [ ] Run: `node --test packages/runtime/test/run-workflow-services.test.ts`. Expected: FAIL — createRunWorkflowServices отсутствует.
-- [ ] Перенести run executor, подключить shared task/review/resources, сохранить Desktop facade; перенести самостоятельную suite с сохранением сценариев и disk/store/Git assertions.
-- [ ] Run: runtime/desktop typecheck, runtime tests, Desktop workflow-run/fork E2E и core docs tests. Expected: PASS.
-- [ ] Commit: `refactor: вынести исполнение прогонов workflow в runtime`.
+- [x] Добавить API-сценарии: fork с двумя human approvals, неоднозначная карточка без мутаций, принятие одного пути не двигает другой, повтор effects после восстановления не дублирует gate/ask, stale decision/gate без продвижения, два независимых host с разными approval текстами, отказ одного worker не мешает соседнему пути.
+- [x] Run: `node --test packages/runtime/test/run-workflow-services.test.ts`. Expected: FAIL — createRunWorkflowServices отсутствует.
+- [x] Перенести run executor, подключить shared task/review/resources, сохранить Desktop facade; перенести самостоятельную suite с сохранением сценариев и disk/store/Git assertions.
+- [x] Run: runtime/desktop typecheck, runtime tests, Desktop workflow-run/fork E2E и core docs tests. Expected: PASS.
+- [x] Commit: `refactor: вынести исполнение прогонов workflow в runtime`.
 
 ## Task 4: Общая маршрутизация и сдача
 

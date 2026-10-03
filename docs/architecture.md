@@ -155,7 +155,7 @@ Native backend импортируется только тестовым host Des
 завершается после assertions с ненулевым кодом при ошибке. Это проверка исполнения
 без окна, а не установленного Linux артефакта или native cleanup долгоживущего owner.
 
-Это часть этапа исполнения. Исполнитель workflow прогонов и wiring main/index.ts,
+Это часть этапа исполнения. Wiring main/index.ts,
 обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
 Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
@@ -191,6 +191,20 @@ legacy/path/run; события старого dispatch не двигают но
 Desktop `main/workflow.ts` сохраняет прежние exports, singleton использует тот же
 review/resources. Самостоятельный workflow-git suite перенесён в runtime; смешанные
 Desktop workflow/renderer/ProjectManager сценарии остаются интеграционными проверками.
+
+### Общий исполнитель прогонов workflow
+
+`createRunWorkflowServices({ resources, workflow, messages })` исполняет эффекты
+графа глобальной задачи и каждого пути fork/join. Повтор восстановления не создаёт
+новый gate/ask/approval; ответ старой проверке/решателю не двигает текущую позицию.
+Решение approval пути применяется только к своей ноде, неоднозначная приёмка с
+карточки возвращает код global.approvalAmbiguous до изменений. Ошибка эффекта одного
+пути сохраняет его остановку и не мешает эффектам соседнего. Предел остаётся 50.
+
+Три подписи approval и код ошибки передаёт host; исходные инструкции агентам и
+причины журнала сохраняются. Desktop `main/workflow-run.ts` — прежние exports общей
+factory, самостоятельная suite перенесена в runtime. Desktop socket/IPC/fork E2E
+остаются проверкой host-интеграции. SUBTASK_MERGE_NODE сохранён для старых запросов.
 
 ## Процессы
 

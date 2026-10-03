@@ -1,4 +1,4 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Исполнитель воркфлоу глобальной задачи (`workflow-run.ts`) на настоящем
+// Запуск: pnpm --filter @orca-board/runtime test. Исполнитель воркфлоу глобальной задачи (`workflow-run.ts`) на настоящем
 // git-репозитории во временной папке. PTY нет: координатор и воркеры — фейки, повторяющие контракт `startCoordinator` /
 // `runWorker` (setRunPty, worktree на ветке от ветки прогона, startDispatch).
 import { describe, it, beforeEach, afterEach } from 'node:test'
@@ -11,17 +11,19 @@ import {
   TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, defaultWorkflow, pipelineWorkflow, validateWorkflow,
   type OrcaEvent, type Task, type WfEdge, type WfNode, type WfSubflow, type Workflow
 } from '@orca-board/core'
-import {
-  SUBTASK_MERGE_NODE, acceptRun, advanceRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunDecider,
-  returnRun, runDecision, runGateDecision, settleIdleRunStages, startRunWorkflow, type RunWorkflowDeps
-} from './workflow-run'
-import { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, taskEngine, type WorkflowDeps } from './workflow'
-import { resolveHumanRequest } from './review'
-import { resumeObjective } from './coordinator-resume'
-import { ensureRunBranch, mergeTarget } from './run-branch'
-import { taskWorktreePath } from './git'
-import { OrcaError } from './i18n'
-import { rejectWithImages, resolveWithImages, returnRunWithImages } from './attachments'
+import { createReviewServices, createTaskWorkflowServices, createRunWorkflowServices,
+  SUBTASK_MERGE_NODE, type RunWorkflowDeps, type WorkflowDeps } from '../src/index.ts'
+import { workflowResources, workflowMessages, WorkflowHostError as OrcaError } from './workflow-test-host.ts'
+const messages = workflowMessages()
+const review = createReviewServices({ resources: workflowResources, messages })
+const workflow = createTaskWorkflowServices({ resources: workflowResources, review, messages })
+const runWorkflow = createRunWorkflowServices({ resources: workflowResources, workflow, messages })
+const { acceptRun, advanceRun, escalateDecision, finishRunStage, handleRunRequest, handleRunWorkflowEvents, isRunDecider,
+  returnRun, runDecision, runGateDecision, settleIdleRunStages, startRunWorkflow } = runWorkflow
+const { approvalResolved, enterWork, handleWorkflowEvents, reviewAccept, reviewReject, taskEngine } = workflow
+const { resolveHumanRequest } = review
+const { resumeObjective, ensureRunBranch, mergeTarget, rejectWithImages, resolveWithImages, returnRunWithImages } = workflowResources
+const { taskWorktreePath } = workflowResources.git
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -956,7 +958,7 @@ describe('цель перезапущенного координатора: бл
 
   it('жив прежний координатор — ошибка; граф не начат — цель без изменений', () => {
     const runId = newRun()
-    assert.throws(() => resumeObjective(store, runId, () => true), /уже работает/)
+    assert.throws(() => resumeObjective(store, runId, () => true), /coordinator\.alreadyRunning/)
     const g = store.createGlobalTask({ title: 'Ещё не начата', description: 'цель', workflow: defaultWorkflow(DEFAULT_ROLES) })
     assert.equal(resumeObjective(store, g.id, () => false).objective, 'цель')
   })
@@ -1039,7 +1041,7 @@ describe('картинки к замечаниям при возврате в р
     const runId = atGate()
     runGateDecision(deps, gateOf(runId).id, 'accept')
     const req = approvalOf(runId)!
-    assert.throws(() => resolveWithImages(store, repo, req.id, { action: 'accept', text: 'ок' }, [PNG], () => 1), /только к «Уточнить» и «Вернуть»/)
+    assert.throws(() => resolveWithImages(store, repo, req.id, { action: 'accept', text: 'ок' }, [PNG], () => 1), /attachments\.notForAction/)
     assert.equal(store.getRequest(req.id)!.status, 'pending')
     assert.equal(existsSync(path.join(run(runId).git!.worktree!, '.orca-attachments', runId)), false)
   })
@@ -1402,8 +1404,8 @@ describe('разветвление fork/join: эффекты по путям', (
     assert.deepEqual(humBe.showcaseDispatchIds, [beShow], 'показ — подзадачи своего пути')
     assert.deepEqual(hum.showcaseDispatchIds, [feShow])
     assert.throws(() => acceptRun(deps, runId), (e: unknown) => e instanceof OrcaError && e.key === 'global.approvalAmbiguous', 'с карточки не решить, чей путь')
-    assert.match(humBe.title, /^Путь «Бэкенд»: /)
-    assert.match(hum.body!, /Это нода пути «Фронтенд»/)
+    assert.equal(humBe.title, messages.text('runApproval.laneTitle', { lane: 'Бэкенд', title: 'Приёмка API: Фича' }))
+    assert.ok(hum.body!.includes(messages.text('runApproval.acceptHintLane', { lane: 'Фронтенд' })))
     assert.equal(runApprovals(runId).length, 2)
     restartIsIdempotent(runId)
 
