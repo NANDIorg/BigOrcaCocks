@@ -125,6 +125,27 @@ codec читает и объединяет настройки. Runtime знае�
 в обычном Node 24 без сборщика Electron. Сохранённый activeId пока служит legacy API
 Desktop; Web-клиенты получат свой контекст выбора проекта на следующем этапе.
 
+### Общие команды доски
+
+`createBoardCommands` в runtime выполняет `get/createTask/updateTask/moveTask/removeTask`
+с явным `ProjectCommandContext { projectId, clientId, actor }`. Host устанавливает
+actor по доверенному соединению и передаёт обязательную `authorize(context, command)`;
+только строго `true` разрешает открыть проект. Runtime не читает activeId, env или
+Electron. Payload проверяется до открытия store: create разрешает только title,
+spec, deps, roleId, priority; patch — title, spec, priority. Передать runId, agent,
+gateFor или status через массовое присваивание нельзя. Выбор роли, store guards,
+persistence/listeners остаются прежними. Результаты глубоко копируются: клиент
+не меняет внутреннее состояние через snapshot/Task.
+
+Contracts содержат только DTO/API и `code/details` ошибок; runtime Error хранит
+локальную cause, `toJSON()` её и stack не передаёт. Boundary ошибки имеют стабильные
+коды invalidContext/forbidden/invalidInput/projectNotFound/taskNotFound. Пока ошибки
+core/role имеют общий `command.rejected` и legacy reason; гранулярная локализация
+доменных причин — отдельный перенос. Attribution operator/agent/system соответствует
+human/cli/app; операции синхронны и не держат глобальный status source через await.
+Это application API owner, пока без сетевого transport, revision/idempotency/replay
+и async actor sequencing. Legacy agent socket мигрирует отдельно.
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,
