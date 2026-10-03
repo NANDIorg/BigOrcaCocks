@@ -48,8 +48,8 @@ function fixture(label = 'one') {
   }
   return { repo, services, store, deps, binding, starts, done, targetCalls: () => targetCalls }
 }
-function legacy(f: ReturnType<typeof fixture>) {
-  const run = f.store.createRun('Legacy', undefined, taskGraph())
+function legacy(f: ReturnType<typeof fixture>, wf = taskGraph()) {
+  const run = f.store.createRun('Legacy', undefined, wf)
   const task = f.store.createTask({ title: 'Task', roleId: 'developer', runId: run.id })
   f.deps.startWorker(task.id)
   return task
@@ -129,3 +129,65 @@ it('две привязки одного service используют собст
   assert.equal(existsSync(join(b.repo, 'a.txt')), false)
   assert.equal(b.store.getTask(tb.id)?.status, 'in_progress')
 })
+
+
+/** Два gate executor получают события через тот же project binding, что Desktop. */
+function gateFixture(scope: 'task' | 'run') {
+  const f = fixture()
+  let targetId: string
+  if (scope === 'task') {
+    const wf: Workflow = { version: 1, nodes: [node({ id: 'start', type: 'start' }), node({ id: 'work', type: 'work' }),
+      node({ id: 'gate', type: 'gate', roleId: 'reviewer' }), node({ id: 'end', type: 'end', merged: false })],
+      edges: [edge('start', 'next', 'work'), edge('work', 'next', 'gate'), edge('gate', 'accept', 'end')] }
+    const task = legacy(f, wf); f.done(task.id); targetId = task.id
+  } else {
+    const run = global(f, runGraph(true)); targetId = run.id
+    const task = f.store.createTask({ title: 'Path', roleId: 'developer', runId: run.id })
+    f.deps.startWorker(task.id); f.done(task.id); f.services.run.finishRunStage(f.deps, run.id)
+  }
+  const gate = f.store.listTasks().find(t => t.gateFor?.nodeId === 'gate')!
+  assert.ok(gate)
+  const accept = () => f.binding.reviewDecision(scope === 'task' ? targetId : gate.id, 'accept')
+  return { ...f, gate, targetId, accept }
+}
+for (const scope of ['task', 'run'] as const) {
+  it(`${scope} gate: старый done не останавливает проверку нового dispatch`, () => {
+    const f = gateFixture(scope); const old = f.done(f.gate.id, false)
+    const oldDispatch = f.store.getTask(f.gate.id)!.dispatchId!
+    f.store.reopenTask(f.gate.id, 'retry'); const next = f.deps.startWorker(f.gate.id)
+    assert.notEqual(next.dispatchId, oldDispatch)
+    const before = structuredClone(f.store.snapshot())
+    f.binding.handleEvents(old)
+    assert.deepEqual(f.store.snapshot(), before)
+    assert.equal(f.store.getTask(f.gate.id)?.status, 'in_progress')
+    assert.ok(existsSync(f.store.getTask(f.gate.id)!.worktree!))
+  })
+  it(`${scope} gate: старый exit не удаляет worktree нового dispatch после решения`, () => {
+    const f = gateFixture(scope); const beforeExit = f.store.listEvents().length
+    const dispatch = f.store.getDispatch(f.store.getTask(f.gate.id)!.dispatchId!)!
+    f.store.ptyExited(dispatch.ptyId, 1)
+    const old = f.store.listEvents().slice(beforeExit).filter(e => e.type === 'escalation')
+    assert.equal(old.length, 1)
+    f.accept()
+    f.store.reopenTask(f.gate.id, 'retry'); const next = f.deps.startWorker(f.gate.id)
+    assert.notEqual(next.dispatchId, dispatch.id)
+    const worktree = f.store.getTask(f.gate.id)!.worktree!
+    const before = structuredClone(f.store.snapshot())
+    f.binding.handleEvents(old)
+    assert.deepEqual(f.store.snapshot(), before)
+    assert.equal(existsSync(worktree), true)
+    assert.equal(f.store.getTask(f.gate.id)?.status, 'in_progress')
+  })
+  it(`${scope} gate: актуальный done без dispatchId сохраняет legacy событие и останавливает gate без решения`, () => {
+    const f = gateFixture(scope); const events = f.done(f.gate.id, false).map(e => {
+      const { dispatchId: _dispatchId, ...legacyEvent } = e
+      return legacyEvent
+    })
+    f.binding.handleEvents(events)
+    const blocks = f.store.listEvents().filter(e => e.type === 'workflow_blocked')
+    assert.equal(blocks.length, 1)
+    assert.match(String(blocks[0].payload.reason), /сдана без решения/)
+    if (scope === 'task') assert.ok(f.store.getTask(f.targetId)?.stageBlock)
+    else assert.equal(blocks[0].payload.runId, f.targetId)
+  })
+}

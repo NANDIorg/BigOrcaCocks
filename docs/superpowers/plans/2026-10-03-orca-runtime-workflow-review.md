@@ -89,7 +89,7 @@
 - [x] Добавить aggregator/binding и подключить его к main events/resume/resolve/review, сохранив совместимые exports. Plain Node smoke выполняет реальную запись/reload и workflow; native fixture использует общий binding для перехода после done и приёмки/мержа.
 - [x] Run: Node/native targeted tests, затем `pnpm verify`. Expected: PASS без пропусков.
 - [x] Commit: `refactor: подключить Desktop к общим workflow services`.
-- [ ] Одно fresh-context итоговое ревью диапазона плана; Important/Critical исправить одним RED→GREEN проходом и полным verify, Minor записать как deferred.
+- [x] Одно fresh-context итоговое ревью диапазона плана; Important/Critical исправить одним RED→GREEN проходом и полным verify, Minor записать как deferred.
 - [ ] Записать результат/оставшиеся рубежи, сохранить ledger/review/проверки вне scratch, удалить только workspace этого плана. Собрать/open Desktop, проверить настоящий app.asar и codesign.
 
 Перед сдачей: push/update PR #59 и CI точного HEAD; без merge/release.

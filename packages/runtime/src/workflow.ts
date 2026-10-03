@@ -443,6 +443,8 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
       if (!task || task.answerFor) continue
       // Граф прогона (проверки и вопросы этапов, подзадачи вне этапа) ведёт `workflow-run.ts`; путь подзадачи — этот модуль.
       if (taskEngine(deps, task) === 'run') continue
+      // Запоздалые done/exit прошлого запуска не меняют новый dispatch, в том числе gate.
+      if (e.type !== 'question_answered' && e.dispatchId !== undefined && task.dispatchId !== e.dispatchId) continue
       try {
         if (e.type === 'question_answered') {
           restartAsk(deps, task, e.payload.workerLive === true)

@@ -1060,6 +1060,8 @@ export function createRunWorkflowServices({ resources, workflow, messages }: Run
         if (!e.taskId || (e.type !== 'worker_done' && e.type !== 'escalation' && e.type !== 'question_answered')) continue
         const task = deps.store.getTask(e.taskId)
         if (!task || task.answerFor || taskEngine(deps, task) !== 'run') continue
+        // Запоздалые done/exit прошлого запуска не меняют новый dispatch, в том числе gate.
+        if (e.type !== 'question_answered' && e.dispatchId !== undefined && task.dispatchId !== e.dispatchId) continue
         try {
           if (e.type === 'question_answered') {
             restartAsk(deps, task, e.payload.workerLive === true)
