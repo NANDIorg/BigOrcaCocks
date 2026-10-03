@@ -155,7 +155,7 @@ Native backend импортируется только тестовым host Des
 завершается после assertions с ненулевым кодом при ошибке. Это проверка исполнения
 без окна, а не установленного Linux артефакта или native cleanup долгоживущего owner.
 
-Это часть этапа исполнения. Workflow executors и wiring main/index.ts,
+Это часть этапа исполнения. Исполнитель workflow прогонов и wiring main/index.ts,
 обнаружение версий/моделей, dialog drivers и AssistantSession пока в Desktop.
 Single-owner lifecycle, writer leases,
 client context и ограниченный журнал replay остаются обязательными до подключения Web.
@@ -177,6 +177,20 @@ Desktop `main/review.ts` сохраняет прежние функции чер
 и решений запросов также общий (`request-params.ts`), legacy agent client/HELP не меняются.
 Самостоятельные review/request-params suites перенесены в runtime; Desktop интеграции
 по-прежнему проверяют совместимые входы и сообщения.
+
+### Общий исполнитель задач workflow
+
+`createTaskWorkflowServices({ resources, review, messages })` исполняет legacy-граф
+и путь подзадачи глобального workflow. Store определяет переходы, service выполняет
+запуск, проверки, запросы человеку, Git/merge и конец. `taskEngine` сохраняет разделение
+legacy/path/run; события старого dispatch не двигают новый запуск. Добор после рестарта
+восстанавливает потерянный done/незавершённые эффекты, не дублирует approval и не трогает
+остановленный этап. Конец без мержа сохраняет ветку, checkout чужой ветки — её ownership.
+Предел последовательных переходов остаётся 50. Сообщения review передаёт host.
+
+Desktop `main/workflow.ts` сохраняет прежние exports, singleton использует тот же
+review/resources. Самостоятельный workflow-git suite перенесён в runtime; смешанные
+Desktop workflow/renderer/ProjectManager сценарии остаются интеграционными проверками.
 
 ## Процессы
 

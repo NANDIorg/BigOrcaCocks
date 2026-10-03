@@ -1,4 +1,4 @@
-import { createReviewServices, type WorkflowMessages } from '@orca-board/runtime'
+import { createReviewServices, createTaskWorkflowServices, type WorkflowMessages } from '@orca-board/runtime'
 import { executionResources } from './execution-resources'
 import { OrcaError, mt } from './i18n'
 
@@ -11,3 +11,4 @@ export const workflowMessages: WorkflowMessages = {
 }
 
 export const reviewServices = createReviewServices({ resources: executionResources, messages: workflowMessages })
+export const taskWorkflowServices = createTaskWorkflowServices({ resources: executionResources, review: reviewServices, messages: workflowMessages })

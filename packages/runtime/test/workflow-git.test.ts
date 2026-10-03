@@ -1,4 +1,4 @@
-// Запуск: pnpm --filter @orca-board/desktop test. Нода воркфлоу «Git» на настоящем git-репозитории во временной папке
+// Запуск: pnpm --filter @orca-board/runtime test. Нода воркфлоу «Git» на настоящем git-репозитории во временной папке
 // (docs/workflow.md → «Нода Git»). PTY нет: startWorker — фейк, повторяющий runWorker + startWorker
 // (enterWork, worktree на Task.branch/Task.worktree, dispatch).
 import { describe, it, beforeEach, afterEach } from 'node:test'
@@ -11,9 +11,14 @@ import {
   TaskStore, DEFAULT_COLUMNS, DEFAULT_ROLES, WORKFLOW_VERSION_TASK_SCOPE, validateWorkflow,
   type Task, type Workflow, type WfNode
 } from '@orca-board/core'
-import { enterWork, handleWorkflowEvents, approvalResolved, type WorkflowDeps } from './workflow'
-import { resolveHumanRequest } from './review'
-import { gitCreateBranch, gitCheckout, gitCommit, taskWorktreePath } from './git'
+import { createReviewServices, createTaskWorkflowServices, type WorkflowDeps } from '../src/index.ts'
+import { workflowMessages, workflowResources } from './workflow-test-host.ts'
+
+const messages = workflowMessages()
+const review = createReviewServices({ resources: workflowResources, messages })
+const { resolveHumanRequest } = review
+const { enterWork, handleWorkflowEvents, approvalResolved } = createTaskWorkflowServices({ resources: workflowResources, review, messages })
+const { gitCreateBranch, gitCheckout, gitCommit, taskWorktreePath } = workflowResources.git
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()

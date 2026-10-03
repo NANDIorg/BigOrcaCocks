@@ -55,11 +55,11 @@
 - `createTaskWorkflowServices({ resources, review: ReviewServices, messages })` → taskEngine, enterWork, advance, handleWorkflowEvents, resumeStuckStages, reviewAccept, reviewReject, approvalResolved; прежние WorkflowDeps/TaskEngine.
 - WorkflowDeps сохраняет store/repoRoot/run/startWorker/mergeTarget. Showcase helper берётся из contracts.
 
-- [ ] Добавить тесты общего API: done→human→accept→merge→done с настоящим Git, старый dispatch без перехода, рестарт lost done без повторного approval, stopped stage не исполняется автоматически, конец без мержа сохраняет ветку, host error codes review.notReviewable/stageBlocked.
-- [ ] Run: `node --test packages/runtime/test/task-workflow-services.test.ts`. Expected: FAIL — createTaskWorkflowServices отсутствует.
-- [ ] Перенести алгоритм, сохранив 50 steps, классификацию Git/merge и foreign branch; Desktop получает методы общей singleton factory. Перенести самостоятельный workflow-git suite.
-- [ ] Run: runtime/desktop typecheck, runtime tests, Desktop workflow compatibility suite и core docs tests. Expected: PASS.
-- [ ] Commit: `refactor: выделить общий исполнитель задач workflow`.
+- [x] Добавить тесты общего API: done→human→accept→merge→done с настоящим Git, старый dispatch без перехода, рестарт lost done без повторного approval, stopped stage не исполняется автоматически, конец без мержа сохраняет ветку, host error codes review.notReviewable/stageBlocked.
+- [x] Run: `node --test packages/runtime/test/task-workflow-services.test.ts`. Expected: FAIL — createTaskWorkflowServices отсутствует.
+- [x] Перенести алгоритм, сохранив 50 steps, классификацию Git/merge и foreign branch; Desktop получает методы общей singleton factory. Перенести самостоятельный workflow-git suite.
+- [x] Run: runtime/desktop typecheck, runtime tests, Desktop workflow compatibility suite и core docs tests. Expected: PASS.
+- [x] Commit: `refactor: выделить общий исполнитель задач workflow`.
 
 ## Task 3: Исполнитель прогонов
 
