@@ -60,7 +60,7 @@ export function createDialogRepository(file: string): DialogRepository {
       const incoming = clone(record)
       const index = document.dialogs.findIndex(saved => saved.id === incoming.id)
       if (expectedRevision === null) {
-        if (index !== -1 || incoming.revision !== 0) conflict()
+        if (index !== -1 || document.retiredDialogIds?.includes(incoming.id) || incoming.revision !== 0) conflict()
         document.dialogs.push(incoming)
       } else {
         if (!revision(expectedRevision) || index === -1 || document.dialogs[index].revision !== expectedRevision || incoming.revision !== expectedRevision + 1) conflict()
@@ -73,6 +73,9 @@ export function createDialogRepository(file: string): DialogRepository {
       const index = document.dialogs.findIndex(record => record.id === id)
       if (!revision(expectedRevision) || index === -1 || document.dialogs[index].revision !== expectedRevision) conflict()
       document.dialogs.splice(index, 1)
+      // Revision0 нельзя снова выдать тому же id: stale caller принял бы новый
+      // lifecycle за прежний. Tombstone пишется атомарно вместе с удалением.
+      document.retiredDialogIds = [...(document.retiredDialogIds ?? []), id]
       writeFileAtomic(file, JSON.stringify(document, null, 2))
     }
   }

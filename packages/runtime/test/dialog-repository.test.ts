@@ -156,7 +156,7 @@ test('unknown JSON metadata сохраняются после обновлени
   const expected = JSON.parse(JSON.stringify(original))
   expected.revision = 1
   expected.conversation.messages[0].text = 'Новый текст'
-  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { schemaVersion: 1, custom: { owner: 'future' }, dialogs: [expected] })
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { schemaVersion: 1, custom: { owner: 'future' }, dialogs: [expected], retiredDialogIds: ['other'] })
   assert.deepEqual(repo.history('dialog-A')!.dialog.conversation.providerBinding, original.conversation.providerBinding)
 })
 
@@ -185,4 +185,33 @@ test('I/O ошибка чтения не подменяется отсутств
   assert.throws(() => repo.list())
   assert.throws(() => repo.save(record(), null))
   assert.equal(existsSync(file), true)
+})
+
+for (const operation of ['save', 'remove'] as const) test(`удалённый id не переиспользуется после reload: stale ${operation} не повреждает замену`, t => {
+  const file = join(directory(t), 'dialogs.json')
+  const repo = runtime.createDialogRepository(file)
+  repo.save(record(), null)
+  const stale = repo.get('dialog-A')!
+  repo.remove(stale.id, 0)
+  const restarted = runtime.createDialogRepository(file)
+  const replacement = record('dialog-new')
+  replacement.conversation.messages[0].text = 'Новый разговор'
+  // Старый id относится к старому lifecycle: даже explicit create не сбрасывает revision.
+  assert.throws(() => restarted.save({ ...replacement, id: stale.id }, null), code('dialog.conflict'))
+  restarted.save(replacement, null)
+  const bytes = readFileSync(file, 'utf8')
+  assert.throws(() => operation === 'save' ? restarted.save({ ...stale, revision: 1 }, 0) : restarted.remove(stale.id, 0), code('dialog.conflict'))
+  assert.equal(readFileSync(file, 'utf8'), bytes)
+  assert.deepEqual(runtime.createDialogRepository(file).get(replacement.id), replacement)
+  assert.throws(() => runtime.createDialogRepository(file).save(stale, null), code('dialog.conflict'))
+})
+
+for (const retiredDialogIds of [[42], [''], ['old', 'old'], ['dialog-A']]) test(`невалидные retired ids ${JSON.stringify(retiredDialogIds)} блокируют все записи`, t => {
+  const file = join(directory(t), 'dialogs.json')
+  const bytes = JSON.stringify({ schemaVersion: 1, dialogs: [record()], retiredDialogIds })
+  writeFileSync(file, bytes)
+  const repo = runtime.createDialogRepository(file)
+  assert.throws(() => repo.save(record('new'), null), code('dialog.invalid'))
+  assert.throws(() => repo.remove('dialog-A', 0), code('dialog.invalid'))
+  assert.equal(readFileSync(file, 'utf8'), bytes)
 })

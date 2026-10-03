@@ -3971,6 +3971,9 @@ Runtime `createDialogRepository(absoluteFile)` хранит новый изол�
 использует atomic rename. `save(record, expectedRevision)` создаёт revision 0
 при `null`, затем принимает только следующий revision; `remove` тоже требует
 текущую ревизию. Перед каждой мутацией перечитывается и проверяется весь документ.
+Удаление атомарно добавляет id в optional `retiredDialogIds` того же schema1-файла;
+повторное создание с этим id запрещено даже после reload. Новый разговор требует
+новый opaque id: старые save/delete не смогут затронуть замену с revision 0.
 Повреждение, другая версия и повтор id блокируют запись с `DialogRepositoryError`
 (`dialog.invalid`, `dialog.schemaUnsupported`, `dialog.conflict`); исходный файл
 не стирается и не переносится автоматически. Ошибки I/O проходят caller.

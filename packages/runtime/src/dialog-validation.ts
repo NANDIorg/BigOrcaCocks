@@ -14,6 +14,7 @@ export class DialogRepositoryError extends Error {
 export interface DialogDocument extends Record<string, unknown> {
   schemaVersion: 1
   dialogs: DialogRecord[]
+  retiredDialogIds?: string[]
 }
 
 type Check = (value: unknown) => boolean
@@ -67,5 +68,12 @@ export function assertDialogDocument(value: unknown): asserts value is DialogDoc
     assertDialogRecord(record)
     if (ids.has(record.id)) throw new DialogRepositoryError('dialog.invalid', 'Повтор id в истории диалогов')
     ids.add(record.id)
+  }
+  if (value.retiredDialogIds !== undefined) {
+    if (!Array.isArray(value.retiredDialogIds)) throw new DialogRepositoryError('dialog.invalid', 'Невалидный список удалённых диалогов')
+    for (const retired of value.retiredDialogIds) {
+      if (typeof retired !== 'string' || !id(retired) || ids.has(retired)) throw new DialogRepositoryError('dialog.invalid', 'Невалидный или повторный id удалённого диалога')
+      ids.add(retired)
+    }
   }
 }
