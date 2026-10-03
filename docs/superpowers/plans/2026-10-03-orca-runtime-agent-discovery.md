@@ -56,11 +56,11 @@
 - `AgentSelectionServices { assertAgentUsable(agents: AgentInfo[], id: string): asserts id is AgentKind; pickRole(type: RoleSource, agents: AgentInfo[], requested: string | undefined): Role }`.
 - `createAgentSelection(messages: AgentSelectionMessages): AgentSelectionServices` — прежние алгоритмы и сообщения; missingRoleText общий из launch-policy.
 
-- [ ] API-тесты: unknown/notInstalled/disabled с пустым и непустым enabled, явная и единственная роль, отказ при отсутствии роли/нескольких ролях без выбора, неизвестный/неустановленный/выключенный агент роли, независимые error factories.
-- [ ] Run: `node --test packages/runtime/test/agent-selection.test.ts`. Expected: FAIL — factory отсутствует.
-- [ ] Вынести проверки с injected messages, сохранить сужение AgentKind и неизменность inputs; описать границу в architecture.
-- [ ] Run: runtime typecheck/tests и core docs tests. Expected: PASS.
-- [ ] Commit: `refactor: вынести выбор агента и роли в runtime`.
+- [x] API-тесты: unknown/notInstalled/disabled с пустым и непустым enabled, явная и единственная роль, отказ при отсутствии роли/нескольких ролях без выбора, неизвестный/неустановленный/выключенный агент роли, независимые error factories.
+- [x] Run: `node --test packages/runtime/test/agent-selection.test.ts`. Expected: FAIL — factory отсутствует.
+- [x] Вынести проверки с injected messages, сохранить сужение AgentKind и неизменность inputs; описать границу в architecture.
+- [x] Run: runtime typecheck/tests и core docs tests. Expected: PASS.
+- [x] Commit: `refactor: вынести выбор агента и роли в runtime`.
 
 ## Task 3: Desktop adapter и сдача
 

@@ -183,6 +183,14 @@ supportsExtraArgs сохраняют прежние правила. На сер�
 не импортирует Electron. Responsive owner и асинхронное обнаружение остаются
 следующим этапом надёжности; этот перенос сохраняет прежний порядок Desktop.
 
+`createAgentSelection(messages)` проверяет известный/установленный/включённый
+агент и выбирает явную либо единственную роль типа задачи. Ошибки
+agent.unknown/notInstalled/disabled и role.missing создаёт host; вложенные подсказки
+common.none/role.missing.* остаются сообщениями для перевода. Список нескольких
+ролей без --role сохраняет прежнюю русскую инструкцию agent client. Общие guards
+не меняют inputs и не запускают процессы; вызывающий service применяет их до
+эффектов store/Git. Каждый host использует свою error factory.
+
 ### Общая приёмка и решения человека
 
 `createReviewServices({ resources, messages })` выполняет review/merge и решения
