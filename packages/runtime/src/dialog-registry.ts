@@ -140,6 +140,8 @@ export class DialogRegistry {
     const conversation = metadata(previous?.conversation, record.conversation) as DialogRecord['conversation']
     conversation.error = record.conversation.error
     conversation.providerBinding = record.conversation.providerBinding
+      ? { ...conversation.providerBinding, ...record.conversation.providerBinding, sessionId: record.conversation.providerBinding.sessionId }
+      : undefined
     const next: DialogRecord = { ...previous, ...record, conversation,
       revision: entry.record.revision + 1, updatedAt: Math.max(Date.now(), entry.record.updatedAt + 1) }
     this.deps.repository?.save(next, entry.record.revision)

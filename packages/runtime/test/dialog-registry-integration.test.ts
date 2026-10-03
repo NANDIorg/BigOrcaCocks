@@ -4,9 +4,20 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { AssistantChatSnapshot } from '@orca-board/contracts'
 import { AssistantSession, createDialogRepository } from '../src/index.ts'
 import { fixture, services, until } from './conversation-fixture.ts'
+
+for (const mode of ['codex', 'acp']) for (const phase of ['state', 'human']) {
+  test(`${mode}/${phase}: ошибка записи не задерживает естественный выход Node и не отправляет turn`, () => {
+    const env = { ...process.env }
+    delete env.NODE_TEST_CONTEXT
+    const output = execFileSync(process.execPath, [fileURLToPath(new URL('./fixtures/registry-storage-failure.mjs', import.meta.url)), mode, phase], { env, encoding: 'utf8', timeout: 8000 })
+    assert.match(output, /(?:# pass 1|ℹ pass 1)/u)
+    assert.doesNotMatch(output, /(?:# fail [1-9]|ℹ fail [1-9])/u)
+  })
+}
 
 test('session сама сохраняет Codex; отдельный Node восстанавливает Desktop-compatible history без CLI', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-registry-restart-'))

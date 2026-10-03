@@ -234,3 +234,19 @@ it('unknown metadata сообщений и tools переживает обнов
   assert.deepEqual(saved.dialogs[0].conversation.messages[0].extra, { future: true })
   assert.deepEqual(saved.dialogs[0].conversation.messages[0].toolCalls[0].extra, ['keep'])
 })
+
+it('unknown provider binding metadata сохраняется после события и stop; исчезнувший native id очищается', async t => {
+  const f = fixture(t)
+  const id = f.registry.create({ agent: 'codex' })
+  f.children[0].state.providerBinding = { transport: 'codex-app-server', sessionId: 'native' }
+  f.children[0].update({ type: 'state', status: 'thinking' })
+  const raw = JSON.parse(readFileSync(f.file, 'utf8'))
+  raw.dialogs[0].conversation.providerBinding.future = { keep: true }
+  writeFileSync(f.file, JSON.stringify(raw))
+  await f.registry.send(id, 'hello')
+  assert.deepEqual(JSON.parse(readFileSync(f.file, 'utf8')).dialogs[0].conversation.providerBinding.future, { keep: true })
+  f.children[0].state.providerBinding = { transport: 'codex-app-server' }
+  f.registry.stop(id)
+  const binding = JSON.parse(readFileSync(f.file, 'utf8')).dialogs[0].conversation.providerBinding
+  assert.deepEqual(binding, { transport: 'codex-app-server', future: { keep: true } })
+})

@@ -165,11 +165,13 @@ class Conversation implements AssistantConversation {
     this.turnAgentText = false
     this.tools.clear()
     this.setState('thinking')
+    // Host callback может синхронно закрыть driver, например при ошибке истории.
+    this.assertOpen()
     const providerText = context ? `${context}\n\n${text}` : text
     const human: ConversationMessage = { id: randomUUID(), role: 'human', text, at: Date.now() }
     try {
       // Handoff ждёт acceptance; оригинальный текст уже должен предшествовать раннему ответу.
-      if (context !== undefined) this.putMessage(human)
+      if (context !== undefined) { this.putMessage(human); this.assertOpen() }
       if (this.protocol === 'claude') {
         this.write({ type: 'user', session_id: this.id, parent_tool_use_id: null, message: { role: 'user', content: providerText } })
       } else if (this.protocol === 'codex') {
@@ -208,7 +210,11 @@ class Conversation implements AssistantConversation {
       }
       this.firstPrompt = false
       if (context === undefined) this.putMessage(human)
-    } catch (error) { if (!this.cancelling) this.fail(errorText(error)); throw error }
+    } catch (error) {
+      this.rejectPrompt(error instanceof Error ? error : new Error(errorText(error)))
+      if (!this.cancelling) this.fail(errorText(error))
+      throw error
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -252,6 +258,7 @@ class Conversation implements AssistantConversation {
   }
 
   private waitForPromptAcceptance(turn: number): Promise<void> {
+    this.assertOpen()
     const accepted = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => this.fail(this.deps.messages('assistantTransport.timeout')), HANDSHAKE_TIMEOUT)
       this.promptAcceptance = { turn, resolve, reject, timer }
