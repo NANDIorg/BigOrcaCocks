@@ -69,8 +69,14 @@
 
 ## Итоговая проверка и доставка
 
-- [ ] Один fresh final reviewer диапазона исходный HEAD..production HEAD по plan/spec/Review Focus/ledger; Critical/Important → один RED→GREEN fix pass, Minor → backlog.
-- [ ] Локальный Desktop pack, codesign/ASAR checks и open свежего app; read-only profile identity probe без GUI кликов.
-- [ ] Зафиксировать фактические результаты в этом плане; core docs/HELP suite; обновить PR #59 перед финальным push.
-- [ ] Exact HEAD push и PR CI, чистый worktree; архивировать/hash-check только собственный SDD workspace, затем удалить собственную leaf.
-- [ ] Итог: scope, tests, review, приложение, что осталось; все Rulings и deferred minors из ledger.
+- [x] Один fresh final reviewer диапазона исходный HEAD..production HEAD по plan/spec/Review Focus/ledger; Critical/Important → один RED→GREEN fix pass, Minor → backlog.
+- [x] Локальный Desktop pack, codesign/ASAR checks и open свежего app; read-only profile identity probe без GUI кликов.
+- [x] Зафиксировать результаты реализации, полного verify, review и локальной сборки в этом плане.
+
+**Фактические результаты:** runtime/contracts typecheck и contracts50 PASS; task-done runtime664/664 и Desktop6/6 PASS. Полный `pnpm verify` — **3634/3634**, fail/cancel/skip0: scripts49/core943/CLI38/contracts50/runtime664/Desktop1890; typecheck/build PASS. Один fresh reviewer проверил текущий диапазон `69851ad..3ab241e`: Critical0/Important0/Minor0, независимые runtime26/26 и Desktop6/6 PASS; исправлений по ревью не потребовалось.
+
+Desktop 1.1.3 / Electron 38.8.6 / macOS x64 собран на production commit `3ab241ebe022ba4bfac88211b7ff20f38d8cf6ae`; codesign и bundled runtime/contracts/core PASS. Приложение: `/private/tmp/orca-web-migration-audit/apps/desktop/release/local/mac/orca-board.app`; фактический main5298/renderer6190, profile identity и read-only owner probe PASS. Ручной интерфейс проверяет пользователь.
+
+При первом старте завис прежний `shellPath()` до профиля/воркеров: основной процесс ожидал subprocess login-shell `zsh`. Диагностика сохранена; после остановки только его зависших bootstrap subprocess приложение завершило запуск. Код чтения PATH в этом переносе не изменён; повторяемость и постоянное исправление — отдельная задача.
+
+**Доставка после последнего коммита документации:** повторить core docs/HELP suite, обновить PR #59 до push, дождаться push и PR CI именно финального HEAD, проверить чистый worktree. Затем архивировать/hash-check только собственный SDD workspace и удалить его leaf. Итоговый receipt после этих действий хранится вне Git: `/private/tmp/orca-worker-commands-evidence/delivery-final.json`, ledger/логи/единственное ревью — в соседнем `sdd/`. Это позволяет подтвердить CI финального HEAD без последующего коммита, который изменил бы проверенный HEAD. В итог пользователю включить scope/tests/review/app/остаток работ, все Rulings и deferred minors текущего ledger.
