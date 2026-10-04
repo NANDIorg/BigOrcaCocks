@@ -12,14 +12,15 @@ HTTP API. Один сервер предназначен для одного и�
 Git, curl, tar, sha256sum и Python 3; sudo нужен для systemd и HTTPS. Node 24 и собранный native PTY
 включены в архив. Исходники, pnpm и компилятор на сервере не нужны.
 
-В **первом отдельном Web-выпуске `web/vX.Y.Z`** будут `install-orca-web.sh`,
-`orca-web-linux-x64-X.Y.Z.tar.gz` и `SHA256SUMS`. Существующий Desktop 2.0.0
-не переупаковывается; в его черновике Web assets отсутствуют. До первого Web-выпуска
-используйте сборку из исходников ниже. Установщик не меняет существующую установку.
+Первый пакет — [Orca Web 2.0.0](https://github.com/NANDIorg/BigOrcaCocks/releases/tag/web/v2.0.0):
+`install-orca-web.sh`, `orca-web-linux-x64-2.0.0.tar.gz` и `SHA256SUMS`.
+Web выпускается отдельно под тегами `web/vX.Y.Z`; Desktop 2.0.0 не переупаковывается.
+Установщик не меняет существующую установку.
 
-Скачайте `install-orca-web.sh` из нужного общего GitHub Release, затем:
+Скачайте установщик из Web-выпуска и запустите:
 
 ```sh
+curl -fL https://github.com/NANDIorg/BigOrcaCocks/releases/download/web%2Fv2.0.0/install-orca-web.sh -o install-orca-web.sh
 bash install-orca-web.sh
 ```
 

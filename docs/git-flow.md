@@ -16,7 +16,7 @@ Root/Desktop версии совпадают; Web/CLI/shared manifests не вы
 Release/fix/backmerge направления те же, что ниже, с соответствующим product prefix.
 Desktop feed остаётся прежним; Web выбирает только стабильные web/v tags и свой архив.
 Workflow Desktop — release.yml; Web — web-release.yml. Rulesets уже предусматривают web/cli prefixes;
-применение изменений на GitHub остаётся отдельной операцией владельца. Существующий Desktop Draft 2.0.0
+применение изменений на GitHub остаётся отдельной операцией владельца. Опубликованный Desktop 2.0.0
 не переупаковывается. Установка Web — [web.md](web.md); release-поручение — [releasing.md](releasing.md).
 Node-native проверки используют отдельный .native root и не rebuild Desktop node-pty.
 
