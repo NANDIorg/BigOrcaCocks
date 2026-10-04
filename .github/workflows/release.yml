@@ -186,6 +186,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Node native root готовим один раз до параллельных suites; Electron ABI выбирает упаковка.
+      - run: node scripts/node-native.mjs
       - run: pnpm verify
         env:
           GIT_CONFIG_COUNT: '4'
