@@ -9,6 +9,11 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: OrcaApi = {
+  recovery: {
+    list: projectId => ipcRenderer.invoke('recovery:list', projectId),
+    inspect: projectId => ipcRenderer.invoke('recovery:inspect', projectId),
+    resolve: (id, revision, resolution) => ipcRenderer.invoke('recovery:resolve', id, revision, resolution)
+  },
   app: {
     windowChrome: windowChromeMode(process.platform, process.argv),
     info: () => ipcRenderer.invoke('app:info'),

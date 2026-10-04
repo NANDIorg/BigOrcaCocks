@@ -189,7 +189,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
       // Worktree, который создала нода «Git» до первого запуска, тоже «свежий»: зависимостей в нём ещё нет.
       const setup = fresh || !snap.dispatches.some((d) => d.taskId === task.id) ? setupCommand(worktree) : null
       launchScope.guard()
-      const ptyId = launchAgent(inv, worktree, (launch, onExit) => {
+      const ptyId = launchScope.external({ kind: 'pty', operation: 'worker.spawn', cwd: worktree, resource: task.id }, () => launchAgent(inv, worktree, (launch, onExit) => {
         const unixSetup = platform !== 'win32' && setup && Array.isArray(launch.args)
           ? {
               command: host.shell(),
@@ -209,7 +209,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
           },
           onExit
         )
-      }, (id, code) => store.ptyExited(id, code), host.launchOptions())
+      }, (id, code) => store.ptyExited(id, code), host.launchOptions()), killPty)
       try { launchScope.commit(() => store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })) }
       catch (error) { killPty(ptyId); throw error }
       return { ptyId, dispatchId, worktree, branch }
@@ -282,7 +282,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
       // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны. Возвраты
       // в работу (`returns/`) остаются: на них ссылаются `Run.stageInput.images` и `Run.returns`.
       if (root && resume) clearStartImages(root, run.id)
-      const paths = root ? writeAttachments(root, run.id, images) : []
+      const paths = root ? scope.external({ kind: 'files', operation: 'coordinator.attachments', cwd, resource: run.id }, () => writeAttachments(root!, run.id, images)) : []
       const inv = spec.invoke(agentSystemPrompt(host.prompts.coordinator, { projectRules: ctx.agentRules, role, language: host.language() }), coordinatorPrompt(objective, paths), {
         permissionMode: ctx.permissionMode,
         shell: host.shell(),
@@ -292,7 +292,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
         extraArgs
       })
       scope.guard()
-      ptyId = launchAgent(inv, cwd, (launch, onExit) => spawnPty({
+      ptyId = scope.external({ kind: 'pty', operation: 'coordinator.spawn', cwd, resource: run.id }, () => launchAgent(inv, cwd, (launch, onExit) => spawnPty({
         meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
         cwd,
         command: launch.command,
@@ -311,7 +311,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
       }, onExit), (id) => {
         store.coordinatorExited(run.id, id)
         escalateAfterCoordinator(store, run.id)
-      }, host.launchOptions())
+      }, host.launchOptions()), killPty)
     } catch (e) {
       // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
       // Существующую глобальную задачу не трогаем: она жила и до этого запуска.

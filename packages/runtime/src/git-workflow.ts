@@ -2,8 +2,9 @@ import { existsSync } from 'node:fs'
 import { canonicalGitCommonDir, type GitOperationQueue } from './git-operation-queue.ts'
 import { GitProcessError, type GitProcessService, type GitProcessResult } from './git-process.ts'
 import { GitOpError, MergeError, type GitMessages, type ReviewInfo } from './git-errors.ts'
+import { gitNativeEffect, type GitMutationObserver } from './git-effects.ts'
 
-export interface GitWorkflowOptions { guard?: () => void; signal?: AbortSignal }
+export interface GitWorkflowOptions { guard?: () => void; signal?: AbortSignal; onMutation?: GitMutationObserver }
 export interface GitWorkflowReadRepository {
   head(ref?: string): Promise<string | undefined>
   remotes(): Promise<string[]>
@@ -38,7 +39,8 @@ export interface GitWorkflowService {
 }
 
 /** Scoped методы не входят повторно в очередь: compound review/launch выполняются одной repo job. */
-export function createGitWorkflowService(messages: GitMessages, queue: GitOperationQueue, processes: GitProcessService): GitWorkflowService {
+export function createGitWorkflowService(messages: GitMessages, queue: GitOperationQueue, processes: GitProcessService,
+  fallbackObserver?: (root: string) => GitMutationObserver): GitWorkflowService {
   const check = (options: GitWorkflowOptions) => {
     options.guard?.()
     if (options.signal?.aborted) throw new GitProcessError('Вызов Git отменён', 'ABORT_ERR', '', '', true)
@@ -65,9 +67,14 @@ export function createGitWorkflowService(messages: GitMessages, queue: GitOperat
         if (target !== key) throw new GitOpError('Git операция обращается к другому репозиторию вне своей очереди')
         paths.add(cwd)
       }
+      const effect = gitNativeEffect(cwd, args)
+      const tracker = effect ? (options.onMutation ?? fallbackObserver?.(root))?.(effect) : undefined
+      guard()
       let result: GitProcessResult | undefined; let failure: unknown
       try { result = await processes.run(cwd, args, { timeoutMs, acceptedExitCodes, signal: options.signal }) }
       catch (error) { failure = error }
+      // Native outcome сохраняется до stale guard: Git уже мог изменить refs.
+      if (failure) tracker?.failed(); else tracker?.completed()
       // Guard вне native catch: поздний результат не форматируется как Git failure.
       guard()
       if (failure) throw failure

@@ -252,7 +252,7 @@ export function createRunWorkflowServices({ resources, workflow, messages }: Run
             case 'request_human': if (node?.type === 'human') scope.commit(() => requestHuman(deps, run, node, note)); break
             case 'merge': {
               if (!run.git) { block('слияние в базу невозможно: у глобальной задачи нет ветки (глобальная задача начата до веток)'); break }
-              const result = await scope.wait(() => mergeRunBranch(store, deps.repoRoot, runId, `Merge orca run: ${globalTaskTitle(run)}`, scopedContext(deps, scope)))
+              const result = await scope.wait(() => mergeRunBranch(store, deps.repoRoot, runId, `Merge orca run: ${globalTaskTitle(run)}`, scopedContext(deps, scope), scope))
               if (result.kind === 'blocked') { block(`нода «${node ? wfNodeTitle(node) : action.nodeId}»: ${result.reason}`); break }
               await next(result.kind === 'ok' ? 'ok' : 'conflict', {}, result.kind === 'conflict' ? { title: 'Мерж не удался', text: result.error } : undefined); break
             }

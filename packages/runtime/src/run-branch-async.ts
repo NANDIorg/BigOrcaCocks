@@ -5,7 +5,7 @@ import { globalTaskTitle, runBranchName, type Run, type RunGit, type Task } from
 import { GitOpError, MergeError } from './git-errors.ts'
 import { GitProcessError } from './git-process.ts'
 import type { createGitOperations } from './git.ts'
-import type { EffectProject, EffectScopeService } from './effect-scope.ts'
+import type { EffectProject, EffectScope, EffectScopeService, EffectTarget } from './effect-scope.ts'
 import type { ExecutionMessages } from './execution-messages.ts'
 import type { MergeTarget, RunMergeResult, RunBranchSyncDeps } from './run-branch.ts'
 
@@ -21,12 +21,12 @@ export function createAsyncRunBranchServices({ messages, git, effects }: AsyncRu
   const reason = (error: unknown) => error instanceof GitProcessError ? error.stderr.trim() || error.message : error instanceof Error ? error.message : String(error)
   const native = (error: unknown) => error instanceof GitProcessError && !error.cancelled || error instanceof GitOpError
   const runWorktreePath = (root: string, runId: string) => join(root, '..', '.orca-worktrees', runId)
-  function capture(project: EffectProject, runId?: string, extra: () => boolean = () => true) {
+  function capture(project: EffectProject, runId?: string, extra: () => boolean = () => true, target: EffectTarget = {}) {
     const { id, root, store } = project; const run = runId === undefined ? undefined : store.getRun(runId)
     const before = run ? metadata(run) : undefined
     return effects.capture({ id, root, store, isCurrent: () => project.id === id && project.root === root && project.store === store
       && (project.isCurrent?.() ?? true) && (!run || store.getRun(run.id) === run && metadata(run) === before) && extra() },
-    runId === undefined ? {} : { runId })
+    runId === undefined ? target : { ...target, runId })
   }
   function startedWithoutBranch(project: EffectProject, runId: string): boolean {
     const ids = new Set(project.store.listSubtasks(runId).map(t => t.id))
@@ -87,12 +87,12 @@ export function createAsyncRunBranchServices({ messages, git, effects }: AsyncRu
     try { return project.store.getRun(task.runId ?? '')?.git?.branch ?? await scope.read(git.workflowGit, repo => repo.currentBranch()) }
     finally { scope.close() }
   }
-  async function mergeRunBranch(project: EffectProject, runId: string, message: string): Promise<RunMergeResult> {
-    const scope = capture(project, runId)
+  async function mergeRunBranch(project: EffectProject, runId: string, message: string, parent?: EffectScope): Promise<RunMergeResult> {
+    const scope = capture(project, runId, () => true, parent ? { nodeId: parent.token.nodeId, laneId: parent.token.laneId } : {})
     try {
       const g = project.store.getRun(runId)!.git
       if (!g) return { kind: 'blocked', reason: 'у глобальной задачи нет ветки — сливать нечего' }
-      return await scope.transaction(git.workflowGit, async repo => {
+      const result = await scope.transaction<RunMergeResult>(git.workflowGit, async repo => {
         let target = await repo.localBranchExists(g.base) ? g.base : undefined
         if (!target) { const [remote, ...rest] = g.base.split('/'); if (rest.length && (await repo.remotes()).includes(remote)) target = rest.join('/') }
         if (!target) return { kind: 'blocked', reason: `база «${g.base}» — не ветка (коммит или неизвестное имя): слить в неё нельзя. Замените merge в воркфлоу на git push и создайте PR` }
@@ -118,13 +118,17 @@ export function createAsyncRunBranchServices({ messages, git, effects }: AsyncRu
           if (removed) rmSync(dir, { recursive: true, force: true })
         }
       })
+      if (parent) scope.transferTo(parent)
+      return result
     } finally { scope.close() }
   }
   async function removeRunWorktree(project: EffectProject, runId: string): Promise<boolean> {
     const scope = capture(project, runId)
     try {
       const worktree = project.store.getRun(runId)!.git?.worktree
-      return worktree === undefined || await scope.transaction(git.workflowGit, repo => repo.removeCleanWorktree(worktree))
+      const removed = worktree === undefined || await scope.transaction(git.workflowGit, repo => repo.removeCleanWorktree(worktree))
+      scope.checkpoint()
+      return removed
     } finally { scope.close() }
   }
   class RunBranchSync {

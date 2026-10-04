@@ -78,7 +78,7 @@ detached base, dirty worktree и feature ref после конфликта со�
 подготовки объединены с отдельным guard каждого caller. Run Git metadata проверяются отдельно
 от domain token, поэтому подготовка соседа не отменяет lane. Profile/docs/preview Git reads тоже
 асинхронны; policy проверяется до сохранения проекта, cancellation не становится fallback. Persistent
-reconciliation продолжается в B: native effect до отмены может
+journal/reconciliation подключены: native effect до отмены может
 остаться, автоматического rollback и безопасного повтора после crash пока не обещаем.
 
 ## Создание и правка графа через ассистента
@@ -1432,7 +1432,7 @@ orca-board request resolve --request <id> --option <id|метка> [--text "..."
   каждый запуск заново слал бы `workflow_blocked`. Живые запуски после рестарта закрываются как `unknown`, задача
   (и проверка) — в ready на своём этапе; повторный запуск повтором не считается (`visits` не растут).
 - Async Git не блокирует main; queue сериализует связанные worktree. После crash native effect
-  может уже существовать без store metadata: persistent reconciliation ещё не завершена.
+  может уже существовать без store metadata: persistent journal и reconciliation подключены.
 - Решение человека (`human` → «Вернуть» → работа) останавливает цикл так же, как `attempts`: предупреждение
   валидации о бесконечных отказах такие циклы не учитывает.
 - Условие `files` не поддерживается. Параллельные этапы — только разветвлением `fork`/`join` графа глобальной задачи
@@ -1464,3 +1464,5 @@ dispatch; обычный повтор запуска вновь проходит
 остаются результатом графа. Повторный заход через условие в ту же ноду
 сохраняет увеличенные visits и stage_changed: attempts учитывает такой повтор,
 а preview соответствует записываемому этапу.
+
+Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.

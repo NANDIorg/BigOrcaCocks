@@ -7,11 +7,13 @@ import { createGitProcessService, GitProcessError, type GitProcessService } from
 
 import { GitOpError, type GitMessages } from './git-errors.ts'
 import { createGitWorkflowService } from './git-workflow.ts'
+import { gitNativeEffect, nativeOnlyGitObserver } from './git-effects.ts'
+import type { EffectJournal } from './effect-journal.ts'
 export * from './git-errors.ts'
 
 /** Один экземпляр операций на owner; callbacks не привязывают runtime к глобальному языку Desktop. */
-export function createGitOperations(messages: GitMessages, operationQueue: GitOperationQueue = createGitOperationQueue(), processes: GitProcessService = createGitProcessService()) {
-  const workflowGit = createGitWorkflowService(messages, operationQueue, processes)
+export function createGitOperations(messages: GitMessages, operationQueue: GitOperationQueue = createGitOperationQueue(), processes: GitProcessService = createGitProcessService(), journal?: () => EffectJournal | undefined) {
+  const workflowGit = createGitWorkflowService(messages, operationQueue, processes, root => nativeOnlyGitObserver(journal, root))
 
   /** Совместимые именованные методы; алгоритмы существуют только в scoped async port. */
   const currentBranch = (root: string) => workflowGit.read(root, repo => repo.currentBranch())
@@ -102,8 +104,11 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
    * `input` — stdin команды (`hash-object --stdin`); service закрывает stdin и владеет деревом hooks.
    */
   async function runGit(cwd: string, args: string[], timeoutMs = LOCAL_TIMEOUT_MS, input?: string): Promise<{ stdout: string; stderr: string }> {
-    try { return await processes.run(cwd, args, { timeoutMs, input }) }
-    catch (e) { throw opFailed(args, e, timeoutMs) }
+    const effect = gitNativeEffect(cwd, args); const tracker = effect ? nativeOnlyGitObserver(journal, cwd)(effect) : undefined
+    let result: { stdout: string; stderr: string }
+    try { result = await processes.run(cwd, args, { timeoutMs, input }) }
+    catch (e) { tracker?.failed(); throw opFailed(args, e, timeoutMs) }
+    tracker?.completed(); return result
   }
 
   const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g

@@ -17,8 +17,8 @@ import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, createProjectGitCommands, createRunCommands, createAgentCommands, createSessionCommands, createSessionWriterLeases, createAssistantCommands, registeredProject, isRegisteredProjectCurrent, obsoleteEffect, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands, ProjectGitCommands, RunCommands, AgentCommands, SessionCommands, AssistantCommands } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createRecoveryCommands, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, createProjectGitCommands, createRunCommands, createAgentCommands, createSessionCommands, createSessionWriterLeases, createAssistantCommands, registeredProject, isRegisteredProjectCurrent, obsoleteEffect, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands, ProjectGitCommands, RunCommands, AgentCommands, SessionCommands, AssistantCommands, RecoveryCommands } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
@@ -30,6 +30,9 @@ import { registerDesktopFileCommands } from './file-commands'
 import { registerDesktopProjectRunAgentCommands } from './project-run-agent-commands'
 import { registerDesktopSessionAssistantCommands } from './session-assistant-commands'
 import { executionResources } from './execution-resources'
+import { initializeEffectJournal, getEffectJournal, requiredEffectJournal } from './effect-journal'
+import { registerDesktopRecoveryCommands } from './recovery-commands'
+import { gitProcesses } from './git'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities } from './attachments'
 import { showcaseServices } from './showcase'
@@ -106,6 +109,7 @@ else app.on('second-instance', () => { if (desktopInitialized && !quitting) show
 let win: BrowserWindow | null = null
 let windowFullscreen = false
 let projects: ProjectManager
+let recoveryCommands: RecoveryCommands
 let boardCommands: BoardCommands
 let globalTaskCommands: GlobalTaskCommands
 let coordinatorCommands: CoordinatorCommands
@@ -843,6 +847,9 @@ function registerIpc(): void {
       ? `desktop:${event.sender.id}` : null
   })
   // Рукопожатие для вложений к замечаниям: renderer проверяет, что main новый и принимает `images`.
+  registerDesktopRecoveryCommands<IpcMainInvokeEvent>(handle, { commands: recoveryCommands,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null })
   handle('attachments:ping', () => true)
   // Что main принимает во вложениях: любые файлы в лимитах `ATTACHMENT_LIMITS` (`validateAttachments`).
   handle('attachments:capabilities', (): AttachmentCapabilities => attachmentCapabilities())
@@ -864,7 +871,7 @@ async function initializeDesktop(): Promise<void> {
   projects = new ProjectManager(app.getPath('userData'))
   const authorize = (context: ClientCommandContext) => Boolean(win && !win.isDestroyed()
     && context.clientId === `desktop:${win.webContents.id}` && context.actor.kind === 'operator' && context.actor.id === 'local-user')
-  sessionCommands = createSessionCommands({ authorize, project: id => projects.get(id), sessions: sessionRegistry,
+  sessionCommands = createSessionCommands({ authorize, project: id => projects.get(id), sessions: sessionRegistry, journal: getEffectJournal,
     leases: sessionWriterLeases, defaultCwd: homedir(),
     env: project => ({ ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}), ORCA_SOCKET: SOCKET_PATH,
       ...(project ? { ORCA_PROJECT: project.id } : {}), PATH: workerPath() }),
@@ -892,6 +899,9 @@ async function initializeDesktop(): Promise<void> {
       reveal: path => { shell.showItemInFolder(path) }
     }
   })
+  recoveryCommands = createRecoveryCommands({ journal: requiredEffectJournal, processes: gitProcesses, authorize,
+    project: id => { const project = projects.get(id); return project ? { ...executionContextFor(id), id, root: project.root, store: projects.store(id) } : undefined },
+    isCurrent: project => project.isCurrent?.() === true })
   projectGitCommands = createProjectGitCommands({ project: id => projects.get(id), authorize,
     isCurrent: project => projects.get(project.id) === project, git: executionResources.git, liveAgents: liveAgentCount })
   runCommands = createRunCommands({ project: id => projects.get(id) ? { store: projects.store(id) } : undefined, authorize })
@@ -1123,9 +1133,10 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock || quitting) return
   await startProfileRuntime({
     dataDir: app.getPath('userData'),
-    start: async () => {
+    start: async context => {
       if (quitting) return
       try {
+        initializeEffectJournal(context.dataDir, context.owner.instanceId)
         await initializeDesktop()
         desktopInitialized = true
       } catch (error) {

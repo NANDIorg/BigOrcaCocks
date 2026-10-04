@@ -5,6 +5,7 @@ import { commandObject, commandOptionalString, commandString } from './profile-c
 import type { createSessionRegistry } from './sessions.ts'
 import type { SessionWriterLeases } from './session-writer-leases.ts'
 import { sessionDimension as dimension, sessionInput } from './session-command-input.ts'
+import type { EffectJournal } from './effect-journal.ts'
 
 export interface SessionCommandHost extends ClientCommandHost<SessionCommandName> {
   project(id: string): Project | undefined
@@ -13,6 +14,7 @@ export interface SessionCommandHost extends ClientCommandHost<SessionCommandName
   defaultCwd: string
   env(project?: Project): Record<string, string>
   onExit?(id: string, exitCode: number): void
+  journal?: () => EffectJournal | undefined
 }
 function spawnOptions(raw: unknown): PtySpawnOptions {
   const value = commandObject(raw, ['cols', 'rows', 'cwd', 'command', 'args', 'env', 'projectId', 'label'], 'options')
@@ -55,8 +57,16 @@ export function createSessionCommands(host: SessionCommandHost): SessionCommands
         const project = projectId === undefined ? undefined : host.project(projectId)
         if (projectId !== undefined && !project) throw new CommandError('command.projectNotFound', { projectId })
         host.leases.prune()
-        return host.sessions.spawnPty({ ...options, cwd: options.cwd ?? project?.root ?? host.defaultCwd,
-          env: { ...host.env(project), ...options.env }, meta: { role: 'shell', label: label ?? 'терминал', ...(project ? { projectId: project.id } : {}) } }, host.onExit)
+        const cwd = options.cwd ?? project?.root ?? host.defaultCwd
+        const journal = host.journal?.()
+        const effectId = journal?.begin({ repoRoot: project?.root ?? cwd, ...(project ? { projectId: project.id } : {}) }, { kind: 'pty', operation: 'shell.spawn', cwd })
+        let ptyId: string | undefined
+        try {
+          ptyId = host.sessions.spawnPty({ ...options, cwd,
+            env: { ...host.env(project), ...options.env }, meta: { role: 'shell', label: label ?? 'терминал', ...(project ? { projectId: project.id } : {}) } }, host.onExit)
+          if (journal && effectId) { journal.nativeCompleted(effectId); journal.applied([effectId]) }
+          return ptyId
+        } catch (error) { if (ptyId) host.sessions.killPty(ptyId); throw error }
       }
     }),
     list: context => execute(context, 'sessions.list', () => () => { host.leases.prune(); return host.sessions.terminalSnapshots() }),

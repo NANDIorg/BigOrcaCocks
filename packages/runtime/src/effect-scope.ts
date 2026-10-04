@@ -1,6 +1,8 @@
 import { runPositionAt, runPositions, withStatusSource, type Run, type RunPosition, type StatusSource, type Task, type TaskStore } from '@orca-board/core'
 import { CommandError } from './project-commands.ts'
 import type { GitWorkflowReadRepository, GitWorkflowRepository, GitWorkflowService } from './git-workflow.ts'
+import type { EffectJournal, EffectPosition, NativeEffect } from './effect-journal.ts'
+import type { GitMutationObserver } from './git-effects.ts'
 
 export interface EffectProject { id: string; root: string; store: TaskStore; isCurrent?: () => boolean }
 export interface EffectTarget {
@@ -29,6 +31,12 @@ export interface EffectScope {
   guard(): void
   wait<T>(operation: () => Promise<T>): Promise<T>
   commit<T>(operation: () => T): T
+  /** Только синхронный native effect; результат ещё требует metadata checkpoint. */
+  external<T>(effect: NativeEffect, operation: () => T, rollback?: (result: T) => void): T
+  checkpoint(confirmed?: () => boolean): void
+  assertRecoveryClear(): void
+  /** Явная передача nested effect родителю; чужой scope не подтверждает его автоматически. */
+  transferTo(parent: EffectScope): void
   transaction<T>(git: GitWorkflowService, operation: (repo: GitWorkflowRepository) => Promise<T>): Promise<T>
   read<T>(git: GitWorkflowService, operation: (repo: GitWorkflowReadRepository) => Promise<T>): Promise<T>
   close(): void
@@ -67,7 +75,8 @@ function selectPosition(run: Run, nodeId?: string, laneId?: string): RunPosition
 }
 
 /** Scope живёт только до завершения effect; ожидания человека и агента сюда не входят. */
-export function createEffectScopeService(): EffectScopeService {
+export function createEffectScopeService(ownerOptions: { journal?: () => EffectJournal | undefined } = {}): EffectScopeService {
+  const pending = new WeakMap<EffectScope, Map<string, EffectJournal>>()
   const active = new Set<EffectScope>()
   let stopped = false
   const stale = (projectId?: string): never => { throw new CommandError('command.stale', projectId ? { projectId } : {}) }
@@ -87,7 +96,8 @@ export function createEffectScopeService(): EffectScopeService {
       const bindPosition = !task || target.parentPosition !== false
       const position = run && bindPosition ? selectPosition(run, task ? task.stageOf?.nodeId : target.nodeId, target.laneId) : undefined
       const lane = position?.lane ? run?.lanes?.find(l => l.id === position.lane) : undefined
-      const taskSnapshot = task ? taskState(task, target.taskResources !== false) : undefined
+      const bindResources = target.taskResources !== false
+      const taskSnapshot = task ? taskState(task, bindResources) : undefined
       const runSnapshot = run ? runState(run, position) : undefined
       const controller = new AbortController()
       const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal
@@ -101,7 +111,7 @@ export function createEffectScopeService(): EffectScopeService {
       const guard = () => {
         if (!open || stopped || signal.aborted || project.id !== projectId || project.root !== repoRoot || project.store !== store
           || project.isCurrent?.() === false) stale(projectId)
-        if (task && (store.getTask(task.id) !== task || taskState(task, target.taskResources !== false) !== taskSnapshot)) stale(projectId)
+        if (task && (store.getTask(task.id) !== task || taskState(task, bindResources) !== taskSnapshot)) stale(projectId)
         if (run && (store.getRun(run.id) !== run || runState(run, bindPosition ? positionAt(run, position?.lane) : undefined) !== runSnapshot)) stale(projectId)
       }
       async function wait<T>(operation: () => Promise<T>): Promise<T> {
@@ -110,10 +120,49 @@ export function createEffectScopeService(): EffectScopeService {
         // Проверка после завершения и вне native catch сохраняет причину, пока позиция актуальна.
         guard(); if (failed) throw failure; return value
       }
+      const journalPosition: EffectPosition = { ...token, ...(task ? { taskCreatedAt: task.createdAt } : {}), ...(run ? { runCreatedAt: run.createdAt } : {}) }
+      const entries = new Map<string, EffectJournal>()
+      const onMutation: GitMutationObserver = effect => {
+        guard(); const journal = ownerOptions.journal?.(); if (!journal) return undefined
+        const id = journal.begin(journalPosition, effect); entries.set(id, journal)
+        return { completed: () => journal.nativeCompleted(id), failed: () => journal.nativeCompleted(id, 'failed') }
+      }
+      function checkpoint(): void {
+        const groups = new Map<EffectJournal, string[]>()
+        for (const [id, journal] of entries) { const ids = groups.get(journal) ?? []; ids.push(id); groups.set(journal, ids) }
+        for (const [journal, ids] of groups) { journal.applied(ids); for (const id of ids) entries.delete(id) }
+      }
       const scope: EffectScope = {
         token, signal, guard, wait,
-        commit: operation => { guard(); return withStatusSource(source, operation) },
-        transaction: (git, operation) => wait(() => git.transaction(repoRoot, operation, { guard, signal })),
+        commit: operation => { guard(); const result = withStatusSource(source, operation); checkpoint(); return result },
+        external(effect, operation, rollback) {
+          guard(); const tracker = onMutation(effect); let result: ReturnType<typeof operation>
+          try { result = operation() } catch (error) { tracker?.failed(); throw error }
+          try { tracker?.completed(); guard(); return result }
+          catch (error) { rollback?.(result); throw error }
+        },
+        checkpoint: confirmed => {
+          if (!confirmed) guard()
+          else if (!open || stopped || signal.aborted || project.id !== projectId || project.root !== repoRoot
+            || project.store !== store || project.isCurrent?.() === false || confirmed() !== true) stale(projectId)
+          checkpoint()
+        },
+        assertRecoveryClear: () => { guard(); ownerOptions.journal?.()?.assertClear(journalPosition) },
+        transferTo(parent) {
+          guard(); parent.guard(); const destination = pending.get(parent)
+          if (!destination || parent.token.projectId !== projectId || parent.token.repoRoot !== repoRoot
+            || token.runId !== parent.token.runId || token.taskId !== parent.token.taskId
+            || token.nodeId !== parent.token.nodeId || token.visit !== parent.token.visit
+            || token.laneId !== parent.token.laneId || token.forkVisit !== parent.token.forkVisit || token.dispatchId !== parent.token.dispatchId) {
+            throw new CommandError('command.conflict', { reason: 'Checkpoint относится к другому effect scope' })
+          }
+          for (const [id, journal] of entries) destination.set(id, journal)
+          entries.clear()
+        },
+        transaction: (git, operation) => wait(() => {
+          ownerOptions.journal?.()?.assertClear(journalPosition)
+          return git.transaction(repoRoot, operation, { guard, signal, onMutation })
+        }),
         read: (git, operation) => wait(() => git.read(repoRoot, operation, { guard, signal })),
         close: () => {
           if (!open) return
@@ -121,7 +170,7 @@ export function createEffectScopeService(): EffectScopeService {
         }
       }
       signal.addEventListener('abort', scope.close, { once: true })
-      guard(); active.add(scope); return scope
+      guard(); pending.set(scope, entries); active.add(scope); return scope
     },
     cancelTask(projectId, taskId) { for (const scope of active) if (scope.token.projectId === projectId && scope.token.taskId === taskId) scope.close() },
     cancelRun(projectId, runId) { for (const scope of active) if (scope.token.projectId === projectId && scope.token.runId === runId) scope.close() },

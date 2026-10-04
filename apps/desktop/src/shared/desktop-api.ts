@@ -2,6 +2,7 @@ import type { PtySpawnOptions, TerminalInfo, TerminalSnapshot, OnboardingState, 
 import type { Task, AttachmentInput, AgentKind, AgentInfo, StoreSnapshot, BoardColumn, Run, GlobalTask, BuiltinPrompts, TaskPriority, HumanRequest, RequestResolution, Workflow, TaskType, ProjectStats, StatsRange, TaskStats, GlobalTaskStats, WfNodeTemplate } from '@orca-board/core'
 import type { WindowChromeMode } from './window-chrome'
 import type { AppSettings, AppSettingsPatch, UpdateState, UpdateInstallWhen } from './desktop-settings'
+import type { EffectRecord, EffectRecoveryReport, EffectResolution } from '@orca-board/contracts'
 
 /** Итог «Экспорта типа»: куда сохранён файл. Диалог закрыли — вместо результата null. */
 export interface TaskTypeExportResult {
@@ -23,6 +24,12 @@ export interface AppMenuItem {
 }
 
 export interface OrcaApi {
+  /** Опционально для старого preload: восстановление внешних effects доступно только operator host. */
+  recovery?: {
+    list(projectId?: string): Promise<EffectRecord[]>
+    inspect(projectId: string): Promise<EffectRecoveryReport>
+    resolve(id: string, revision: number, resolution: EffectResolution): Promise<EffectRecord>
+  }
   app: {
     /** Режим рамки этого окна; нет в старом preload. Read-only, без IPC управления окном. */
     readonly windowChrome?: WindowChromeMode

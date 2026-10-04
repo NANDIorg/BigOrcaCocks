@@ -6,16 +6,18 @@ import { createCoordinatorResumeServices } from './coordinator-resume.ts'
 import { createAttachmentServices } from './attachments.ts'
 import { createRunImageServices } from './run-images.ts'
 import { createLaunchPolicy } from './launch-policy.ts'
+import type { EffectJournal } from './effect-journal.ts'
 
 export interface ExecutionResourceDeps {
   messages: ExecutionMessages
   git: ReturnType<typeof createGitOperations>
   logger: ExecutionLogger
+  journal?: () => EffectJournal | undefined
 }
 
 /** Ресурсы одного owner; factories сохраняют прежние алгоритмы и guards. */
 export function createExecutionResources(deps: ExecutionResourceDeps) {
-  const effects = createEffectScopeService()
+  const effects = createEffectScopeService({ journal: deps.journal })
   const branches = createRunBranchServices({ ...deps, effects })
   return {
     git: deps.git, effects,

@@ -231,10 +231,13 @@ export function createAttachmentServices({ messages, logger, branches, effects }
     try {
       const at = scope ? await scope.wait(() => Promise.resolve(place())) : await place()
       scope?.guard()
-      const paths = saveReturnImages(at.cwd, at.ownerId, at.subdir, images)
+      const paths = scope ? scope.external({ kind: 'files', operation: 'return.attachments', cwd: at.cwd, resource: at.ownerId },
+        () => saveReturnImages(at.cwd, at.ownerId, at.subdir, images)) : saveReturnImages(at.cwd, at.ownerId, at.subdir, images)
       try {
         scope?.guard()
-        return await apply(paths)
+        const result = await apply(paths)
+        if (scope && imagesReferenced(store, paths)) scope.checkpoint(() => imagesReferenced(store, paths))
+        return result
       } catch (e) {
         if (!imagesReferenced(store, paths)) { scope?.guard(); discardReturnImages(paths) }
         throw e

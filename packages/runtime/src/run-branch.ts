@@ -1,7 +1,7 @@
 import type { Task, TaskStore } from '@orca-board/core'
 import { createAsyncRunBranchServices, type AsyncRunBranchDeps } from './run-branch-async.ts'
 import { executionProject, type ExecutionContext } from './execution-context.ts'
-import { createEffectScopeService } from './effect-scope.ts'
+import { createEffectScopeService, type EffectScope } from './effect-scope.ts'
 
 export interface MergeTarget {
   cwd: string
@@ -33,7 +33,7 @@ export function createRunBranchServices(deps: Omit<AsyncRunBranchDeps, 'effects'
   return {
     ensureRunBranch: (store: TaskStore, root: string, runId: string | undefined, context?: ExecutionContext) => branches.ensureRunBranch(executionProject(store, root, context), runId),
     mergeTarget: (store: TaskStore, root: string, task: Pick<Task, 'runId'>, context?: ExecutionContext) => branches.mergeTarget(executionProject(store, root, context), task),
-    mergeRunBranch: (store: TaskStore, root: string, runId: string, message: string, context?: ExecutionContext) => branches.mergeRunBranch(executionProject(store, root, context), runId, message),
+    mergeRunBranch: (store: TaskStore, root: string, runId: string, message: string, context?: ExecutionContext, parent?: EffectScope) => branches.mergeRunBranch(executionProject(store, root, context), runId, message, parent),
     reviewBase: (store: TaskStore, root: string, task: Pick<Task, 'runId'>, context?: ExecutionContext) => branches.reviewBase(executionProject(store, root, context), task),
     removeRunWorktree: (store: TaskStore, root: string, runId: string, context?: ExecutionContext) => branches.removeRunWorktree(executionProject(store, root, context), runId),
     runWorktreePath: branches.runWorktreePath, RunBranchSync

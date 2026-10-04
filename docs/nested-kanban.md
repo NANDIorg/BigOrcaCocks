@@ -60,7 +60,7 @@ Project branch/list/initialCommit/fetch/pull/checkout используют async
 отзыв policy или удаление registration запрещает следующий effect. Авторство store phases
 захватывается до await, выбор проекта другого клиента не меняется. Добавление проекта и docs/preview
 Git reads тоже async; guard запрещает позднее сохранение registration после отзыва policy.
-Persistent reconciliation продолжается в B. Native effect после отмены
+Persistent journal/reconciliation подключены. Native effect после отмены
 может остаться без metadata; автоматический rollback не выполняется.
 
 ## Модель: глобальная задача = прогон (`Run`)
@@ -799,3 +799,5 @@ CLI этой команды нет: координатор тип не меня�
   переживает перезагрузку; id, которого нет в снимке активного проекта, показывает общую доску.
 - Клавиатура: карточка фокусируется Tab, Enter/Space открывает; на экране задачи фокус на «назад», Esc (вне полей и
   модалок) возвращает, фокус — обратно на карточку. Повторный клик по вкладке «Канбан» тоже возвращает.
+
+Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.

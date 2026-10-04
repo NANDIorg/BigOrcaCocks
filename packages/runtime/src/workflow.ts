@@ -620,6 +620,8 @@ export function createTaskWorkflowServices({ resources, review, messages }: Task
       const node = stageNode(deps, task)
       {
         try {
+          const recovery = capture(deps, task.id)
+          try { recovery.assertRecoveryClear() } finally { recovery.close() }
           if (isEffectNode(node)) await repeatStage(deps, task.id)
           else if ((node?.type === 'work' || node?.type === 'ask') && lostWorkerDone(deps, task)) await workDone(deps, task, undefined)
           else if (node?.type === 'gate' && !openGate(deps, task, node.id)) await createGate(deps, task, node)

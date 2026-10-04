@@ -87,7 +87,7 @@ best-effort при native read error, но policy/position errors не пода�
 Подготовка feature run разделяет один Git effect между ожидающими с отдельным domain
 guard каждого. Git metadata не отменяет соседний lane и отдельно проверяется branch port.
 Уже случившийся native effect не откатывается после отмены и может требовать восстановления:
-persistent reconciliation продолжается в B. Profile/docs/preview Git reads тоже async:
+persistent journal/reconciliation подключены. Profile/docs/preview Git reads тоже async:
 root probe проверяет policy перед записью, отмена docs не скрывается fallback/пропуском группы.
 
 ## Модель
@@ -302,3 +302,5 @@ orca-board request resolve --request <id> --restart | --dismiss
 `question.forward {question, note?}`, `worker.ask {question, option[]|options, recommend?, context?, wait?}`
 (`--context-file` читает CLI и шлёт текст в `context`).
 IPC: `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)`, событие `requests:focus`.
+
+Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.

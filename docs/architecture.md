@@ -96,8 +96,8 @@ MergeError/GitOpError общие, поэтому существующие про
 
 Git effects workflow, веток прогона и project mutations выполняются асинхронно через
 общий process service и очередь canonical commonDir. EffectScope проверяет исходную
-позицию после await; серверная готовность дополнительно требует persistent reconciliation
-и headless composition. Runtime не задаёт язык клиентов и не импортирует Desktop dictionaries.
+позицию после await; persistent journal/reconciliation подключены. Серверная готовность
+дополнительно требует protocol/headless/client проверок. Runtime не задаёт язык клиентов и не импортирует Desktop dictionaries.
 
 Границы runtime проверяются `test/import-boundaries.test.ts`: AST проходит все
 production modules и транзитивные общие зависимости, включая type-only и dynamic
@@ -181,7 +181,7 @@ gateFor клиент не задаёт. Subtask привязывается к п
 и для legacy socket: живой координатор и core cascade/dispatch guards предшествуют
 очистке вложений/showcase, закрытых живых PTY и Git worktree. Грязный worktree не
 удаляется принудительно, ветка остаётся. Ошибки cleanup сохраняют прежние semantics;
-операция ожидает queued cleanup после durable удаления. Persistent reconciliation ещё впереди.
+операция ожидает queued cleanup после durable удаления. Journal/reconciliation внешних effects подключены (см. раздел ниже).
 
 Запуск координатора, accept/return, worker start/stop и review/requests входят в
 общий API ниже. API профиля/конфигурации проекта описан далее; файлы и остальные
@@ -220,7 +220,7 @@ legacy task scope закрывает прежний PTY и запускает н
 failed launch сохраняет feedback/referenced attachments; до решения файлы удаляются
 по прежнему rollback. Неоднозначный fork approval не меняет lanes. Effect methods
 application API возвращают Promise; workflow и сокет ожидают их до ответа. Stop/read-only
-core methods остаются синхронными. Persistent reconciliation ещё не завершена.
+core methods остаются синхронными. Persistent journal и read-only reconciliation подключены.
 
 Desktop `main/coordinator-commands.ts` использует общий project adapter: проверенный
 caller прежде единственного capture activeId, старые четыре IPC signatures/defaults
@@ -276,7 +276,7 @@ void у accept и пустой requests list без проекта. Caller пр�
 capture selection; legacy resolution.images вырезаются без изменения входного DTO.
 Socket callbacks используют те же trusted operations и helper ответа на вопрос,
 с прежним envelope/HELP и локализованными ошибками IPC. Effect methods асинхронны;
-remote transports и restart reconciliation относятся к следующим рубежам.
+remote transports относятся к следующим рубежам; restart journal/reconciliation подключены.
 
 ### Общие команды профиля и конфигурации проектов
 
@@ -375,7 +375,7 @@ checkout и шагами начального коммита; remove/readd, root
 owner GitOperationQueue по canonical commonDir: root, linked worktree и symlink
 сериализуются вместе, независимые repo параллельны. Canonical probe — async process API
 без shell, затем realpath; failed job освобождает очередь. Worker/workflow/review
-используют тот же async Git с EffectToken; persistent reconciliation ещё впереди.
+используют тот же async Git с EffectToken; persistent journal и reconciliation подключены.
 
 `createGitProcessService` владеет async Git subprocess, включая commonDir probe и
 check-ignore. Аргументы передаются напрямую, stdin закрывается, stdout/stderr имеют
@@ -414,7 +414,7 @@ Entry commit marker остаётся best-effort только при native Git-
 позиции папка без ссылок удаляется при отказе; referenced feedback/stageInput сохраняются. Удаление global
 после durable core phase отменяет run и ожидает queued nonforce cleanup; повторно созданный
 run не убирается. Уже случившийся native effect при отмене не откатывается. Persistent
-reconciliation — следующая часть B. Profile root probe и docs Git reads тоже async:
+journal/reconciliation подключены: uncertain effects не повторяются без явного решения оператора. Profile root probe и docs Git reads тоже async:
 factories принимают owned process service, cancellation не превращается в fallback или пустую группу.
 
 RunCommands дают list/listWithCounts/close с detached result и прежней core
@@ -4411,3 +4411,11 @@ metadata и неизменные исходные байты. Дополните
 `AssistantSession` без ручного save и проверяет restart в отдельном plain Node.
 Desktop восстанавливает последний созданный глобальный диалог только для чтения;
 кнопка «+» создаёт новый разговор. Продолжение provider-сессии требует будущего resume.
+
+### Журнал восстановления внешних effects
+
+`packages/contracts/src/recovery.ts` задаёт browser-safe recovery DTO/API; Node factories `runtime/effect-journal.ts`, `effect-reconciliation.ts`, `recovery-commands.ts` содержат persistence и проверки operator principal. `effect-journal.json` version1 читается под profile lease до Desktop backups/миграций; отсутствие допустимо, corrupt/future journal отвергается без записи. Intent сохраняется до Git mutation/PTY/attachment placement; native outcome до stale guard, applied после успешной записи metadata. JSON+Git не атомарны: промежуток после native effect остаётся uncertain. Pending ограничены1024, completed256 и весь файл4MiB; pending не вытесняются. Journal хранит только identity/операцию/пути/позицию/phase, без argv/env/prompt/ответов и commit messages.
+
+`EffectScope` владеет своими journal entries; nested merge явно передаёт их parent scope той же позиции/lane, посторонний commit не подтверждает их. `checkpoint` вложений после async apply требует успешного возврата и факта сохранённых references в том же актуальном store. Неизвестная операция прошлого owner останавливает matching mutation/automatic resume, новый visit/dispatch/generation не получает её результата. Проверка recovery читает реальные worktrees/refs/dirty и metadata; prune/remove/kill/повтор команды не выполняет.
+
+IPC `recovery:list`, `recovery:inspect`, `recovery:resolve` → общий operator RecoveryCommands; preload `orca.recovery` опционален для HMR. Resolve проверяет revision и записывает `'retry'|'acknowledge'|'abandon'`, не меняя store/файлы/Git. Эти методы не добавлены в legacy agent socket/CLI. Native shell spawn имеет собственный checkpoint регистрации; при его I/O failure PTY закрывается. Worker/coordinator spawn подтверждаются после dispatch/Run metadata; их процессы также закрываются, если запись завершения launch провалилась.
