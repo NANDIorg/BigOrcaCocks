@@ -2,19 +2,25 @@
 
 ## Линейки продуктов
 
-Общий runtime/client/UI уже выделен; состояние продуктов и границы пакетов —
-[shared-foundation.md](shared-foundation.md). Сейчас существует Desktop Release workflow
-и установленный Node artifact для проверок; отдельные Web/терминальный CLI releases
-ещё не выпускаются. Сборка Node host не является публикацией Web-сайта.
+Общий runtime/client/UI выделен; [карта](shared-foundation.md). Продукты выпускаются независимо:
+Desktop — root/apps/desktop и `vX.Y.Z`; Web — apps/web и `web/vX.Y.Z`; CLI — packages/cli и `cli/vX.Y.Z`.
+Product preparation branches: release/web/X.Y.Z и hotfix/web/X.Y.Z для Web; CLI аналогично.
+Web/CLI никогда не становятся GitHub Latest и не содержат Desktop updater manifests/assets.
+Shared manifests и версии других продуктов не bump. Общие пакеты встраиваются из выбранного SHA;
+protocol/schema проверяются при подключении.
 
-Эта существующая инструкция упаковки/подписи/marine codenames относится к Desktop.
-CLI/Web позже получают свои workflows; общая policy уже задаётся product-release.mjs:
-own manifest/version, cli/vX.Y.Z или web/vX.Y.Z, product-specific release/hotfix ветки,
-make_latest=false и запрет Desktop latest manifests/установщиков в их assets.
-Root/Desktop alignment для Desktop сохраняется; чужие версии при preparation/backmerge
-не изменяются. Product version не является protocol/schema version; совместимость
-проверяется handshake. Подготовка общего фундамента не разрешает публикацию/tag/bump.
+Для Web выполните те же PR→master/tag/draft/acceptance/publication/backmerge этапы ниже,
+но меняйте только apps/web/package.json и описание `docs/releases/web/vX.Y.Z.md`.
+Workflow `web-release.yml` проверяет tag/manifest/master, собирает Ubuntu 24.04 пакет с bundled Node24,
+native PTY/browser/resources, запускает installed smoke и создаёт отдельный Draft с `make_latest=false`:
+`orca-web-linux-x64-X.Y.Z.tar.gz`, `install-orca-web.sh`, `SHA256SUMS`. Только после приёмки публикуйте
+Web-выпуск с latest=false. Desktop workflow/подписи/codenames/feeds ниже относятся к Desktop.
+Выпуск Web не требует нового Desktop. При общем изменении каждый продукт включит его в свой следующий выпуск.
 
+Web обновляется из браузера либо `orca-web update`: собственный stable feed, checksum, owner,
+backup/rollback и отдельный systemd worker/recovery. Полный порядок — [web.md](web.md).
+Существующий Desktop Draft 2.0.0 не изменяется; первый Web-выпуск — отдельное поручение.
+Разработка этой ветки не разрешает публикацию, создание тега или смену версии.
 
 Это инструкция для разработки **orca-board**, а не для агентов продукта в чужих проектах.
 Перед выпуском прочитай [Git Flow](git-flow.md); устройство пакетов и автообновления —
@@ -94,8 +100,9 @@ Root/Desktop alignment для Desktop сохраняется; чужие вер�
 Следуй последовательности `release/X.Y.Z` от develop → `fix/prepare-X.Y.Z` → PR в release.
 Для hotfix аналогично, исходная ветка — master. В fix-ветке:
 
-1. Обнови `/package.json` и `apps/desktop/package.json` одним коммитом
-   `chore: release vX.Y.Z`. Версии внутренних core/cli не меняются вместе с приложением.
+1. Для Desktop обнови `/package.json` и `apps/desktop/package.json` одним коммитом
+   `chore: release vX.Y.Z`. Для Web меняется только `apps/web/package.json` с коммитом
+   `chore(web): релиз X.Y.Z`. Версии остальных продуктов и shared packages не выравниваются.
 2. Создай **`docs/releases/vX.Y.Z.md`**. Это проверяемый в PR источник release notes,
    который CI переносит в описание и файл `RELEASE_NOTES.md` GitHub Release, а сборка
    вшивает в приложение для офлайн-просмотра описания установленной версии.
@@ -162,7 +169,7 @@ Root/Desktop alignment для Desktop сохраняется; чужие вер�
 Релизные jobs `.github/workflows/release.yml` запускаются только по push тега `v*`
 (отдельный ручной validation без выпуска описан ниже):
 
-1. Проверяет тег, обе версии, master, реестр морских имён и непустое описание
+1. Проверяет тег, root/Desktop версии, master, реестр морских имён и непустое описание
    `docs/releases/vX.Y.Z.md`. Формирует заголовок `Orca X.Y.Z · <имя серии>`.
 2. Ставит зависимости, готовит отдельный Node native root через `scripts/node-native.mjs`
    до параллельных suites, выполняет `pnpm verify` и упаковывает приложение на macOS/Windows.

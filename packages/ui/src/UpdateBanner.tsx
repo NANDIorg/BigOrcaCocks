@@ -80,7 +80,7 @@ export function UpdateBanner({ updates }: { updates: UpdatesController }): React
   const label: Record<UpdateAction, string> = {
     whatsNew: t('shell.update.whatsNew'),
     download: t('shell.update.download'),
-    install: t('shell.update.restart'),
+    install: t(state?.mode === 'server' ? 'shell.web.updateInstall' : 'shell.update.restart'),
     retry: t('shell.update.retry'),
     openRelease: t('shell.update.download'),
     cancelPending: t('shell.update.cancel')

@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/NANDIorg/BigOrcaCocks/releases"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/NANDIorg/BigOrcaCocks?style=for-the-badge&color=5a63c8"></a>
   <a href="https://github.com/NANDIorg/BigOrcaCocks/actions/workflows/ci.yml"><img alt="Статус CI" src="https://img.shields.io/github/actions/workflow/status/NANDIorg/BigOrcaCocks/ci.yml?style=for-the-badge&label=CI"></a>
-  <img alt="Платформы: macOS, Windows" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-5a63c8?style=for-the-badge">
+  <img alt="Платформы: macOS, Windows, Linux Web" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux_Web-5a63c8?style=for-the-badge">
 </p>
 
 <p align="center">
@@ -20,10 +20,11 @@ orca-board — оркестратор, в котором задача на до�
 в своём git worktree. Вы ставите цель, агент-координатор раскладывает её на подзадачи, воркеры делают их параллельно,
 а ревью и решения остаются за вами.
 
-Сейчас пользовательский продукт — **Desktop для macOS и Windows**. Репозиторий также содержит
-общий backend, клиент и интерфейс, а также самостоятельный Node.js host. На этой базе следующим
-этапом строится Web для собственного сервера и позже отдельный терминальный CLI.
-Web-сайт и терминальный чат ещё не реализованы; существующая команда `orca-board` служит агентам.
+Доступны **Desktop для macOS и Windows** и **Web для своего Linux-сервера**.
+Они используют общий backend, клиент и React-интерфейс; Web запускает агентов на сервере.
+Установка, HTTPS и обновления из браузера — [docs/web.md](docs/web.md). Первый Web-пакет будет опубликован отдельным выпуском `web/vX.Y.Z`;
+Desktop использует `vX.Y.Z` и обновляется независимо. Человеческий терминальный
+CLI будет добавлен позже; нынешняя команда `orca-board` служит агентам.
 
 - **Задача = агент в своём worktree.** Каждая подзадача — отдельная ветка и терминал, агенты не мешают друг другу.
 - **По вашей подписке.** Приложение не знает про API-ключи: оно запускает CLI-агента в PTY, как обычный терминал.
@@ -58,7 +59,28 @@ Web-сайт и терминальный чат ещё не реализован
 | Windows x64 | `orca-board-<версия>-x64.exe` | установщик NSIS, можно выбрать папку; без подписи кода |
 | Windows x64 | `orca-board-<версия>-portable-x64.exe` | запускается без установки; без подписи кода |
 
-Desktop-сборки Linux нет; Node host проверяется на Linux отдельно. Быстрый старт Desktop:
+Desktop-сборки Linux нет; для Linux предусмотрен Web с bundled Node и native PTY.
+Порядок установки — [Web на своём сервере](docs/web.md).
+
+**Desktop:** скачайте файл своей ОС из Desktop-выпуска `vX.Y.Z` в [Releases](https://github.com/NANDIorg/BigOrcaCocks/releases).
+На macOS откройте DMG и перенесите Orca в «Программы»; на Windows запустите EXE-установщик
+или portable EXE. Запустите Orca, установите Git и CLI-агентов, войдите в их аккаунты.
+
+**Web:** на Ubuntu 24.04 x64 используйте обычного пользователя с sudo, Git, curl и Python 3.
+Из Web-выпуска `web/vX.Y.Z` скачайте `install-orca-web.sh` и выполните:
+
+```sh
+bash install-orca-web.sh
+orca-web service install
+```
+
+Мастер спросит папку проектов, логин/пароль и два домена: панель и preview. Для HTTPS
+установите Caddy, направьте оба домена на сервер и откройте 80/443; без доменов панель
+доступна локально на `http://localhost:3737`. CLI-агентов установите и авторизуйте под
+пользователем сервиса. Обновления Web проверяются и устанавливаются в браузере.
+До публикации первого Web-релиза доступна [сборка из исходников](docs/web.md#локальная-разработка-и-проверка-поставки).
+
+Быстрый старт Desktop:
 
 1. Поставьте **git** и хотя бы один CLI-агент — нужен **`claude`** (Claude Code с подпиской): на нём по умолчанию
    работает координатор. Node не нужен: CLI `orca-board` внутри приложения работает на Node из Electron.
@@ -249,9 +271,11 @@ scripts/           проверки Git Flow и macOS-релиза
 - Текущая версия — на бейдже релиза; первая подписанная сборка macOS — 1.0.1.
 - Windows собирается и проходит CI, но на живой машине проверена мало.
 - Общий фундамент реализован; новый Web и терминальный CLI разрабатываются отдельно в этом монорепозитории.
-- Operator endpoint Node host пока приватный и доступен на loopback. Публичный вход, авторизация,
-  HTTPS, серверные пути и Web-адаптер общего UI входят в следующий этап для собственного сервера.
-- Версии Desktop/Web/CLI независимы; общий protocol/schema проверяется при подключении. Сейчас публикуется Desktop.
+- Private operator endpoint Node host доступен на loopback. Web добавляет вход, сессии/CSRF,
+  HTTPS proxy, серверный выбор проектов и адаптер общего UI; настройка сервера описана в docs/web.md.
+- Desktop, Web и будущий CLI выпускаются независимо: `vX.Y.Z`, `web/vX.Y.Z`, `cli/vX.Y.Z`.
+  Linux-поставка Web реализована и проверена локально; первый публичный Web-релиз ещё не создан.
+  На настоящем сервере остаётся приёмка DNS/systemd/HTTPS. Protocol/schema проверяется при подключении.
 - Мерж локальный: приложение ничего не пушит и не открывает PR, пока этого не делает нода `git` вашего графа.
 - Ошибки и предложения — в [issues](https://github.com/NANDIorg/BigOrcaCocks/issues).
 

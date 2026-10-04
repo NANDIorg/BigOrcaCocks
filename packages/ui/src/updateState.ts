@@ -6,7 +6,7 @@ import { formatPercent } from './i18n/format'
 import { marked, type Token } from 'marked'
 
 /** Заметки относятся к показанной версии: найденной из main или установленной из самой сборки. */
-export function cardRelease(state: UpdateState | null, bundled: Pick<UpdateInfo, 'version' | 'releaseNotes'>): UpdateInfo | null {
+export function cardRelease(state: UpdateState | null, bundled: Pick<UpdateInfo, 'version' | 'releaseNotes'>, product: 'desktop' | 'web' = 'desktop'): UpdateInfo | null {
   if (!state) return null
   const version = state.availableVersion ?? state.currentVersion
   const tag = version.startsWith('v') ? version : `v${version}`
@@ -16,7 +16,7 @@ export function cardRelease(state: UpdateState | null, bundled: Pick<UpdateInfo,
       ? state.releaseNotes?.trim() ?? ''
       : version === bundled.version ? bundled.releaseNotes : '',
     releaseUrl: (state.availableVersion ? state.releaseUrl : null)
-      ?? `https://github.com/NANDIorg/BigOrcaCocks/releases/tag/${encodeURIComponent(tag)}`
+      ?? `https://github.com/NANDIorg/BigOrcaCocks/releases/tag/${product === 'web' ? 'web/' : ''}${encodeURIComponent(tag)}`
   }
 }
 
@@ -87,6 +87,8 @@ export function versionLabel(version: string, withCodename = true): string {
 /** Причина недоступности обновления по-человечески; неизвестная (новый main) — общий текст. */
 export function unsupportedText(reason: UpdateUnsupportedReason | null): string {
   switch (reason) {
+    case 'server-unmanaged':
+      return t('shell.web.updateUnmanaged')
     case 'dev':
     case 'portable':
     case 'not-in-applications':

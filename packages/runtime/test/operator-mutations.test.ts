@@ -92,3 +92,15 @@ test('operator sessions проверяют principal/handshake/revision; selecti
   const agent = () => runtime.createOperatorSession({ context: { clientId: 'agent', actor: { kind: 'agent', id: 'worker' } }, metadata, events, ledger, commands, getRevision: () => 1 })
   assert.throws(agent, /operator/i)
 })
+
+test('workflowContext читается без mutation revision и не занимает durable ledger', async t => {
+  const dataDir = profile(t)
+  const api = runtime.createOperatorApi({ groups: { profile: { workflowContext: () => 'context' } }, product: { name: 'web', version: '2.0.0' }, ownerId: 'owner',
+    ledger: runtime.createMutationLedger({ dataDir, ownerId: 'owner' }), events: runtime.createObserverEvents({ epoch: 'owner' }), getRevision: () => 7,
+    authorize: () => true, authorizeProject: () => true, onDetach: () => {} })
+  const operator = api.operator({ clientId: 'client', actor: { kind: 'operator', id: 'user' } })
+  operator.hello({ protocolMajor: 1, schemaVersion: 1, product: { name: 'browser', version: '2.0.0' } })
+  const result = await operator.call({ id: 'context', issuedAt: Date.now(), method: 'profile.workflowContext', args: [{ mode: 'create' }] })
+  assert.deepEqual(result, { id: 'context', ok: true, result: 'context' })
+  assert.equal(existsSync(join(dataDir, 'operator-mutations.json')), false)
+})

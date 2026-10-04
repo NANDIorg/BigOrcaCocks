@@ -197,6 +197,7 @@ export function macUnsupportedMessage(reason: UpdateUnsupportedReason): string {
     case 'not-in-applications':
       return 'приложение запущено из образа диска или с внешнего тома. Переместите приложение в «Программы» и запустите оттуда'
     case 'platform':
+    case 'server-unmanaged':
       return 'для этой платформы установщика обновлений нет'
     case 'no-write-access':
       return 'нет прав на запись в папку с приложением. Переместите приложение в «Программы» (или в папку, где вы можете писать) и запустите оттуда'

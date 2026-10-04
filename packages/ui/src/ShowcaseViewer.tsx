@@ -251,9 +251,9 @@ export function ShowcaseViewer({ groups, start, decision, onClose }: Props): Rea
         <Icon.external />
         <span className="sv-btn-lbl">{t(file.view === 'html' ? 'board.showcase.viewer.openBrowser' : 'board.showcase.open')}</span>
       </button>
-      <button type="button" className="btn-text" onClick={reveal} aria-label={t('board.showcase.reveal')} title={t('board.showcase.viewer.revealTitle')}>
+      <button type="button" className="btn-text" onClick={reveal} aria-label={(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.reveal'))} title={(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.viewer.revealTitle'))}>
         <Icon.folder />
-        <span className="sv-btn-lbl">{t('board.showcase.reveal')}</span>
+        <span className="sv-btn-lbl">{(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.reveal'))}</span>
       </button>
     </>
   )
@@ -550,8 +550,8 @@ export function ViewerState({ kind, failure, file, onRetry, onOpen, onReveal, on
   const tone = kind === 'missing' || kind === 'error' ? 'err' : kind === 'big' || kind === 'stale' || kind === 'noNetwork' ? 'warn' : ''
   const retry = <button type="button" className="btn-sm" onClick={onRetry}><Icon.refresh />{t('board.showcase.viewer.retry')}</button>
   const copy = <button type="button" className="btn-sm" onClick={onCopy}>{t('board.showcase.viewer.copyPath')}</button>
-  const openBtn = <button type="button" className="btn-sm primary" onClick={onOpen}><Icon.external />{t('board.showcase.open')}</button>
-  const revealBtn = <button type="button" className="btn-sm" onClick={onReveal}><Icon.folder />{t('board.showcase.reveal')}</button>
+  const openBtn = <button type="button" className="btn-sm primary" onClick={onOpen}><Icon.external />{(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.open'))}</button>
+  const revealBtn = <button type="button" className="btn-sm" onClick={onReveal}><Icon.folder />{(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.reveal'))}</button>
   const path = <span className="sv-path">{file.path}</span>
   const body: Record<StateKind, { title: string; text?: React.ReactNode; acts?: React.ReactNode }> = {
     missing: { title: t('board.showcase.viewer.missing'), text: <p>{failure?.message}</p>, acts: <>{retry}{copy}</> },

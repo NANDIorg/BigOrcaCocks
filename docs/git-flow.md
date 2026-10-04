@@ -2,29 +2,23 @@
 
 ## Независимые продукты
 
-Общий фундамент уже реализован: [карта пакетов](shared-foundation.md) и
-[результаты проверок](orca-foundation-progress.md). Shared packages пока private
-и встраиваются в продукт из выбранного для его сборки состояния репозитория.
-Изменение shared кода не выпускает автоматически Desktop/Web/CLI одновременно.
+Общий фундамент реализован: [карта пакетов](shared-foundation.md), [проверки](orca-foundation-progress.md).
+Общие private packages встраиваются из SHA выбранного продукта; изменение shared кода не выпускает все продукты.
+Feature PR идут в develop. По последнему решению пользователя Desktop/Web выпускаются независимо:
 
-Общие feature PR по-прежнему идут в develop. Desktop сохраняет существующие версии
-root/apps/desktop, `release/X.Y.Z`, `hotfix/X.Y.Z`, теги `vX.Y.Z` и marine codenames.
-CLI использует manifest packages/cli/package.json, ветки release/cli/X.Y.Z и hotfix/cli/X.Y.Z,
-теги cli/vX.Y.Z. Web использует будущий apps/web/package.json, release/web/X.Y.Z,
-hotfix/web/X.Y.Z и web/vX.Y.Z. Существующий agent JS CLI не превращается в новый UI
-от изменения release guard; его HELP остаётся прежним.
+| Продукт | Manifest | Подготовка | Тег | GitHub Latest |
+| --- | --- | --- | --- | --- |
+| Desktop | root + apps/desktop | release/X.Y.Z / hotfix/X.Y.Z | vX.Y.Z | true |
+| Web | apps/web | release/web/X.Y.Z / hotfix/web/X.Y.Z | web/vX.Y.Z | false |
+| CLI | packages/cli | release/cli/X.Y.Z / hotfix/cli/X.Y.Z | cli/vX.Y.Z | false |
 
-Подготовка меняет только выбранный продукт. Git-flow guard сверяет branch/tag с его
-manifest, остальные версии не выравниваются. Одна активная release preparation и
-concurrency относятся к продукту. Backmerge сохраняет версии других продуктов.
-CLI/Web publication обязательно использует make_latest=false и не содержит Desktop
-latest manifests/установщики; только Desktop владеет GitHub Latest/update feed.
-Source policy — scripts/product-release.mjs, release fixtures — scripts/product-release.test.mjs.
-Workflows CLI/Web добавляются с реальными поставками, сейчас публикаций нет.
-Local rulesets учитывают product prefixes; применять их на GitHub должен владелец
-в отдельной операции. Проверки Node используют отдельный `.native` root, не rebuild
-Desktop node-pty. Полный verify сохраняется перед PR.
-
+Root/Desktop версии совпадают; Web/CLI/shared manifests не выравниваются при чужом релизе.
+Release/fix/backmerge направления те же, что ниже, с соответствующим product prefix.
+Desktop feed остаётся прежним; Web выбирает только стабильные web/v tags и свой архив.
+Workflow Desktop — release.yml; Web — web-release.yml. Rulesets уже предусматривают web/cli prefixes;
+применение изменений на GitHub остаётся отдельной операцией владельца. Существующий Desktop Draft 2.0.0
+не переупаковывается. Установка Web — [web.md](web.md); release-поручение — [releasing.md](releasing.md).
+Node-native проверки используют отдельный .native root и не rebuild Desktop node-pty.
 
 Это обязательный процесс разработки **этого репозитория**. Инженерные ограничения —
 [CLAUDE.md](../CLAUDE.md), устройство приложения — [architecture.md](architecture.md),
@@ -204,7 +198,7 @@ Orca заводит на каждую **глобальную задачу** св
 1. Создай и опубликуй `release/1.0.1` от актуального `origin/develop` без новых коммитов.
    Новые фичи продолжают идти в `develop`; не подмешивай их в release.
 2. Создай `fix/prepare-1.0.1` от `origin/release/1.0.1`. Измени версии **одновременно**
-   в корневом `package.json` и `apps/desktop/package.json`, создай описание
+   в корневом `package.json`, `apps/desktop/package.json` и `apps/web/package.json`, создай описание
    `docs/releases/v1.0.1.md`. Версии внутренних core/cli
    не равны версии приложения и не требуют синхронного изменения.
    Для новой серии major/minor добавь уникальное морское кодовое имя в
@@ -214,7 +208,8 @@ Orca заводит на каждую **глобальную задачу** св
 3. Коммит версии — `chore: release v1.0.1`; PR в `release/1.0.1`. Ветки `fix/*`
    для дальнейших исправлений тоже идут в release с approval и CI.
 4. Открой PR `release/1.0.1 → master` со списком изменений и проверок. Проверь, что версия
-   больше последней выпущенной, тег свободен, root и desktop совпадают. Получи approval
+   больше последней выпущенной, тег свободен, root и desktop совпадают. Web выпускается
+   через собственную release/web-ветку с проверкой только своего manifest. Получи approval
    второго разработчика и зелёный CI, слей merge commit.
 5. После fetch поставь **аннотированный тег именно на merge commit этого PR**, не на
    HEAD старого worktree и не на `develop`:
@@ -274,8 +269,9 @@ gh pr create --base develop --head sync/1.0.1-develop --title 'chore: перен
 Это PR-перенос merge-истории, не cherry-pick. Если после hotfix уже есть активная
 `release/1.1.0`, сделай **второй** `sync/*` от `origin/master`, в нём слей именно эту
 release-ветку и открой PR в неё. Не вливай `develop` в release. При конфликте версий
-сохраняй более высокую версию целевой release-ветки в обоих package.json; не откатывай
-её до номера hotfix. Нельзя закрывать релизную задачу до обоих переносов.
+сохраняй более высокую версию продукта в manifest целевой release-ветки (для Desktop —
+root и apps/desktop); не откатывай её до номера hotfix и не меняй версии других продуктов.
+Нельзя закрывать релизную задачу до обоих переносов.
 
 ## Откат
 

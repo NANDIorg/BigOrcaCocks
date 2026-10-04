@@ -204,6 +204,12 @@ export function createDocViewServices(deps: { messages: FileMessages; files: Pro
     return resolveProjectPath(root, rel, false)
   }
 
-  return { resolveDocFile, viewDoc, viewResolved, readDocBytes, docsPreviewUrl, docsOpenPath, docsRevealPath, sniffText }
+  async function downloadDoc(root: string, rel: string): Promise<DocBytes> {
+    const ref = await resolveDocFile(root, rel)
+    const { bytes, over } = await readAtMost(ref, 25 * 1024 * 1024)
+    if (over) throw new OrcaError('docs.tooBig', { path: rel })
+    return { mime: showcaseServedMime(rel) ?? 'application/octet-stream', bytes: new Uint8Array(bytes) }
+  }
+  return { resolveDocFile, viewDoc, viewResolved, readDocBytes, downloadDoc, docsPreviewUrl, docsOpenPath, docsRevealPath, sniffText }
 }
 export type DocViewServices = ReturnType<typeof createDocViewServices>

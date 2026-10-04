@@ -13,3 +13,5 @@ release/
 .superdesign/
 
 .native/
+
+apps/web/release/

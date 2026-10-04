@@ -1,3 +1,4 @@
+import { getUiApi } from './host'
 import type React from 'react'
 import { useState } from 'react'
 import type { AttachmentKind } from '@orca-board/core'
@@ -45,6 +46,7 @@ interface Props {
  */
 export function AttachmentList({ items, reading = 0, onRemove, onReveal, onOpen, disabled = false, compact = false }: Props): React.JSX.Element | null {
   const t = useT()
+  const web = getUiApi().app.environment === 'web'
   const [openKey, setOpenKey] = useState<string | null>(null)
   if (items.length === 0 && reading === 0) return null
   // Лайтбокс листает только картинки: у карточек файлов нет `url`.
@@ -109,7 +111,7 @@ export function AttachmentList({ items, reading = 0, onRemove, onReveal, onOpen,
             </span>
             {(onOpen && chip.openable) || onReveal || onRemove ? (
               <span className="attach-file-actions">
-                {onOpen && chip.openable && (
+                {onOpen && chip.openable && (!web || !onReveal) && (
                   <button
                     type="button"
                     className="attach-file-btn"
@@ -127,8 +129,8 @@ export function AttachmentList({ items, reading = 0, onRemove, onReveal, onOpen,
                   <button
                     type="button"
                     className="attach-file-btn"
-                    title={t('common.attach.reveal')}
-                    aria-label={t('common.attach.revealN', { name: chip.name })}
+                    title={(web ? t('shell.web.download') : t('common.attach.reveal'))}
+                    aria-label={(web ? `${t('shell.web.download')} ${chip.name}` : t('common.attach.revealN', { name: chip.name }))}
                     onClick={(e) => {
                       e.stopPropagation()
                       onReveal(it.key)

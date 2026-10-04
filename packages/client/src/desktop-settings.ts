@@ -35,6 +35,8 @@ export type UpdateMode =
   | 'auto'
   /** Установить не можем (portable Windows): показываем версию и ссылку `releaseUrl`, человек скачивает сам. */
   | 'manual-download'
+  /** Web: отдельный сервис скачивает сборку и перезапускает сервер с backup/rollback. */
+  | 'server'
 
 /** Почему обновление недоступно (`UpdateState.status === 'unsupported'`). */
 export type UpdateUnsupportedReason =
@@ -50,6 +52,8 @@ export type UpdateUnsupportedReason =
   | 'translocated'
   /** Для этой платформы установщика нет (Linux). */
   | 'platform'
+  /** Web запущен локально или без настроенного systemd-сервиса обновления. */
+  | 'server-unmanaged'
 
 /** Что известно о новой версии; отдаёт `PlatformUpdater.check()`. */
 export interface UpdateInfo {

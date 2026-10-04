@@ -11,10 +11,10 @@
  *
  * Функции принимают корень явно (без electron), чтобы тестироваться в временной папке.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, openSync, fstatSync, closeSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  IMAGE_ATTACHMENT_TYPES, assertAttachmentBudget, newId,
+  IMAGE_ATTACHMENT_TYPES, ATTACHMENT_LIMITS, assertAttachmentBudget, newId,
   type Attachment, type GlobalTask, type Run, type RunImage, type TaskStore
 } from '@orca-board/core'
 import { attachmentOpenable } from '@orca-board/contracts'
@@ -193,6 +193,17 @@ export function createRunImageServices({ messages, logger }: { messages: Executi
     return { mime: meta.mime, data: new Uint8Array(readFileSync(file)) }
   }
 
+  /** Скачивание любого вложения по метаданным задачи, без открытия файла на сервере. */
+  function loadTaskAttachment(store: TaskStore, root: string, projectId: string, runId: string, imageId: string): { mime: string; data: Uint8Array } {
+    const { meta, file } = existingFile(store, root, projectId, runId, imageId)
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const stat = fstatSync(fd)
+      if (!stat.isFile() || stat.size !== meta.bytes || stat.size > ATTACHMENT_LIMITS.maxTotalBytes) throw new Error('Некорректный файл вложения')
+      return { mime: meta.mime, data: new Uint8Array(readFileSync(fd)) }
+    } finally { closeSync(fd) }
+  }
+
   /**
    * Абсолютный путь вложения для «Показать в папке» (`shell.showItemInFolder`). Только вложение из метаданных этой
    * задачи (`imageId` из IPC путь не задаёт), идентификаторы проверены `safe`. Файл не открывается и не запускается.
@@ -213,5 +224,5 @@ export function createRunImageServices({ messages, logger }: { messages: Executi
     return existingFile(store, root, projectId, runId, imageId).file
   }
 
-  return { runImageFile, prepareRunImages, writeRunImages, removeRunImageFile, readRunImages, coordinatorImages, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, revealTaskAttachment, openTaskAttachment, runImagesRoot, runImagesDir, removeRunImagesDir }
+  return { runImageFile, prepareRunImages, writeRunImages, removeRunImageFile, readRunImages, coordinatorImages, createTaskWithImages, addTaskImages, removeTaskImage, loadTaskImage, loadTaskAttachment, revealTaskAttachment, openTaskAttachment, runImagesRoot, runImagesDir, removeRunImagesDir }
 }

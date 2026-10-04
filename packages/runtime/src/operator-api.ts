@@ -20,12 +20,12 @@ export interface OperatorApiOptions {
 }
 /** Только методы известных application factories; JSON не выбирает произвольные properties host. */
 export function createOperatorApi(options: OperatorApiOptions) {
-  const reads = new Set(['listProjects', 'detectTaskType', 'inProgressCounts', 'groups', 'settings', 'onboardingState', 'taskTypes', 'taskTypeUsage', 'builtinPrompts', 'nodeTemplates', 'workflowGet', 'workflowValidate', 'exportTaskType', 'list', 'snapshot', 'info', 'get', 'read', 'writer', 'project', 'task', 'global', 'branches', 'preflight', 'inspect', 'listWithCounts', 'tasks', 'listDir', 'listDocs', 'readDoc', 'viewDoc', 'docPreview', 'showcasePreview', 'showcaseBase'])
+  const reads = new Set(['listProjects', 'detectTaskType', 'inProgressCounts', 'groups', 'settings', 'onboardingState', 'taskTypes', 'taskTypeUsage', 'builtinPrompts', 'nodeTemplates', 'workflowGet', 'workflowValidate', 'workflowContext', 'exportTaskType', 'list', 'snapshot', 'info', 'get', 'read', 'writer', 'project', 'task', 'global', 'branches', 'preflight', 'inspect', 'listWithCounts', 'tasks', 'listDir', 'listDocs', 'readDoc', 'viewDoc', 'docPreview', 'showcasePreview', 'showcaseBase'])
   const projectGroups = new Set(['projectConfig', 'board', 'globalTask', 'coordinator', 'worker', 'review', 'humanRequest', 'projectGit', 'run', 'rules', 'stats', 'files'])
   const descriptors: Record<string, OperatorCommandDescriptor> = {}
   for (const [group, commands] of Object.entries(options.groups)) for (const [method, invoke] of Object.entries(commands)) {
     if (typeof invoke !== 'function') continue
-    if (group === 'files' && (/^(open|reveal)/.test(method) || method === 'docBytes' || method === 'readShowcase') || group === 'globalTask' && method === 'image' || group === 'session' && (method === 'write' || method === 'resize')) continue
+    if (group === 'files' && (/^(open|reveal)/.test(method) || ['docBytes', 'downloadDoc', 'readShowcase'].includes(method)) || group === 'globalTask' && ['image', 'attachment'].includes(method) || group === 'session' && (method === 'write' || method === 'resize')) continue
     if (group === 'files' && !options.preview && ['docPreview', 'showcasePreview', 'showcaseBase'].includes(method)) continue
     const projectScope = projectGroups.has(group) || group === 'agent' && method === 'preflight'
     // Heartbeat меняет только bounded in-memory lease. Повтор проверяет живой token;

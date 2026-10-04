@@ -654,7 +654,7 @@ export function DocsModal({ projectId, projectName, root, tasks, columns, onClos
           {(findable || markdownDoc || (view && (docModes(view).length > 0 || docZoomable(view, docMode)))) && <span className="docs-vsep docs-acts" />}
           <span className="docs-ctl docs-acts">
             <button className="icon-btn docs-tool" title={t('config.docs.view.copyPath')} aria-label={t('config.docs.view.copyPath')} onClick={() => void onAction('copy')}><DocIcon.copy /></button>
-            <button className="icon-btn docs-tool" title={t('config.docs.nav.reveal')} aria-label={t('config.docs.nav.reveal')} onClick={() => void onAction('reveal')}><DocIcon.reveal /></button>
+            <button className="icon-btn docs-tool" title={(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('config.docs.nav.reveal'))} aria-label={(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('config.docs.nav.reveal'))} onClick={() => void onAction('reveal')}><DocIcon.reveal /></button>
             {actions.open && (
               <button className="icon-btn docs-tool" title={t('config.docs.nav.openExternal')} aria-label={t('config.docs.nav.openExternal')} onClick={() => void onAction('open')}><DocIcon.external /></button>
             )}

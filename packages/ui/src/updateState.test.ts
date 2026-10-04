@@ -21,6 +21,13 @@ const found: Partial<UpdateState> = {
 }
 const st = (patch: Partial<UpdateState>): UpdateState => ({ ...base, ...patch })
 
+it('Web использует свой release tag и общие действия карточки', () => {
+  assert.match(cardRelease(base, { version: base.currentVersion, releaseNotes: '' }, 'web')!.releaseUrl, /\/web\/v0.4.1$/)
+  assert.equal(canCheck(st({ mode: 'server' })), true)
+  assert.equal(bannerView(st({ ...found, mode: 'server', status: 'ready' }))?.primary, 'install')
+  assert.match(unsupportedText('server-unmanaged'), /Linux/)
+})
+
 describe('описание версии в карточке', () => {
   const bundled: Pick<UpdateInfo, 'version' | 'releaseNotes'> = {
     version: base.currentVersion, releaseNotes: '# Orca 0.4.1\n\nИзменения установленной версии.'

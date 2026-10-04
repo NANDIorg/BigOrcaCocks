@@ -1,0 +1,27 @@
+#orca-app { height: calc(100dvh - 32px); }
+#orca-app > * { height: 100%; }
+.web-login { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: var(--page); overflow-y: auto; }
+.web-login-card { width: min(100%, 380px); background: var(--side); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
+.web-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; font-size: 22px; font-weight: 600; }
+.web-brand .app-logo { width: 44px; height: 44px; color: var(--accent); }
+.web-login h1 { font-size: 22px; margin: 0 0 8px; }
+.web-login-card > label { display: block; font-weight: 500; margin: 20px 0 8px; }
+.web-login input { width: 100%; min-width: 0; min-height: 40px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--page); color: var(--text); font: inherit; }
+.web-password { display: flex; gap: 8px; align-items: center; }
+.web-password button, .web-language button { background: transparent; color: var(--muted); border: 0; padding: 6px; cursor: pointer; }
+.web-message { min-height: 36px; color: var(--danger); font-size: 12px; margin: 12px 0; }
+.web-login-submit { width: 100%; min-height: 40px; justify-content: center; }
+.web-language { display: flex; justify-content: center; gap: 12px; margin-top: 16px; }
+.web-language button[aria-pressed="true"] { color: var(--accent); }
+.web-session-bar { position: fixed; bottom: 0; inset-inline: 0; height: 32px; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--side); border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.web-session-bar button { background: none; border: 0; color: var(--text); cursor: pointer; }
+.web-session-error { color: var(--danger); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.web-picker { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; padding: 24px; }
+.web-picker > .hint { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.web-picker .row { flex-wrap: wrap; align-items: center; }
+.web-picker-path { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; word-break: break-all; }
+.web-directory-list { min-height: 180px; max-height: 40dvh; overflow-y: auto; display: flex; flex-direction: column; }
+.web-directory-list button { text-align: left; padding: 10px; border: 0; background: transparent; color: var(--text); cursor: pointer; font-family: var(--font-mono); }
+.web-directory-list button:hover { background: var(--card); }
+:where(.web-login, .web-picker, .web-session-bar) button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 600px) { .web-login-card { padding: 22px; } .web-session-bar { gap: 8px; } .web-session-bar > span:first-child { display: none; } }

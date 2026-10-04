@@ -9,13 +9,14 @@ export class OrcaClientError extends Error {
 }
 export interface CallOptions { projectId?: string; revision?: number }
 export interface ClientState { phase: 'disconnected' | 'connecting' | 'connected' | 'closed'; selection: ClientSelection; language: 'ru' | 'en'; metadata?: OperatorMetadata; snapshot?: unknown; cursor?: ObserverCursor }
-export interface OrcaClientOptions { transport: OperatorTransport; product: OperatorProduct; language?: 'ru' | 'en'; requiredCapabilities?: string[]; pollMs?: number; sleep?(ms: number): Promise<void>; requestId?(): string }
+export interface OrcaClientOptions { transport: OperatorTransport; product: OperatorProduct; language?: 'ru' | 'en'; requiredCapabilities?: string[]; pollMs?: number; sleep?(ms: number): Promise<void>; requestId?(): string; onError?(error: unknown): void }
 
 /** Transport не создаёт owner. Reconnect повторяет identity, selection и observer cursor. */
 export function createOrcaClient(options: OrcaClientOptions) {
   const transport = options.transport; let state: ClientState = { phase: 'disconnected', selection: {}, language: options.language ?? 'ru' }
   let generation = 0; let connection = 0; let connecting: Promise<void> | undefined; let timer: ReturnType<typeof setTimeout> | undefined
   const listeners = new Set<(state: ClientState) => void>(); const observers = new Set<(event: ObserverEvent) => void>()
+  const resetListeners = new Set<(state: ClientState) => void>()
   const writerQueues = new Map<string, Promise<void>>(); const writerSequences = new Map<string, number>()
   const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
   const emit = () => { for (const listener of listeners) listener(structuredClone(state)) }
@@ -24,10 +25,11 @@ export function createOrcaClient(options: OrcaClientOptions) {
     if (timer || state.phase === 'closed' || options.pollMs === 0) return
     timer = setTimeout(() => { void poll().finally(schedule) }, options.pollMs ?? 500)
   }
-  const refresh = async (epoch: number) => {
+  const refresh = async (epoch: number, reset = false) => {
     const snapshot = await transport.snapshot()
     if (epoch !== generation || state.phase === 'closed') return
     state = { ...state, snapshot: snapshot.snapshot, cursor: snapshot.cursor }; emit()
+    if (reset) for (const listener of resetListeners) listener(structuredClone(state))
   }
   const connect = (): Promise<void> => {
     guard(); if (connecting) return connecting
@@ -40,7 +42,7 @@ export function createOrcaClient(options: OrcaClientOptions) {
       if (options.requiredCapabilities?.some(capability => !metadata.capabilities.includes(capability))) throw new OrcaClientError('protocol.capabilityMissing')
       await transport.select(state.selection)
       if (state.cursor && state.metadata?.runtimeRevision === metadata.runtimeRevision && transport.subscribe) await transport.subscribe(state.cursor)
-      else await refresh(epoch)
+      else await refresh(epoch, Boolean(state.metadata))
       if (epoch !== generation || visit !== connection) return
       state = { ...state, metadata, phase: 'connected' }; emit()
       if (!timer) schedule()
@@ -55,12 +57,12 @@ export function createOrcaClient(options: OrcaClientOptions) {
       const epoch = generation; const visit = connection; const deliveries = await transport.events()
       if (epoch !== generation || visit !== connection) return
       for (const delivery of deliveries) {
-        if (delivery.type === 'snapshotRequired' || state.cursor && delivery.event.cursor.epoch !== state.cursor.epoch) { await refresh(epoch); break }
+        if (delivery.type === 'snapshotRequired' || delivery.event.truncated || state.cursor && delivery.event.cursor.epoch !== state.cursor.epoch) { await refresh(epoch, true); break }
         const event = delivery.event
         if (state.cursor && event.cursor.sequence <= state.cursor.sequence) continue
         state = { ...state, cursor: event.cursor }; for (const observer of observers) observer(structuredClone(event))
       }
-    } catch { if (state.phase !== 'closed') { state = { ...state, phase: 'disconnected' }; emit() } }
+    } catch (error) { if (state.phase !== 'closed') { state = { ...state, phase: 'disconnected' }; emit(); options.onError?.(error) } }
   }
   const send = async (request: OperatorCall) => {
     for (let attempt = 0; ; attempt++) {
@@ -96,6 +98,8 @@ export function createOrcaClient(options: OrcaClientOptions) {
     async refresh() { guard(); if (state.phase !== 'connected') await connect(); await refresh(generation) },
     subscribe(listener: (state: ClientState) => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
     observe(listener: (event: ObserverEvent) => void) { observers.add(listener); return () => { observers.delete(listener) } },
+    onSnapshotReset(listener: (state: ClientState) => void) { resetListeners.add(listener); return () => { resetListeners.delete(listener) } },
+    forgetWriter(leaseId: string) { const pending = writerQueues.get(leaseId); if (pending) void pending.finally(() => writerSequences.delete(leaseId)).catch(() => {}); else writerSequences.delete(leaseId) },
     setLanguage(language: 'ru' | 'en') { guard(); state = { ...state, language }; emit() },
     async select(selection: ClientSelection) {
       guard(); generation++; state = { ...state, selection: structuredClone(selection), cursor: undefined, snapshot: undefined }; emit()
@@ -125,7 +129,7 @@ export function createOrcaClient(options: OrcaClientOptions) {
     async close() {
       if (state.phase === 'closed') return
       generation++; connection++; state = { ...state, phase: 'closed' }; if (timer) clearTimeout(timer); timer = undefined; emit()
-      await transport.close(); listeners.clear(); observers.clear(); writerSequences.clear()
+      await transport.close(); listeners.clear(); observers.clear(); resetListeners.clear(); writerSequences.clear()
     }
   }
 }

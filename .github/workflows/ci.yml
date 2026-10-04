@@ -67,6 +67,9 @@ jobs:
       - name: Installed Linux headless artifact без DISPLAY
         if: runner.os == 'Linux'
         run: node scripts/test-headless-artifact.mjs
+      - name: Installed Linux Web artifact без Electron и DISPLAY
+        if: runner.os == 'Linux'
+        run: node scripts/test-web-artifact.mjs
 
 
   quality:

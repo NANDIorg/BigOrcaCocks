@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: orca-board
-description: Рабочая канбан-доска CLI-агентов с терминалами и нативной оболочкой desktop.
+description: Общая канбан-доска CLI-агентов для Desktop и Web с терминалами.
 colors:
   background: "#252422"
   surface: "#302f2c"
@@ -306,6 +306,33 @@ CLI; `useModalFocus` — фокусом и inert-фоном. Состояния 
 
 Общий UI живёт в `packages/ui`; Desktop main использует compatibility wrappers общих tokens.
 UI получает client/platform через injection; системные окна, диалоги и updater принадлежат
-Desktop host. `apps/desktop/src/renderer/src/main.tsx` подключает общий UI. Будущий Web
-задаст свой entrypoint и platform adapter с upload/download и серверными путями.
+Desktop host. `apps/desktop/src/renderer/src/main.tsx` подключает общий UI. Web
+задаёт свой entrypoint и platform adapter с upload/download и серверными путями.
 Перенос не меняет оформление и поведение экранов. Границы — [docs/shared-foundation.md](docs/shared-foundation.md).
+
+## Web variants
+
+Web сохраняет общую палитру, темы, плотность, ru/en и владельцев компонентов.
+`apps/web/src/browser/main.tsx` владеет входом и серверным выбором каталога;
+`web.css` использует CSS variables общего UI. Login — маскированный пароль с явным
+показом, password manager/paste, inline error, pending/disabled submit и возвратом фокуса.
+Выбор каталога использует общий useModalFocus, Escape/cancel и защиту от позднего ответа.
+
+32px session bar показывает оператора, reconnect и доступный logout; её место резервируется
+в layout. Неподходящая версия требует reload до монтирования UI/новых записей. Native
+open/reveal подписаны «Скачать»; Desktop labels/поведение сохраняются. Настройки Desktop
+background/update preferences скрыты в Web. Общие UpdateCard/UpdateBanner показывают
+реальную версию/заметки и прогресс; установка подтверждает restart сервера и агентов.
+Unmanaged host показывает команду вместо недоступной установки. Footer directory picker
+использует общую modal .row с gap 10px и wrap на узком экране.
+Терминал открывается для чтения; writer получает явная кнопка, владелец один. Hide/detach
+освобождают lease. Resync заменяет доступный tail и явно сообщает о пропуске истории.
+
+Инженерная проверка: i18n/browser boundaries, regression tests auth/recovery и installed
+artifact smoke. Визуальную приёмку, keyboard/narrow viewport/theme выполняет пользователь
+в запущенном билде; автоматический обход GUI по правилам репозитория не проводится.
+
+Login использует общий appFontFamily уже при инициализации appearance, до auth/mount.
+RailLogo имеет базовый app-logo стиль вне rail; Web variant меняет только размер/цвет.
+Поля наследуют UI font, основной submit центрирует подпись. Это сохраняет одинаковую
+типографику входа и основной панели без второго font/token owner.
