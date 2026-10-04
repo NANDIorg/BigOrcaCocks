@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBranchUpstream, ProjectGitResult, ProjectLocalBranch } from '@orca-board/contracts'
@@ -529,9 +529,11 @@ export function createGitOperations(messages: GitMessages) {
   }
 
   /** `git fetch --all --prune`: HEAD и рабочее дерево не трогает. */
-  function projectFetch(root: string): Promise<ProjectGitResult> {
+  function projectFetch(root: string, guard: () => void = () => {}): Promise<ProjectGitResult> {
     return serial(root, async () => {
+      guard()
       assertRepo(root)
+      guard()
       return gitResult(root, await runGit(root, ['fetch', '--all', '--prune'], NET_TIMEOUT_MS))
     })
   }
@@ -541,15 +543,18 @@ export function createGitOperations(messages: GitMessages) {
    * чтобы «ветка разошлась» отличать от сети и правок в дереве по факту (предок ли HEAD у upstream), а не по тексту
    * ошибки git, который зависит от локали.
    */
-  function projectPull(root: string): Promise<ProjectGitResult> {
+  function projectPull(root: string, guard: () => void = () => {}): Promise<ProjectGitResult> {
     return serial(root, async () => {
+      guard()
       assertRepo(root)
       const { branch } = projectBranchInfo(root)
       if (!branch) throw messages.error('git.noUpstream', { branch: 'HEAD' })
       const upstream = await branchUpstream(root, branch).catch(() => undefined)
       if (!upstream || upstream.gone) throw messages.error('git.noUpstream', { branch })
       const remote = (await runGit(root, ['config', '--get', `branch.${branch}.remote`]).catch(() => ({ stdout: '' }))).stdout.trim()
+      guard()
       const fetched = remote && remote !== '.' ? await runGit(root, ['fetch', remote], NET_TIMEOUT_MS) : { stdout: '', stderr: '' }
+      guard()
       try {
         const merged = await runGit(root, ['merge', '--ff-only', `${branch}@{upstream}`])
         return gitResult(root, { stdout: [fetched.stdout, merged.stdout].join('\n'), stderr: fetched.stderr })
@@ -567,8 +572,9 @@ export function createGitOperations(messages: GitMessages) {
    * вызывающий (host), git о них не знает. Порядок проверок: репозиторий → та же ветка (не ошибка) → ветка
    * существует → живые агенты → ветка в другом worktree → незакоммиченные изменения.
    */
-  function checkoutProjectBranch(root: string, branch: string, liveAgents: number): Promise<ProjectBranchInfo> {
+  function checkoutProjectBranch(root: string, branch: string, liveAgents: number | (() => number), guard: () => void = () => {}): Promise<ProjectBranchInfo> {
     return serial(root, async () => {
+      guard()
       assertRepo(root)
       const current = projectBranchInfo(root)
       if (current.branch === branch) return current
@@ -587,11 +593,21 @@ export function createGitOperations(messages: GitMessages) {
         local = branch.slice(remote.length + 1)
         if (!locals.includes(local)) track = branch
       }
-      if (liveAgents > 0) throw messages.error('git.workersActive', { count: liveAgents })
+      const assertAgentsIdle = () => {
+        const count = typeof liveAgents === 'function' ? liveAgents() : liveAgents
+        if (count > 0) throw messages.error('git.workersActive', { count })
+      }
+      assertAgentsIdle()
       const busyPath = (await checkedOutBranches(root)).get(local)
-      if (busyPath !== undefined) throw messages.error('git.branchBusy', { branch: local, path: busyPath })
+      // Unborn HEAD тоже указан в worktree list: свой корень не является чужим занятым worktree.
+      let ownRoot = busyPath === root
+      if (busyPath !== undefined && !ownRoot) {
+        try { ownRoot = realpathSync(busyPath) === realpathSync(root) } catch { /* Недоступный чужой worktree остаётся занятым. */ }
+      }
+      if (busyPath !== undefined && !ownRoot) throw messages.error('git.branchBusy', { branch: local, path: busyPath })
       if ((await runGit(root, ['status', '--porcelain'])).stdout.trim() !== '') throw messages.error('git.dirtyTree')
       // Завершающий `--` — имя ветки не должно читаться как путь файла; имя, начинающееся с «-», сюда не дойдёт: такой ветки нет.
+      guard(); assertAgentsIdle()
       if (track) await runGit(root, ['checkout', '-q', '--track', '-b', local, track, '--'])
       else await runGit(root, ['checkout', '-q', local, '--'])
       return projectBranchInfo(root)
@@ -620,17 +636,22 @@ export function createGitOperations(messages: GitMessages) {
    * дерева не хардкодим: в SHA-256-репозитории он другой. `snapshot` — `add -A` + `commit` с сетевым таймаутом: без
    * `.gitignore` в коммит может попасть `node_modules`.
    */
-  function createInitialCommit(root: string, mode: InitialCommitMode): Promise<ProjectBranchInfo> {
+  function createInitialCommit(root: string, mode: InitialCommitMode, guard: () => void = () => {}): Promise<ProjectBranchInfo> {
     return serial(root, async () => {
+      guard()
       assertRepo(root)
       if (hasCommits(root)) return projectBranchInfo(root)
       const identity = await identityArgs(root)
+      guard()
       if (mode === 'snapshot') {
         await runGit(root, ['add', '-A'], NET_TIMEOUT_MS)
+        guard()
         await runGit(root, [...identity, 'commit', '-q', '--allow-empty', '-m', INITIAL_COMMIT_MESSAGE], NET_TIMEOUT_MS)
       } else {
         const tree = (await runGit(root, ['hash-object', '-t', 'tree', '-w', '--stdin'], LOCAL_TIMEOUT_MS, '')).stdout.trim()
+        guard()
         const commit = (await runGit(root, [...identity, 'commit-tree', tree, '-m', INITIAL_COMMIT_MESSAGE])).stdout.trim()
+        guard()
         await runGit(root, ['update-ref', '-m', INITIAL_COMMIT_MESSAGE, 'HEAD', commit, ''])
       }
       return projectBranchInfo(root)

@@ -46,6 +46,10 @@ FileCommands требуют явный проект и host policy, не реш�
 pending-запросы. После удаления проекта поздний file result/native effect отклонён;
 Desktop IPC проверяет caller до выбора проекта и вызывает общий API.
 
+Run list/counts и agent preflight не потребляют check и не отвечают человеку.
+Preflight проверяет роль, доступность агента и флаги сохранённого снимка до launch;
+явный неизвестный run отклонён, а не заменяется default типом другого прогона.
+
 ## Модель
 
 ```ts

@@ -361,6 +361,23 @@ factories. Electron protocol/navigation и shell остаются в Desktop; na
 поступает в shell лишь после общей проверки source/project после await. Проверки:
 [план](superpowers/plans/2026-10-04-orca-file-commands.md).
 
+### Общий API Git проекта, прогонов и агентов
+
+ProjectGitCommands используют явный context и захватывают registration/root без
+открытия TaskStore. Scope guard вызывается внутри Git очереди перед fetch, merge,
+checkout и шагами начального коммита; remove/readd, root replacement и отзыв policy
+не запускают позднюю mutation. Число живых агентов пересчитывается перед checkout,
+а не хранится от момента клика. Git queue пока прежняя по root; общий async
+commonDir/effect reconciliation — следующий рубеж B.
+
+RunCommands дают list/listWithCounts/close с detached result и прежней core
+идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи
+за один проход, не потребляет события. AgentCommands используют общие discovery и
+worker preflight; global list либо enabled flags явного проекта, refresh config,
+project preflight с role/run validation без запуска. Старый agent socket не получает
+operator capability от наличия API. Desktop wiring следует по
+[плану](superpowers/plans/2026-10-04-orca-project-run-agent-commands.md).
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,

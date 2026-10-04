@@ -33,11 +33,11 @@
 
 **Interfaces:** ProjectGitCommands branch/branches/fetch/pull/checkout/initialCommit(context:ProjectCommandContext,...):Promise<existing DTO>. createProjectGitCommands(host) consumes project(id):Project|undefined, authorize, isCurrent, git.projectBranchInfo/projectBranches/projectFetch/projectPull/checkoutProjectBranch/createInitialCommit, liveAgents(id). Optional internal guard:()=>void runs inside Git queue before external mutation; checkout accepts number|(()=>number) for live agent recheck. RunCommands list/listWithCounts/close explicit project context, RunSummary extends Run with tasks/done; listRunsWithCounts(store) shared socket projection. AgentCommands list(clientContext,projectId?:string,refresh?:boolean):AgentInfo[], preflight(projectContext,roleId,runId?):Role; host supplies manager/discovery/preflight. Validation precedes lookup; results detached.
 
-- [ ] **Step 1:** Real ProjectManager/two Git repos/temp boards and discovery files; tests invalid/forged context/payload before lookup, detached DTO, branch/checkout/init including staged preservation, local bare fetch/pull, queued stale registration no external commit, live agent after await, runs close/history/status, per-project enabled agents and preflight role/flags. Assert actual Git HEAD/index/store JSON, not mock forwarding.
-- [ ] **Step 2:** `node --test packages/runtime/test/project-run-agent-commands.test.ts`; Expected FAIL missing factories.
-- [ ] **Step 3:** Implement contracts/factories, reusable run count projection; optional guard callbacks in async project Git and current-agent callback before checkout. Guards before network/ref/worktree changes, repeat after await; attribution only synchronous store writes.
-- [ ] **Step 4:** Runtime affected new commands + git/agent discovery/preflight/import boundaries, contracts/core/typechecks; Expected PASS. No changes to old Git algorithms outside current scope guard.
-- [ ] **Step 5:** Inspect diff/staged diff; code/tests/docs commit, task-done affected suite.
+- [x] **Step 1:** Real ProjectManager/two Git repos/temp boards and discovery files; tests invalid/forged context/payload before lookup, detached DTO, branch/checkout/init including staged preservation, local bare fetch/pull, queued stale registration no external commit, live agent after await, runs close/history/status, per-project enabled agents and preflight role/flags. Assert actual Git HEAD/index/store JSON, not mock forwarding.
+- [x] **Step 2:** `node --test packages/runtime/test/project-run-agent-commands.test.ts`; Expected FAIL missing factories.
+- [x] **Step 3:** Implement contracts/factories, reusable run count projection; optional guard callbacks in async project Git and current-agent callback before checkout. Guards before network/ref/worktree changes, repeat after await; attribution only synchronous store writes.
+- [x] **Step 4:** Runtime affected new commands + git/agent discovery/preflight/import boundaries, contracts/core/typechecks; Expected PASS. No changes to old Git algorithms outside current scope guard.
+- [x] **Step 5:** Inspect diff/staged diff; code/tests/docs commit, task-done affected suite.
 
 ### Task 2: Desktop/socket adapters
 

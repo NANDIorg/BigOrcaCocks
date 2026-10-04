@@ -28,6 +28,12 @@ runtime factories с прежними лимитами и prepared commit/discar
 Общий API проверяет captured task/worktree/dispatch до late effect/result; file
 чтение не держит withStatusSource через await и не повторяет workflow effect.
 
+Project Git commands проверяют registration/policy внутри очереди и перед внешним
+изменением после await. Checkout повторяет guard живых агентов перед сменой root;
+начальный empty commit сохраняет staged/index пользователя. Собственный unborn root
+не считается чужим busy worktree при первом tracking checkout. Это не заменяет
+EffectToken run/node/visit/lane/dispatch: общий async workflow Git — следующий этап.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

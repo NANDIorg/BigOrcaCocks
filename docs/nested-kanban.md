@@ -19,6 +19,10 @@ root остаётся внутренним. Общие FileCommands провер
 удалённая или заменённая задача не выдаёт поздний preview URL. Desktop IPC использует
 тот же API, выбор проекта на legacy границе не меняет source другого клиента.
 
+Общие RunCommands читают/закрывают прогон явного проекта. listWithCounts использует
+общую projection задач/done; close сохраняет прежние closedAt и историю автора,
+не является workflow completion и не создаёт повторный run_done.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime
