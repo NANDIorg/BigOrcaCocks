@@ -2,6 +2,11 @@
 
 ## Независимые поставки и native ABI
 
+Headless сохраняет разделители Windows named pipe через `String.raw`. Service без
+`SHELL` запускает системный `/bin/sh` на Linux (macOS — `/bin/zsh`); installed smoke
+проверяет default shell без явного command. Desktop shutdown различает начало
+остановки и разрешение Electron exit: повторный quit ждёт native exit и profile lease.
+
 Desktop node-pty остаётся в Electron install root; Node24 test root создаёт
 `scripts/node-native.mjs` в `.native/node-<abi>-<platform>-<arch>`. Общий test resolver
 направляет node-pty/subpaths только туда. Electron pack/rebuild не меняет этот root.
@@ -34,6 +39,12 @@ IPC `operator:hello/call/select/snapshot/events/close/upload/binary/writer` за
 только для verified main frame. Ledger проверяется до Desktop backup; snapshot/replay,
 upload tickets, binary guards и sequence writer общие с headless. Close drops client leases,
 не завершает owner/диалог/PTY. CLI React не требует. Нового Web приложения ещё нет.
+
+`session.renewWriter` — ephemeral heartbeat существующего writer token с ограниченным
+TTL: каждый retry проверяет живость/владельца и не восстанавливает released/expired
+lease. Heartbeat не занимает durable mutation ledger и не зависит от board revision;
+business mutations сохраняют прежнюю durable identity/replay. React bundler alias
+указывает на dependencies общего UI, чтобы host dedupe не искал вторую копию React.
 
 
 Правила разработки (что нельзя, что обязательно, проверки) — в [CLAUDE.md](../CLAUDE.md).
@@ -3836,7 +3847,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Путь сокета | `~/.orca-board/orca.sock` | именованный канал `\\.\pipe\orca-board` | `defaultSocketPath()` — `packages/core/src/paths.ts`; дубль — `packages/cli/bin/orca-board.js` |
 | Подготовка сокета | `mkdir` каталога, удалить старый файл | не нужно: канал не лежит в ФС | `startSocketServer` — `src/main/socket.ts` |
 | Guard профиля | Linux: abstract socket; macOS/прочие Unix: exclusive TCP на 127.0.0.1, port из profile id | named pipe из profile id | `packages/runtime/src/profile-ownership.ts`; Desktop startup — `src/main/index.ts` |
-| Оболочка терминала | `$SHELL`, иначе `/bin/zsh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `src/main/pty.ts` |
+| Оболочка терминала | `$SHELL`, иначе macOS `/bin/zsh`, Linux `/bin/sh` | `%COMSPEC%` (обычно `cmd.exe`), иначе `powershell.exe` | `defaultShell()` — `packages/runtime/src/sessions.ts`, Desktop `src/main/pty.ts` |
 | Env для PTY | как есть | имена регистронезависимы: `PATH` пишется в существующий `Path` | `mergeEnv()` — `src/main/pty.ts` |
 | PATH пользователя | из `$SHELL -ilc` | `shellPath()` → `null`, берётся PATH процесса | `shellPath()` — `src/main/index.ts` |
 | Разделитель PATH | `:` | `;` — везде `path.delimiter` | `workerPath()` — `src/main/worker.ts`; `extraPathDirs()`, `findBin()` — `src/main/agents.ts` |

@@ -16,7 +16,7 @@ export async function startHeadless(options: { dataDir: string; resourceDir?: st
   const native = createRequire(join(resourceDir, 'package.json'))('node-pty') as { spawn: PtyFactory }
   mkdirSync(options.dataDir, { recursive: true, mode: 0o700 })
   const location = await getProfileLocation(options.dataDir)
-  const socketPath = process.platform === 'win32' ? `\\.\pipe\orca-agent-${location.profileId.slice(0, 32)}` : join(homedir(), '.orca-board', 'run', `${location.profileId.slice(0, 32)}.sock`)
+  const socketPath = process.platform === 'win32' ? String.raw`\\.\pipe\orca-agent-${location.profileId.slice(0, 32)}` : join(homedir(), '.orca-board', 'run', `${location.profileId.slice(0, 32)}.sock`)
   const runtime = await createOrcaRuntime({ dataDir: location.dataDir, socketPath,
     cliBinDir: join(resourceDir, 'cli'), product: { name: 'orca-headless', version: manifest.version },
     prompts: { worker: readFileSync(join(resourceDir, 'skills', 'worker.md'), 'utf8'), coordinator: readFileSync(join(resourceDir, 'skills', 'coordinator.md'), 'utf8'), assistant: readFileSync(join(resourceDir, 'skills', 'assistant.md'), 'utf8') },

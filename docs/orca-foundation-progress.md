@@ -1,40 +1,62 @@
 # Готовность общего фундамента Orca
 
-Авторитет требований: [утверждённая архитектура](superpowers/specs/2026-10-02-orca-shared-foundation-design.md), особенно §12.
-04.10.2026 пользователь поручил самостоятельно пройти все оставшиеся этапы без промежуточных запросов «продолжать?». Исполнение inline, один независимый итоговый reviewer. Web, терминальный UI CLI и развёртывание сервера — последующие проекты.
+Требования: [утверждённая архитектура](superpowers/specs/2026-10-02-orca-shared-foundation-design.md), §12.
+04.10.2026: реализация общего фундамента завершена. Web для собственного сервера,
+терминальный UI CLI и их развёртывание — следующие отдельные проекты.
 
-## Подтверждённая база
+## Реализованные рубежи
 
-Общие contracts, persistence/projects, launcher/sessions/workers, workflow/review services, agent discovery/preflight, assistant transports/dialog registry/history, profile ownership/bootstrap извлечены. Desktop использует общий board/global-task/coordinator/worker/review/human-request/profile/config/rules/stats command API. Перенос review/requests: [план и проверки](superpowers/plans/2026-10-04-orca-review-request-commands.md), общий API `68b875b`, IPC/socket подключены следующим коммитом; полный verify3675/3675, typecheck/build PASS. Последняя полная доставка: `f7e429d`, verify3634/3634, CI10/10, локальный Desktop собран и запущен. Её delivery receipt: `/private/tmp/orca-worker-commands-evidence/delivery-final.json`. Перенос service сам по себе не подтверждает готовность headless/client/UI.
-
-## Оставшиеся рубежи
-
-| Рубеж | Проверяемый результат | Статус |
+| Рубеж | Результат | Основные планы |
 | --- | --- | --- |
-| A. Полный application API | Review, вопросы/requests, проекты/settings/types/templates, files/docs/rules/stats, dialogs/PTY; явный client/project и host principal, runtime validation, Desktop/socket вызывают общие операции | Review/requests подключены. Profile/config API и Desktop31 IPC: [план](superpowers/plans/2026-10-04-orca-profile-commands.md), verify3720/3720 и typecheck/build PASS. Rules/stats services/API: [план](superpowers/plans/2026-10-04-orca-rules-stats-commands.md), API/IPC/socket подключены; verify3764/3764, typecheck/build PASS. Найденная гонка ACP reply/kill исправлена с настоящим busy CLI regression. Files/docs/showcase/snapshot/preview factories: [план](superpowers/plans/2026-10-04-orca-file-commands.md), targeted116/116 + HTTPS-address regression1/1, import guards38/38 и runtime/Desktop types PASS; FileCommands добавлен: affected56/56, contracts50/50 и runtime types PASS; Desktop14 IPC/facades подключены: affected173/173, runtime/Desktop typechecks PASS. Project Git/runs/agents contracts и commands: [план](superpowers/plans/2026-10-04-orca-project-run-agent-commands.md), runtime affected64/64 PASS; Desktop9 IPC и socket counts подключены, affected80/80 PASS. SessionCommands/writer leases: [план](superpowers/plans/2026-10-04-orca-session-dialog-commands.md), affected43/43 PASS. Dialog/legacy Assistant commands и явный project binding driver: affected148/148 и runtime types PASS; Desktop compatibility10 invoke +3 PTY events и2 native attachment handlers подключены; affected55/55 PASS, verify3942/3942, typecheck/build PASS (локальный pack после всего фундамента) |
-| B. Async effects | Async Git, очередь по canonical commonDir; независимые repo параллельны, EffectToken после await, отмена/устаревший результат и restart reconciliation | Canonical commonDir queue подключена к async project mutations: [план](superpowers/plans/2026-10-04-orca-git-common-dir-queue.md), реальные alias/FIFO/parallel/held hook/stale principal проверки6/6 PASS, affected43/43, Desktop Git32/32, runtime suite931/931 и runtime/Desktop types/core PASS; Общий async GitProcessService: [план](superpowers/plans/2026-10-04-orca-async-git-process.md), actual hook abort/timeout/stop/descendant cleanup и factory cancellation проверены, affected51/51, runtime939/939 и runtime/Desktop types/core943 PASS; project Git path использует async HEAD/branch helpers, affected57/57, Desktop32/32 и runtime/Desktop types PASS; полный verify3962/3962 и typecheck/build PASS. Scoped async workflowGit port готов: [план](superpowers/plans/2026-10-04-orca-git-workflow-service.md), actual compound/merge-conflict/foreign/queue/stale/push/escaped-port tests9/9, affected55/55, runtime954/954, core943/943 и все typechecks PASS; unrelated history не маскируется как пустой review. EffectScopeService: [план](superpowers/plans/2026-10-04-orca-effect-scope.md), scope tests27/27, affected66/66, runtime981/981, core943/943 и runtime types PASS; общий token/guard/cancel связан с реальным Git port. Async RunBranchServices: [план](superpowers/plans/2026-10-04-orca-workflow-async-integration.md), actual preparation/restore/merge/cleanup/interleaving tests16/16, affected76/76, runtime997/997, core943/943 и все typechecks PASS; Workers/coordinator/review/Task/Run workflow, attachments, commands и Desktop/socket подключены к тому же async executor: реальный hook/stop/policy/visit/lane/dispatch, source и placement-handoff regressions; affected312/312, attachments/integration56/56, Desktop203/203 и types PASS. Полный verify4046/4046 (core944, runtime1022, Desktop1943, scripts49, contracts50, CLI38), typecheck/build PASS. Именованные Git compatibility methods также async, старый sync body удалён: [план](superpowers/plans/2026-10-04-orca-git-read-services.md), реальный held hook/queue/cancel2/2, affected35/35, Desktop13/13, core944/944 и все types PASS. Profile/docs/root reads и Desktop startup/adapter также async: runtime1031/1031, targeted79/79 runtime и79/79+34/34 Desktop, types PASS. Полный verify дошёл до Desktop и выявил старые test callers/синхронный startup harness; исправлены targeted34/34. Повторный полный verify по просьбе пользователя отложен до конца B–F. Persistent journal/reconciliation подключены: [план](superpowers/plans/2026-10-04-orca-effect-recovery.md), реальные hook/stale/crash/restart и atomic I/O checks; affected runtime96/96, final integration/host7/7, Desktop startup5/5, runtime/Desktop types PASS. Journal schema preflight до backups, operator recovery API, native Git/PTY/attachments tracking и automatic resume fence реализованы. B реализован; итоговый full verify/review остаётся после C–F |
-| C. Протокол и клиенты | Handshake/capabilities, revisions/dedup, bounded observer replay с barrier, независимый выбор project/dialog, writer leases; disconnect сохраняет процессы | Handshake/session/replay/barrier и persistent mutation dedup реализованы; targeted7/7 и runtime/contracts types PASS. Owner revision/event wiring, transport и client reconnect остаются в D/E |
-| D. Headless | Общая runtime composition, импорт без старта daemon; local operator endpoint отдельно от agent socket, graceful stop; Node24/Linux без DISPLAY, установленный artifact вне workspace с настоящим PTY | Общий graph/agent socket подключены к Desktop и Node; schema preflight и graceful cleanup реализованы. Installed Linux artifact: настоящий PTY/Git/legacy CLI/observer/restart, writer duplicate ровно один раз PASS. Targeted runtime/Startup и types PASS; финальный latest artifact/full verify после E/F |
-| E. Client и UI | Browser-safe client/reconnect и React UI; client/platform injection, Desktop bridge к старому preload и HMR, неизменный интерфейс | Typed operator client/HTTP/IPC adapters, independent selection/language, retry identity/late guards реализованы. UI/CSS/i18n перенесены в packages/ui; Desktop bootstrap/client/platform injection и verified operator bridge подключены. Browser boundaries + reconnect/late/endpoint4/4, Desktop integration51/51; UI/client/runtime types PASS, final whole verify после F |
-| F. Поставка | Раздельные Node/Electron native roots, product-aware release guards/fixtures/docs; Desktop feed/Latest/codenames сохраняются | Product-aware branch/tag/manifest guards и CLI/Web Latest/assets policy реализованы; release fixtures16/16 PASS. Node test native root физически отделён от Electron; installed Linux smoke подключён к CI. Финальные native/verify/review/pack gates выполняются после блока |
-
-Детальные планы фиксируются перед каждым переносом на фактическом коде. После коммитов эта таблица получает ссылки на реализацию и фактические проверки. Ни один рубеж не помечается готовым по наличию папки или заглушки.
+| A. Application API | Общие validated commands для профиля/config, board/global tasks, workers/coordinator, review/requests, Git/runs/agents, files/docs/rules/stats, dialogs/PTY; Desktop и agent socket используют один runtime | [Профиль](superpowers/plans/2026-10-04-orca-profile-commands.md), [файлы](superpowers/plans/2026-10-04-orca-file-commands.md), [Git/runs](superpowers/plans/2026-10-04-orca-project-run-agent-commands.md), [сессии/диалоги](superpowers/plans/2026-10-04-orca-session-dialog-commands.md) |
+| B. Async effects | Общий Git process owner, canonical commonDir queue, scopes/stale/cancel guards, journal/reconciliation; прежний sync Git body удалён | [Git process](superpowers/plans/2026-10-04-orca-async-git-process.md), [workflow](superpowers/plans/2026-10-04-orca-workflow-async-integration.md), [reads](superpowers/plans/2026-10-04-orca-git-read-services.md), [recovery](superpowers/plans/2026-10-04-orca-effect-recovery.md) |
+| C. Operator protocol | Handshake/capabilities, revisions/durable dedup, bounded snapshot/replay barrier, независимый project/dialog selection, writer leases; observer не потребляет agent check | [Протокол](superpowers/plans/2026-10-04-orca-operator-protocol.md) |
+| D. Headless | Общая composition Desktop/Node, import без daemon startup, private loopback operator endpoint отдельно от agent socket, graceful shutdown/ownership и product backups | [Runtime/Node host](superpowers/plans/2026-10-04-orca-runtime-composition.md) |
+| E. Client/UI | Browser-safe typed client с retry identity и late guards, HTTP/IPC ports; React/CSS/i18n/assets в общем UI, injected client/platform, Desktop bridge и HMR compatibility | [Client/UI](superpowers/plans/2026-10-04-orca-client-ui.md) |
+| F. Поставка | Раздельные Node/Electron native roots, installed Linux artifact smoke в CI, независимые product branch/tag/manifest guards и release fixtures | [Native/releases](superpowers/plans/2026-10-04-orca-product-native.md) |
 
 ## Итоговые критерии §12
 
-- [ ] Desktop сохраняет полный цикл project → workflow → agent → human → review/merge; актуальный pack/open.
-- [ ] Production graph runtime/headless без Electron/Desktop; contracts/client/UI без Node.
-- [ ] Installed Linux headless artifact вне workspace: настоящий PTY/Git, без DISPLAY/Electron.
-- [ ] Два startup одного profile дают одного owner до backup/migrations; foreign endpoint не затронут.
-- [ ] Независимые project/dialog двух клиентов; disconnect, повторная send и поздний ответ проверены.
-- [ ] Observer не потребляет check; snapshot/replay barrier, expired cursor и bounded queues проверены.
-- [ ] Git не блокирует owner; commonDir serialization и stale effects проверены.
-- [ ] Прежние данные/backup/restore/restart сохраняются; без миграции путей на сервер.
-- [ ] Старый agent CLI/skills совместимы, operator/secret методы не доступны агенту/browser principal автоматически.
-- [ ] Protocol/schema incompatibility блокирует запись; независимые release fixtures сохраняют Desktop feed/Latest/codenames.
+- [x] Desktop сохраняет полный цикл project → workflow → agent → human → review/merge: автоматические integration suites PASS; актуальный pack/open выполнен.
+- [x] Production graph runtime/headless без Electron/Desktop; contracts/client/UI без Node, включая type-only/orphan/symlink guards.
+- [x] Installed Linux headless artifact вне workspace: Node24, настоящий PTY/Git/legacy CLI, без DISPLAY/Electron и SHELL, без явной команды оболочки.
+- [x] Два startup одного profile дают одного owner до backup/migrations; foreign live endpoint не затронут.
+- [x] Независимые project/dialog двух клиентов; disconnect, duplicate send и поздний ответ проверены.
+- [x] Observer не потребляет check; snapshot/replay barrier, expired cursor и bounded queues проверены.
+- [x] Git не блокирует owner; commonDir serialization и stale effects проверены реальными hooks/processes.
+- [x] Прежние данные/backup/restore/restart сохраняются; миграция Desktop путей на сервер не выполняется.
+- [x] Старый agent CLI/skills совместимы; operator/secret методы не доступны агенту/browser principal автоматически.
+- [x] Protocol/schema incompatibility блокирует запись; независимые release fixtures сохраняют Desktop feed/Latest/codenames.
 
-Итоговая доставка: полный verify, один fresh review оставшегося диапазона и исправление блокирующих замечаний с RED→GREEN; локальный pack/open, PR #59 → develop и CI финального HEAD. Merge, публикации, теги и изменение remote rulesets не входят в поручение. Ручной UI проверяет пользователь; автоматических кликов нет.
+## Проверки и передача
+
+`pnpm verify` EXIT0: scripts51 + core944 + CLI38 + contracts50 + client3 + runtime1059 +
+UI952 + Desktop994 = **4091/4091**, все typechecks и production builds PASS.
+Один свежий независимый whole-range reviewer (`f7e429d..5be774b`) нашёл четыре Important;
+все исправлены одним проходом с воспроизведением RED→GREEN: writer heartbeat не заполняет
+durable ledger, повторный Desktop quit ждёт native/owner exit, Windows named pipe сохраняет
+разделители, Linux service без SHELL использует системный sh. Minor/Critical не обнаружены.
+Ошибка renderer build после переноса React устранена явным разрешением UI dependencies.
+
+Последний installed Linux artifact smoke EXIT0: native PTY/default shell, Git, legacy CLI,
+operator snapshot/disconnect, writer duplicate ровно один раз, second owner refusal/restart.
+`pnpm --filter @orca-board/desktop run pack` EXIT0; приложение открыто и его процесс подтверждён:
+`/private/tmp/orca-web-migration-audit/apps/desktop/release/local/mac/orca-board.app`.
+После Electron rebuild настоящий Node PTY test **1/1 EXIT0**; native roots физически раздельны.
+Автоматических UI-кликов не было; визуальную проверку выполняет пользователь в этом билде.
+
+PR [#59 → develop](https://github.com/NANDIorg/BigOrcaCocks/pull/59) обновляется финальным
+коммитом; CI проверяется именно на опубликованном HEAD. Merge, теги, публикации, version
+bumps и изменение remote rulesets не входят в поручение. Desktop сохраняет прежний feed,
+Latest, codenames и versions; CLI/Web workflows добавляются с их настоящими поставками.
+
+Прежняя доставка `f7e429d` и её 44 evidence directories сохранены отдельно:
+`/private/tmp/orca-worker-commands-evidence/delivery-final.json`.
+Итоговые logs/review/rulings архивируются вне Git; технические решения не скрыты за статусом.
 
 ## Темп исполнения
 
-04.10.2026 пользователь попросил ускорить фундамент и сократить промежуточные тесты. Связанные изменения объединяются в крупные блоки; по ходу выполняются только значимые regression checks для persistence/native effects и необходимые typechecks. Повторные полные verify, отдельные core-прогоны после каждого документа и повтор task-done suites откладываются до итогового verify/review/pack. Готовность и результаты проверок фиксируются по фактическим receipts, без объявления неисполненных проверок зелёными.
+По просьбе пользователя связанные изменения объединены в крупные блоки. По ходу выполнялись
+значимые persistence/native regression checks и необходимые types; полные verify/core/task-done
+повторы перенесены на конец. После найденной сборочной ошибки выполнен один исправленный
+whole verify. Новые Web/CLI функции и дополнительные циклы ревью сюда не добавлялись.

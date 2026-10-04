@@ -145,8 +145,10 @@ let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
 /** Уборка worktree веток глобальных задач (`run-branch.ts`): неудачные попытки помнит между изменениями доски. */
 const runBranchSync = new RunBranchSync({ isAlive })
-/** Выход подтверждён (или подтверждать нечего) — before-quit больше не перехватываем. */
+/** Выход подтверждён: новые команды и повторный cleanup запрещены. */
 let quitting = false
+/** Electron может выйти только после native shutdown и освобождения profile lease. */
+let exitAllowed = false
 /** Диалог подтверждения уже открыт — второй не показываем. */
 let confirmingQuit = false
 const menuActions = new MenuActionQueue()
@@ -316,6 +318,7 @@ async function quitNow(): Promise<void> {
   quitting = true
   await cleanupDesktop()
   await desktopRuntime?.stop()
+  exitAllowed = true
   // Обновление скачано и установка при выходе не снята — её установщик сам завершит приложение.
   if (updater.installOnQuit()) return
   app.quit()
@@ -764,7 +767,7 @@ async function initializeDesktop(): Promise<void> {
         quitting = false
       },
       quit: () => {
-        void cleanupDesktop().then(async () => { await desktopRuntime?.stop(); app.quit() }).catch(error => console.error(error))
+        void cleanupDesktop().then(async () => { await desktopRuntime?.stop(); exitAllowed = true; app.quit() }).catch(error => console.error(error))
       },
       takeJustUpdated
     }
@@ -843,12 +846,14 @@ app.whenReady().then(async () => {
 
 // Cmd+Q, «Выйти» из меню приложения, app.quit() — всё идёт через подтверждение.
 app.on('before-quit', (e) => {
-  if (quitting) return
+  if (exitAllowed) return
   if (!projects) {
     quitting = true
+    exitAllowed = true
     return
   }
   e.preventDefault()
+  if (quitting) return
   void requestQuit().catch(error => console.error(error))
 })
 

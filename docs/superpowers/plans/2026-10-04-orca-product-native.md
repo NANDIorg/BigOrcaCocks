@@ -25,3 +25,5 @@ Inline; по просьбе пользователя крупный связан
 - [x] GREEN targeted release fixtures/types; docs/commit, затем один whole-end review/verify/artifact/pack/PR.
 
 Фактические checks: new product branches/tag RED1→GREEN; release/codename/policy16/16 EXIT0. Отдельный Node native install root и настоящий PTY1/1 EXIT0. Runtime/client/UI/headless types PASS, final corrected Desktop node+web types EXIT0. Installed latest Linux artifact и Node smoke после Electron pack — whole-end.
+
+Итоговая проверка 04.10.2026: whole verify4091/4091/types/build EXIT0; one fresh whole-range review, четыре Important исправлены RED→GREEN одним проходом, без re-review. Latest installed Linux native PTY/default shell/Git/legacy CLI/operator/restart smoke EXIT0. Local Desktop pack/open EXIT0, процесс нового app подтверждён; Node native PTY после Electron rebuild1/1 EXIT0. Все критерии §12 отмечены по этим receipts в docs/orca-foundation-progress.md; ручной UI проверяет пользователь.

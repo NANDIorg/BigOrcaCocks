@@ -4,6 +4,10 @@
 Обновление будущего CLI/Web не меняет уже установленный Desktop и не требует новой
 схемы глобальных задач; owner проверяет storage/connection schema до записи.
 
+Длительная работа терминала не расходует журнал мутаций доски: продление writer lease
+остаётся ephemeral heartbeat, а создание/изменение задач сохраняет durable dedup.
+Повторный выход Desktop во время остановки ждёт native processes и освобождения owner.
+
 
 Прежняя доска/подзадачи теперь находятся в общем `packages/ui`; Desktop передаёт
 client/platform ports. Новый operator bridge задаёт project явно и не переключает

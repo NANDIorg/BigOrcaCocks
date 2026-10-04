@@ -4,6 +4,10 @@ Release version продукта не заменяет protocol/schema compatibi
 поддерживаемой версии решает запрос теми же commands, несовместимый handshake
 блокирует mutation до effects; данные запросов сохраняет единственный profile owner.
 
+Writer heartbeat терминала не заполняет durable журнал ответов/команд профиля.
+Ответы человеку сохраняют request identity/revision и прежнее безопасное повторение;
+shutdown Desktop завершает native cleanup до выхода и освобождения profile owner.
+
 
 Общие request UI/presentation helpers перенесены в `packages/ui`, runtime resolution
 не дублируется на клиенте. Binary вложения и повтор RPC используют общий client

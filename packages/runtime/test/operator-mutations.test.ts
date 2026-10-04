@@ -1,12 +1,41 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as runtime from '../src/index.ts'
 
 function profile(t: test.TestContext) { const dir = mkdtempSync(join(tmpdir(), 'orca-operator-')); t.after(() => rmSync(dir, { recursive: true, force: true })); return dir }
 const input = { clientId: 'client', actorId: 'operator', id: 'send-1', issuedAt: 1000, method: 'dialog.send', args: ['hello'], revision: 1 }
+
+test('долгий writer heartbeat не заполняет durable ledger; retry не восстанавливает освобождённый lease', async t => {
+  const dataDir = profile(t); let clock = 1000; let changes = 0
+  const ledger = runtime.createMutationLedger({ dataDir, ownerId: 'owner', now: () => clock, maxEntries: 1 })
+  const leases = runtime.createSessionWriterLeases({ isAlive: () => true, now: () => clock })
+  const ctx = { clientId: 'client', actor: { kind: 'operator' as const, id: 'human' } }
+  const lease = leases.claim('pty', ctx.clientId)
+  const api = runtime.createOperatorApi({ groups: {
+    session: { renewWriter: (context: typeof ctx, id: string, token: string) => leases.renew(id, context.clientId, token) },
+    profile: { createGroup: () => { changes++; return 'group' } }
+  }, product: { name: 'test', version: '1' }, ownerId: 'owner', ledger,
+  events: runtime.createObserverEvents({ epoch: 'owner' }), getRevision: () => 1,
+  authorize: () => true, authorizeProject: () => true, onDetach: () => {} })
+  const operator = api.operator(ctx)
+  operator.hello({ protocolMajor: 1, schemaVersion: 1, product: { name: 'test', version: '1' } })
+  let packet = { id: '', issuedAt: clock, method: 'session.renewWriter', args: ['pty', lease.id], revision: 1 }
+  for (let i = 0; i < 1025; i++) {
+    clock += 15_000; packet = { ...packet, id: `renew-${i}`, issuedAt: clock }
+    assert.equal((await operator.call(packet)).ok, true, `heartbeat ${i}`)
+  }
+  assert.equal(existsSync(join(dataDir, 'operator-mutations.json')), false)
+  assert.equal((await operator.call(packet)).ok, true)
+  leases.release('pty', ctx.clientId, lease.id)
+  assert.equal((await operator.call(packet)).ok, false)
+  assert.equal(leases.current('pty'), null)
+  const mutation = { id: 'create', issuedAt: clock, method: 'profile.createGroup', args: [], revision: 1 }
+  assert.equal((await operator.call(mutation)).ok, true)
+  assert.equal((await operator.call(mutation)).ok, true); assert.equal(changes, 1)
+})
 
 test('mutation duplicate исполняется один раз, replay переживает restart, новый payload конфликтует', async t => {
   const dataDir = profile(t); const ledger = runtime.createMutationLedger({ dataDir, ownerId: 'owner', now: () => 1000 })

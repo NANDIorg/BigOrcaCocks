@@ -28,7 +28,10 @@ export function createOperatorApi(options: OperatorApiOptions) {
     if (group === 'files' && (/^(open|reveal)/.test(method) || method === 'docBytes' || method === 'readShowcase') || group === 'globalTask' && method === 'image' || group === 'session' && (method === 'write' || method === 'resize')) continue
     if (group === 'files' && !options.preview && ['docPreview', 'showcasePreview', 'showcaseBase'].includes(method)) continue
     const projectScope = projectGroups.has(group) || group === 'agent' && method === 'preflight'
-    descriptors[`${group}.${method}`] = { capability: group, mutation: !reads.has(method), scope: projectScope ? 'project' : group === 'dialog' && method !== 'create' && method !== 'list' ? 'dialog' : 'profile',
+    // Heartbeat меняет только bounded in-memory lease. Повтор проверяет живой token;
+    // после release/expiry он не создаёт lease и не расходует durable журнал профиля.
+    const leaseHeartbeat = group === 'session' && method === 'renewWriter'
+    descriptors[`${group}.${method}`] = { capability: group, mutation: !reads.has(method) && !leaseHeartbeat, scope: projectScope ? 'project' : group === 'dialog' && method !== 'create' && method !== 'list' ? 'dialog' : 'profile',
       invoke: async (context, args, projectId) => {
         const commandContext: ClientCommandContext = projectScope ? Object.assign({}, context, { projectId }) : context
         const result: unknown = await (invoke as (context: ClientCommandContext, ...args: unknown[]) => unknown)(commandContext, ...args)

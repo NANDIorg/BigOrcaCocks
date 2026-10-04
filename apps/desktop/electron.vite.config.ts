@@ -1,7 +1,12 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
-import { resolve } from 'node:path'
+import { resolve, dirname } from 'node:path'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+
+// React plugin dedupe ищет зависимости от host root; их единственный владелец — общий UI.
+const uiRequire = createRequire(resolve(__dirname, '../../packages/ui/package.json'))
+const reactAliases = { react: dirname(uiRequire.resolve('react/package.json')), 'react-dom': dirname(uiRequire.resolve('react-dom/package.json')) }
 
 const { version } = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')) as { version: string }
 // Описание установленной версии доступно без сети, в том числе в portable. Отсутствующие notes ломают сборку.
@@ -21,6 +26,6 @@ export default defineConfig({
       __ORCA_CURRENT_RELEASE__: JSON.stringify({ version, releaseNotes })
     },
     plugins: [react()],
-    resolve: { alias: { '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts'), '@orca-board/contracts': resolve(__dirname, '../../packages/contracts/src/index.ts') } }
+    resolve: { alias: { ...reactAliases, '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts'), '@orca-board/contracts': resolve(__dirname, '../../packages/contracts/src/index.ts') } }
   }
 })

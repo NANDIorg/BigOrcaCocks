@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 
 const artifact = resolve(process.argv[2]); assert.equal(process.versions.node.split('.')[0], '24')
 assert.equal(process.env.DISPLAY, undefined); assert.equal(process.versions.electron, undefined)
+if (process.platform === 'linux') delete process.env.SHELL
 const module = await import(pathToFileURL(join(artifact, 'index.mjs')).href)
 const root = mkdtempSync(join(tmpdir(), 'orca-installed-smoke-')); const profile = join(root, 'profile'); const repo = join(root, 'repo')
 mkdirSync(profile); mkdirSync(repo)
@@ -27,7 +28,7 @@ try {
   assert.match(oldCli, /repo/)
   let output = ''; const observed = host.runtime.value.sessions.subscribe(event => { if (event.type === 'data') output += event.data })
   const result = await post('/call', { id: 'native-pty', issuedAt: Date.now(), method: 'session.spawn', revision: host.runtime.value.revision,
-    args: [{ cols: 80, rows: 24, projectId: project.id, command: '/bin/sh', args: ['-c', 'printf ORCA_REAL_PTY; while IFS= read -r line; do printf \"OUT_%s\\n\" \"$line\"; done'], cwd: repo }] })
+    args: [{ cols: 80, rows: 24, projectId: project.id, args: ['-c', 'printf ORCA_REAL_PTY; while IFS= read -r line; do printf \"OUT_%s\\n\" \"$line\"; done'], cwd: repo }] })
   assert.equal(result.ok, true)
   const deadline = Date.now() + 5000
   while (!output.includes('ORCA_REAL_PTY') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20))

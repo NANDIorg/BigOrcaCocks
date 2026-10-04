@@ -4,6 +4,10 @@ Node/Electron native roots раздельны: сборка Desktop не пер�
 который проверяет common workflow. Installed Linux smoke использует настоящий Git/PTY
 из собственной Node поставки, production runtime не импортирует native backend.
 
+Linux installed smoke также проверяет service без `SHELL` и явной команды оболочки.
+Продление writer lease не расходует durable ledger workflow; повторный quit Desktop
+не обходит ожидание native exit/profile lease, включая выход установщика обновления.
+
 
 Редактор workflow и его presentation state теперь принадлежат общему UI package.
 Desktop compatibility IPC продолжает вызывать тот же runtime; operator client

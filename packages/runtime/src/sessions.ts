@@ -66,10 +66,10 @@ function cleanEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-/** Оболочка по умолчанию: на Windows — COMSPEC (обычно cmd.exe), иначе — $SHELL. */
-export function defaultShell(): string {
-  if (process.platform === 'win32') return process.env.COMSPEC ?? 'powershell.exe'
-  return process.env.SHELL ?? '/bin/zsh'
+/** Service может не иметь SHELL: macOS использует zsh, остальные Unix — системный sh. */
+export function defaultShell(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string {
+  if (platform === 'win32') return env.COMSPEC || 'powershell.exe'
+  return env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
 }
 
 /**
