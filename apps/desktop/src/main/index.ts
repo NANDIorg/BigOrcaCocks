@@ -17,8 +17,8 @@ import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, registeredProject, isRegisteredProjectCurrent, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, createProjectGitCommands, createRunCommands, createAgentCommands, registeredProject, isRegisteredProjectCurrent, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands, ProjectGitCommands, RunCommands, AgentCommands } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
@@ -27,6 +27,7 @@ import { registerDesktopReviewRequestCommands } from './review-request-commands'
 import { registerDesktopProfileCommands } from './profile-commands'
 import { registerDesktopRulesStatsCommands } from './rules-stats-commands'
 import { registerDesktopFileCommands } from './file-commands'
+import { registerDesktopProjectRunAgentCommands } from './project-run-agent-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities } from './attachments'
@@ -44,7 +45,7 @@ import { docServices } from './docs'
 import { docViewServices } from './docs-view'
 import { ruleServices, readRule, writeRule } from './rules'
 import { projectFileServices } from './project-files'
-import { currentBranch, projectBranchInfo, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit } from './git'
+import { currentBranch } from './git'
 import { mergeTarget, RunBranchSync } from './run-branch'
 import { runImagesRoot, revealTaskAttachment, openTaskAttachment } from './run-images'
 import { startSocketServer, askWaiting } from './socket'
@@ -56,7 +57,7 @@ import { createTray, refreshTray } from './tray'
 import { statsServices } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettings, AppSettingsPatch, UpdateInstallWhen, RequestFocus, PtySpawnOptions, ProjectBranchInfo, InteractionAnswer, InitialCommitMode } from '../shared/ipc'
+import type { AppSettings, AppSettingsPatch, UpdateInstallWhen, RequestFocus, PtySpawnOptions, InteractionAnswer } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -118,6 +119,9 @@ let projectConfigCommands: ProjectConfigCommands
 let ruleCommands: RuleCommands
 let statsCommands: StatsCommands
 let fileCommands: FileCommands
+let projectGitCommands: ProjectGitCommands
+let runCommands: RunCommands
+let agentCommands: AgentCommands
 const taskWorkerLifecycle = createTaskWorkerLifecycle({ isAlive, killPty })
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
@@ -698,13 +702,6 @@ function handle<A extends unknown[]>(channel: string, fn: (e: IpcMainInvokeEvent
   })
 }
 
-/** Корень проекта по id (не обязательно активного); неизвестный id — ошибка. */
-function projectRoot(id: string): string {
-  const p = projects.get(id)
-  if (!p) throw new Error(`project not found: ${id}`)
-  return p.root
-}
-
 /**
  * Живые воркеры и координаторы проекта: у них worktree и рабочая ветка растут от корня, переключать его нельзя
  * (CLAUDE.md, «Git и ветки»). Считаются процессы, а не записи: dispatch без живого PTY — уже мёртвый.
@@ -765,26 +762,13 @@ function registerIpc(): void {
   handle('updates:cancelPending', () => updater.cancelPending())
   handle('updates:getJustUpdated', () => updater.getJustUpdated())
   handle('app:info', () => ({ socketPath: SOCKET_PATH, active: projects.active(), projects: projects.list() }))
-  // Неизвестный проект (удалён, устаревший id в renderer) — не ошибка IPC, а «не репозиторий»: бейдж просто скрывается.
-  handle('projects:branch', (_e, id: string): ProjectBranchInfo => {
-    const p = projects.get(id)
-    return p ? projectBranchInfo(p.root) : { isGitRepo: false, branch: null, detached: false }
+  registerDesktopProjectRunAgentCommands(handle, {
+    projects: projectGitCommands, runs: runCommands, agents: agentCommands,
+    activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null
   })
-  // Git корня проекта. Renderer сам перезапрашивает ветку по результату (`ProjectGitResult.branch` / возврат checkout).
-  handle('projects:branches', (_e, id: string) => projectBranches(projectRoot(id)))
-  handle('projects:gitFetch', (_e, id: string) => projectFetch(projectRoot(id)))
-  handle('projects:gitPull', (_e, id: string) => projectPull(projectRoot(id)))
-  handle('projects:checkoutBranch', (_e, id: string, branch: string) => {
-    const root = projectRoot(id)
-    return checkoutProjectBranch(root, typeof branch === 'string' ? branch : '', liveAgentCount(id))
-  })
-  // Начальный коммит — только по кнопке человека после `git.noCommits`; неизвестный режим от renderer — пустой коммит,
-  // он не забирает файлы человека в историю.
-  handle('projects:createInitialCommit', (_e, id: string, mode: InitialCommitMode) =>
-    createInitialCommit(projectRoot(id), mode === 'snapshot' ? 'snapshot' : 'empty')
-  )
   handle('prompts:builtin', () => BUILTIN_PROMPTS)
-  handle('agents:list', (_e, refresh?: boolean) => agentInfos(projects.active()?.enabledAgents, Boolean(refresh)))
 
   registerDesktopBoardCommands(handle, {
     commands: boardCommands,
@@ -792,8 +776,6 @@ function registerIpc(): void {
     clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
       ? `desktop:${event.sender.id}` : null
   })
-  handle('runs:list', () => (projects.active() ? projects.activeStore().listRuns() : []))
-  handle('runs:close', (_e, runId: string) => projects.activeStore().closeRun(runId))
 
   registerDesktopGlobalTaskCommands(handle, {
     commands: globalTaskCommands,
@@ -908,6 +890,11 @@ function initializeDesktop(): void {
       reveal: path => { shell.showItemInFolder(path) }
     }
   })
+  projectGitCommands = createProjectGitCommands({ project: id => projects.get(id), authorize,
+    isCurrent: project => projects.get(project.id) === project, git: executionResources.git, liveAgents: liveAgentCount })
+  runCommands = createRunCommands({ project: id => projects.get(id) ? { store: projects.store(id) } : undefined, authorize })
+  agentCommands = createAgentCommands({ project: id => projects.get(id), authorize, discovery: { agentInfos },
+    preflight: { validate: validateWorkerRole }, resolveRun: (id, runId) => projects.resolveRun(id, runId), store: id => projects.store(id) })
   const selection = createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
   const removal = {
     resources: executionResources, dataDir: app.getPath('userData'),

@@ -41,14 +41,14 @@
 
 ### Task 2: Desktop/socket adapters
 
-**Files:** create main/project-run-agent-commands.ts/.test.ts; modify main/project-command-adapter.ts, index.ts, git.ts, socket.ts; docs4/dashboard/plan.
+**Files:** create main/project-run-agent-commands.ts/.test.ts; modify main/project-command-adapter.ts, index.ts, socket.ts; docs4/dashboard/plan.
 
 **Interfaces:** registerDesktopProjectRunAgentCommands(handle,host) consumes Task1 commands; six project Git channels explicit id, runs two legacy selected, agents one global context+optional selected id. Shared Desktop adapter exposes verified client context. Unknown project branch maps only command.projectNotFound to non-repo; invalid mode maps to empty before common validation. Native PTY/dialogs remain next plan.
 
-- [ ] **Step 1:** Real services/repositories adapter tests: foreign caller before lookup/selection/Git, exact nine channels, A/B explicit Git, no-project runs[], global agents, unknown branch fallback, default empty initial commit, locale domain rejection and late removal no commit.
-- [ ] **Step 2:** Desktop Node + ts-resolve adapter test; Expected FAIL missing register factory.
-- [ ] **Step 3:** Wire common commands, remove inline projectRoot/liveAgentCount handlers as used; socket runs.list uses shared listRunsWithCounts (close already core). Keep agent socket capability filtering. Existing worker preflight factory stays reusable.
-- [ ] **Step 4:** Desktop targeted adapter/project-git/initial-commit/agents/socket suites, runtime/Desktop typechecks, core docs/HELP; Expected PASS. Full verify at whole-foundation end.
-- [ ] **Step 5:** Diff/staged diff/commit/task-done; continue dialogs/PTY and B/C/D/E/F without permission handoff.
+- [x] **Step 1:** Real services/repositories adapter tests: foreign caller before lookup/selection/Git, exact nine channels, A/B explicit Git, no-project runs[], global agents, unknown branch fallback, default empty initial commit, locale domain rejection and late removal no commit.
+- [x] **Step 2:** Desktop Node + ts-resolve adapter test; Expected FAIL missing register factory.
+- [x] **Step 3:** Wire common commands, remove inline projectRoot/liveAgentCount handlers as used; socket runs.list uses shared listRunsWithCounts (close already core). Keep agent socket capability filtering. Existing worker preflight factory stays reusable.
+- [x] **Step 4:** Desktop targeted adapter/project-git/initial-commit/agents/socket suites, runtime/Desktop typechecks, core docs/HELP; Expected PASS. Full verify at whole-foundation end.
+- [x] **Step 5:** Diff/staged diff/commit/task-done; continue dialogs/PTY and B/C/D/E/F without permission handoff.
 
 Self-review: signatures align Task1→Task2; remaining dialogs/PTY and B–F intentionally in subsequent plans. Risks above pinned by real effects; native output/UI is user checked after final build.

@@ -49,6 +49,8 @@ Desktop IPC проверяет caller до выбора проекта и выз
 Run list/counts и agent preflight не потребляют check и не отвечают человеку.
 Preflight проверяет роль, доступность агента и флаги сохранённого снимка до launch;
 явный неизвестный run отклонён, а не заменяется default типом другого прогона.
+Desktop Git/runs/agents channels проверяют caller до чтения legacy selection;
+чтение прогонов из UI не меняет доступность pending ответов в agent socket.
 
 ## Модель
 

@@ -21,7 +21,8 @@ root остаётся внутренним. Общие FileCommands провер
 
 Общие RunCommands читают/закрывают прогон явного проекта. listWithCounts использует
 общую projection задач/done; close сохраняет прежние closedAt и историю автора,
-не является workflow completion и не создаёт повторный run_done.
+не является workflow completion и не создаёт повторный run_done. Desktop сохраняет
+legacy selection на verified границе IPC, socket counts использует ту же projection.
 
 ## Модель: глобальная задача = прогон (`Run`)
 

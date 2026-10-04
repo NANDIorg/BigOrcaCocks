@@ -39,6 +39,7 @@ export function createDesktopProjectCommandAdapter<Event>(host: DesktopProjectCo
     return projectId ? { ...context, projectId } : undefined
   }
   return {
+    client,
     selected,
     explicit(event: Event, projectId: unknown): ProjectCommandContext {
       return projectCommandContextFrom({ ...client(event), projectId })

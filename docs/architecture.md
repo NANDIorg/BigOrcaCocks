@@ -375,8 +375,10 @@ RunCommands дают list/listWithCounts/close с detached result и прежн�
 за один проход, не потребляет события. AgentCommands используют общие discovery и
 worker preflight; global list либо enabled flags явного проекта, refresh config,
 project preflight с role/run validation без запуска. Старый agent socket не получает
-operator capability от наличия API. Desktop wiring следует по
-[плану](superpowers/plans/2026-10-04-orca-project-run-agent-commands.md).
+operator capability от наличия API. Desktop девять прежних IPC проходят verified
+compatibility adapter, неизвестный badge остаётся non-repo, неизвестный init mode
+остаётся empty. Socket runs.list использует общую projection; close уже общий core.
+[План и проверки](superpowers/plans/2026-10-04-orca-project-run-agent-commands.md).
 
 ### Общий запуск агентов и терминальные сессии
 

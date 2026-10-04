@@ -33,6 +33,8 @@ Project Git commands проверяют registration/policy внутри оче�
 начальный empty commit сохраняет staged/index пользователя. Собственный unborn root
 не считается чужим busy worktree при первом tracking checkout. Это не заменяет
 EffectToken run/node/visit/lane/dispatch: общий async workflow Git — следующий этап.
+Девять старых Desktop IPC теперь вызывают common commands; private Git root helper
+удалён, process count передаётся как callback общей операции checkout.
 
 ## Создание и правка графа через ассистента
 

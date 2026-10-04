@@ -14,7 +14,7 @@ import { settingsPatchFromParams } from './settings-params'
 import { withoutExtraArgs } from './launch-extra-args'
 import { runnableWorkflow, WorkflowValidationError, type Project, type PermissionMode } from './projects'
 import type { AppSettings, AppSettingsPatch, ProjectTaskTypesInput, RuleFile, TaskTypesState } from '../shared/ipc'
-import { createTaskWorkerLifecycle, answerQuestionWithLiveness } from '@orca-board/runtime'
+import { createTaskWorkerLifecycle, answerQuestionWithLiveness, listRunsWithCounts } from '@orca-board/runtime'
 
 /**
  * Unix-сокет для CLI `orca-board`. Протокол: одна строка JSON-запроса,
@@ -949,13 +949,7 @@ const handlers: Record<string, Handler> = {
     return { ...of, role: role.id, title: next?.title ?? role.title, rules: next?.systemPrompt ?? '' }
   },
   // Прогоны с числом задач и числом задач в kind=done.
-  'runs.list': (_r, _d, store) => {
-    const tasks = store.listTasks()
-    return store.listRuns().map((run) => {
-      const own = tasks.filter((t) => t.runId === run.id)
-      return { ...run, tasks: own.length, done: own.filter((t) => store.columnKind(t.status) === 'done').length }
-    })
-  },
+  'runs.list': (_r, _d, store) => listRunsWithCounts(store),
   'runs.close': (r, _d, store) => {
     const id = str(r.params.run)
     if (!id) throw new Error('--run обязателен')
