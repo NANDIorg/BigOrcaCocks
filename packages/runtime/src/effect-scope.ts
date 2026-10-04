@@ -41,7 +41,7 @@ function taskState(task: Task): string {
 }
 function runState(run: Run, position?: RunPosition): string {
   const lane = position?.lane ? run.lanes?.find(l => l.id === position.lane) : undefined
-  return JSON.stringify([run.closedAt, run.finishedAt, run.git?.branch, run.git?.base, run.git?.worktree,
+  return JSON.stringify([run.closedAt, run.finishedAt,
     position?.nodeId, position?.visit, position?.lane, position?.arrived,
     lane?.forkId, lane?.branchId, lane?.forkVisit, lane?.arrivedAt])
 }

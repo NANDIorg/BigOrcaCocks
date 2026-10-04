@@ -44,6 +44,13 @@ Async Git проекта использует owner queue общего commonDir
 job. Sync ветвление/merge global task и worker ещё переводятся на ту же очередь;
 готовность всего async рубежа этим шагом не объявляется.
 
+Async RunBranchServices уже готовит/восстанавливает feature worktree и сливает ветку
+прогона через общий scoped Git port. Одновременные подготовки одного run объединены,
+каждый ожидающий проверяет свою актуальность. Git metadata проверяются отдельно от
+domain lane token: подготовка соседа не отменяет актуальный этап. Nonforce уборка
+пропускает живые/возобновлённые прогоны и сохраняет dirty worktree. Consumer integration
+этого порта с Desktop/workflow остаётся следующим шагом.
+
 Scoped `workflowGit` использует ту же commonDir queue для многошагового Git effect,
 не повторяя enqueue из helper. После закрытия transaction port больше не запускает
 Git; foreign repo нельзя изменить из другой очереди. Реальные tests проверяют refs,

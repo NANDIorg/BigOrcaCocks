@@ -77,6 +77,13 @@ lane/forkVisit проверяются после await до перехода/sto
 на синхронную запись; явный stop отменяет подготовку даже до первого dispatch.
 Consumer integration и durable reconciliation ещё не завершены.
 
+Async branch port использует тот же owner для feature preparation/restore, merge
+в checked-out или временный base worktree и nonforce cleanup. Отсутствующая feature
+ветка не создаётся заново из другой истории; detached base сохраняется как SHA.
+При observer reentry уборка не входит повторно в ту же очередь. Domain token не
+включает run.git; сам branch port проверяет captured metadata перед записью. Эти
+алгоритмы проверены реальными Git effects, подключение consumers продолжается.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

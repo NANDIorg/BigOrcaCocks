@@ -404,6 +404,14 @@ node/visit/lane/forkVisit/dispatch отдельно от изменяемых о
 полномочие. Git transaction/read используют тот же service/queue. Legacy consumer
 перенос и persistent reconciliation продолжаются следующим шагом B.
 
+`createAsyncRunBranchServices` использует этот же scoped port для feature preparation,
+restore, merge и nonforce cleanup. Проверенные алгоритмы сохраняют root branch,
+detached base, dirty worktree и feature ref после конфликта. Параллельная подготовка
+одного run объединяется, но каждый caller проверяет свой domain token. Run Git metadata
+имеет отдельный guard: инициализация общей ветки не отменяет актуальный соседний lane.
+`RunBranchSync` пропускает живые/возобновлённые прогоны и защищён от observer reentry.
+Это готовый private async port; legacy consumers подключаются следующим шагом.
+
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи
 за один проход, не потребляет события. AgentCommands используют общие discovery и

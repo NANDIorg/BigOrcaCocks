@@ -5,6 +5,10 @@ import { GitOpError, MergeError, type GitMessages, type ReviewInfo } from './git
 
 export interface GitWorkflowOptions { guard?: () => void; signal?: AbortSignal }
 export interface GitWorkflowReadRepository {
+  head(ref?: string): Promise<string | undefined>
+  remotes(): Promise<string[]>
+  checkedOutAt(branch: string): Promise<string | undefined>
+  isDirty(worktree: string): Promise<boolean>
   currentBranch(): Promise<string>
   hasCommits(): Promise<boolean>
   assertHasCommits(): Promise<void>
@@ -15,6 +19,9 @@ export interface GitWorkflowReadRepository {
   reviewInfo(worktree: string, branch: string, base?: string): Promise<ReviewInfo>
 }
 export interface GitWorkflowRepository extends GitWorkflowReadRepository {
+  addRunWorktree(worktree: string, branch: string, base: string): Promise<void>
+  pruneWorktrees(): Promise<void>
+  removeCleanWorktree(worktree: string): Promise<boolean>
   addTaskWorktree(worktree: string, branch: string, base?: string): Promise<void>
   commitWorktree(worktree: string, message: string): Promise<void>
   mergeBranch(cwd: string, branch: string, message: string): Promise<void>
@@ -75,6 +82,29 @@ export function createGitWorkflowService(messages: GitMessages, queue: GitOperat
     async function currentBranch(): Promise<string> {
       const result = await run(root, ['symbolic-ref', '--short', '-q', 'HEAD'], 30_000, [1])
       return result.code === 1 ? 'HEAD' : result.stdout.trim()
+    }
+    async function head(ref = 'HEAD'): Promise<string | undefined> {
+      const result = await run(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], 30_000, [1])
+      return result.code === 1 ? undefined : result.stdout.trim() || undefined
+    }
+    async function remotes(): Promise<string[]> { return (await text(root, ['remote'])).split('\n').filter(Boolean) }
+    async function checkedOutAt(branch: string): Promise<string | undefined> {
+      const result = await run(root, ['worktree', 'list', '--porcelain', '-z']); let path: string | undefined
+      for (const field of result.stdout.split('\0')) {
+        if (field.startsWith('worktree ')) path = field.slice('worktree '.length)
+        else if (field === `branch refs/heads/${branch}`) return path
+      }
+      return undefined
+    }
+    async function isDirty(worktree: string): Promise<boolean> { return await text(worktree, ['status', '--porcelain']) !== '' }
+    async function addRunWorktree(worktree: string, branch: string, base: string): Promise<void> {
+      await text(root, ['worktree', 'add', '--no-track', '-b', branch, worktree, base], 120_000)
+    }
+    async function pruneWorktrees(): Promise<void> { await text(root, ['worktree', 'prune'], 120_000) }
+    async function removeCleanWorktree(worktree: string): Promise<boolean> {
+      guard(); if (!existsSync(worktree)) return true
+      try { await text(root, ['worktree', 'remove', worktree], 120_000); return true }
+      catch (error) { if (!(error instanceof GitProcessError) || error.cancelled) throw error; return false }
     }
     async function hasCommits(): Promise<boolean> { return (await run(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], 30_000, [1])).code === 0 }
     async function assertHasCommits(): Promise<void> {
@@ -179,8 +209,8 @@ export function createGitWorkflowService(messages: GitMessages, queue: GitOperat
     async function gitPush(worktree: string | undefined, remote: string, branch: string): Promise<void> {
       guard(); await op(worktree && existsSync(worktree) ? worktree : root, ['push', '-u', remote, branch])
     }
-    const read: GitWorkflowReadRepository = { currentBranch, hasCommits, assertHasCommits, headBase, localBranchExists, isBranchNameAcceptedByGit, worktreeBranch, reviewInfo }
-    const repo: GitWorkflowRepository = { ...read, addTaskWorktree, commitWorktree, mergeBranch, removeWorktreeKeepBranch, removeWorktree, gitCreateBranch, gitCheckout, gitCommit, gitPush }
+    const read: GitWorkflowReadRepository = { head, remotes, checkedOutAt, isDirty, currentBranch, hasCommits, assertHasCommits, headBase, localBranchExists, isBranchNameAcceptedByGit, worktreeBranch, reviewInfo }
+    const repo: GitWorkflowRepository = { ...read, addRunWorktree, pruneWorktrees, removeCleanWorktree, addTaskWorktree, commitWorktree, mergeBranch, removeWorktreeKeepBranch, removeWorktree, gitCreateBranch, gitCheckout, gitCommit, gitPush }
     return { read, repo, guard, close: () => { open = false } }
   }
   return {
