@@ -2,6 +2,11 @@
 
 ## Независимые продукты
 
+Общий фундамент уже реализован: [карта пакетов](shared-foundation.md) и
+[результаты проверок](orca-foundation-progress.md). Shared packages пока private
+и встраиваются в продукт из выбранного для его сборки состояния репозитория.
+Изменение shared кода не выпускает автоматически Desktop/Web/CLI одновременно.
+
 Общие feature PR по-прежнему идут в develop. Desktop сохраняет существующие версии
 root/apps/desktop, `release/X.Y.Z`, `hotfix/X.Y.Z`, теги `vX.Y.Z` и marine codenames.
 CLI использует manifest packages/cli/package.json, ветки release/cli/X.Y.Z и hotfix/cli/X.Y.Z,

@@ -2,6 +2,11 @@
 
 ## Линейки продуктов
 
+Общий runtime/client/UI уже выделен; состояние продуктов и границы пакетов —
+[shared-foundation.md](shared-foundation.md). Сейчас существует Desktop Release workflow
+и установленный Node artifact для проверок; отдельные Web/терминальный CLI releases
+ещё не выпускаются. Сборка Node host не является публикацией Web-сайта.
+
 Эта существующая инструкция упаковки/подписи/marine codenames относится к Desktop.
 CLI/Web позже получают свои workflows; общая policy уже задаётся product-release.mjs:
 own manifest/version, cli/vX.Y.Z или web/vX.Y.Z, product-specific release/hotfix ветки,

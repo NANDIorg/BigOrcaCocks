@@ -3,6 +3,7 @@
 Требования: [утверждённая архитектура](superpowers/specs/2026-10-02-orca-shared-foundation-design.md), §12.
 04.10.2026: реализация общего фундамента завершена. Web для собственного сервера,
 терминальный UI CLI и их развёртывание — следующие отдельные проекты.
+Карта фактических слоёв и запуск Node host — [shared-foundation.md](shared-foundation.md).
 
 ## Реализованные рубежи
 
@@ -49,21 +50,42 @@ filesystem/Git identity; реальные stale/authority guards не ослаб
 сохранён. Тот же CI runner с установленным пакетом вне workspace прошёл в Linux
 Docker; последующий коммит меняет только runner и этот receipt, код продуктов прежний.
 
+На итоговом HEAD фундамента `8fe68cc8346299e70b91da030d43d6917c232b12` обе CI-проверки
+(push и PR) завершились успешно: **10/10 jobs**, включая Linux/macOS/Windows verify
+и установленный Linux artifact. Результаты: [PR CI](https://github.com/NANDIorg/BigOrcaCocks/actions/runs/37195736039)
+и [push CI](https://github.com/NANDIorg/BigOrcaCocks/actions/runs/37195733208).
+Число 4091 выше относится к записанному локальному whole verify. Equivalent-path
+regression также подтверждена целевыми suites и CI.
+
+При актуализации документации 04.10.2026 `pnpm verify` выполнен повторно на текущих
+исходниках: **4091/4091**, без failures/cancelled/skipped, все types/builds PASS.
+Проверены 143 локальные Markdown-ссылки актуализированных документов; битых нет.
+README, входные инженерные инструкции, описание архитектуры/UI и продуктовые docs
+согласованы с фактическими пакетами; [shared-foundation.md](shared-foundation.md)
+содержит карту слоёв, запуск Node host и границы следующего этапа Web/CLI.
+Исторические QA/расследования/макеты помечены как срезы, release notes и утверждённые
+планы не переписаны под видимость уже выпущенных Web/CLI продуктов.
+
 Последний installed Linux artifact smoke EXIT0: native PTY/default shell, Git, legacy CLI,
 operator snapshot/disconnect, writer duplicate ровно один раз, second owner refusal/restart.
-`pnpm --filter @orca-board/desktop run pack` EXIT0; приложение открыто и его процесс подтверждён:
+`pnpm --filter @orca-board/desktop run pack` EXIT0; последняя сборка находится по пути:
 `/private/tmp/orca-web-migration-audit/apps/desktop/release/local/mac/orca-board.app`.
 После Electron rebuild настоящий Node PTY test **1/1 EXIT0**; native roots физически раздельны.
 Автоматических UI-кликов не было; визуальную проверку выполняет пользователь в этом билде.
+`open` выполнен успешно. Уже работавшая пользовательская сессия сохранена; открытие
+нового bundle фокусирует прежний процесс, поэтому для последних main/preload изменений
+нужен ручной перезапуск. Это не утверждение о выполненной ручной проверке интерфейса.
 
-PR [#59 → develop](https://github.com/NANDIorg/BigOrcaCocks/pull/59) обновляется финальным
-коммитом; CI проверяется именно на опубликованном HEAD. Merge, теги, публикации, version
+PR [#59 → develop](https://github.com/NANDIorg/BigOrcaCocks/pull/59) содержит завершённый
+фундамент; результаты выше относятся к указанному опубликованному HEAD. Merge, теги, публикации, version
 bumps и изменение remote rulesets не входят в поручение. Desktop сохраняет прежний feed,
 Latest, codenames и versions; CLI/Web workflows добавляются с их настоящими поставками.
 
 Прежняя доставка `f7e429d` и её 44 evidence directories сохранены отдельно:
 `/private/tmp/orca-worker-commands-evidence/delivery-final.json`.
-Итоговые logs/review/rulings архивируются вне Git; технические решения не скрыты за статусом.
+Итоговые logs/review/rulings сохранены вне Git:
+`/private/tmp/orca-foundation-final-evidence-alf3fz_a/delivery-final.json` и `rulings.md`.
+Это локальный evidence archive, а не ресурс поставки; текущие инструкции находятся в docs.
 
 ## Темп исполнения
 

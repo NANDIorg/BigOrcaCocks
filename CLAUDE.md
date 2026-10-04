@@ -2,10 +2,11 @@
 
 Монорепо pnpm: `apps/desktop` (Electron: main / preload / renderer / shared), `packages/core`
 (модель, store, промпты — TypeScript без сборки), `packages/contracts` (общие DTO и чистые функции),
-`packages/runtime` (Node: запись состояния, резервные копии и Git; private bundle без Electron),
+`packages/runtime` (общий Node backend: commands, workflow, процессы, Git, файлы и диалоги; без Electron),
 `packages/client` (browser-safe operator client), `packages/ui` (общий React UI),
 `apps/headless` (установленный Node host), `packages/cli` (голый JS, `bin/orca-board.js`),
 `skills/` (инструкции координатора и воркера, вшиваются в сборку), `docs/` (архитектура и решения).
+Карта общих слоёв и запуск Node host — [docs/shared-foundation.md](docs/shared-foundation.md).
 Полная картина — `docs/architecture.md`. Комментарии в коде, документация и коммиты — на русском;
 UI — на русском и английском через i18n (`packages/ui/src/i18n/`).
 Этот файл и `AGENTS.md` можно править и в приложении: «О проекте → Правила».
@@ -33,6 +34,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
   Private TS-пакет встраивается в Desktop bundles, а не загружается с диска пользователя.
 - **Runtime не импортирует Electron/Desktop.** Host передаёт пути и metadata; private пакет встраивается
   в main bundle. Production code использует Node и общие пакеты, не Desktop shared/API.
+- **Client и UI browser-safe.** Не импортируют Node/backend/Desktop даже через type-only exports.
+  UI получает client/platform через host injection; системные окна и обновления остаются в host.
 - **Не класть в `skills/*.md` ничего, что относится только к этому репозиторию** (pnpm, пути, стиль).
   Skills получают агенты **любого** проекта пользователя (`apps/desktop/src/main/prompts.ts` →
   `withRoleInstructions` в `apps/desktop/src/main/worker.ts`).
@@ -47,7 +50,7 @@ orca-board; `skills/*.md` — инструкции самого продукта
   с owned process group: Node `execFile` не передаёт `detached` и не позволяет завершить всё дерево hooks.
   Shell-строки ломают Windows и экранирование.
 - **Не хардкодить `:`, `/bin/zsh`, `~/.orca-board/orca.sock`.** Используй `path.delimiter`, `defaultShell()`
-  (`src/main/pty.ts`), `defaultSocketPath()`. Всё платформозависимое — ветки `process.platform === 'win32'`
+  (`packages/runtime/src/sessions.ts`), `defaultSocketPath()`. Всё платформозависимое — ветки `process.platform === 'win32'`
   в местах из таблицы «Кроссплатформенность» в `docs/architecture.md`. Новую ветку добавляй в эту таблицу.
 - **Не коммитить отчёты и скрипты ревью** (`review/*.md`, `review/*.cjs` — так попали c4755bc, 9e36881).
   Ревьюер сдаёт отчёт через `orca-board done`, а не файлом в ветке.
@@ -72,16 +75,17 @@ orca-board; `skills/*.md` — инструкции самого продукта
   они остаются в релизном PR и инженерной документации. Только обязательное действие
   при обновлении или риск потери данных заслуживает короткого «Важно».
   Полный формат — [docs/releasing.md](docs/releasing.md#версия-и-release-notes).
-- **Новый IPC-канал — сразу в четырёх местах:** `apps/desktop/src/shared/desktop-api.ts` (`OrcaApi`,
-  совместимый экспорт через `shared/ipc.ts`),
+- **Новый IPC-канал — контракт и Desktop registration:** `packages/client/src/legacy-api.ts` (`OrcaApi`,
+  совместимые Desktop экспорты через `shared/desktop-api.ts` и `shared/ipc.ts`),
   `preload/index.ts`, `preload/api.d.ts`, `registerIpc` в `main/index.ts`. Плюс строка в разделе «IPC»
   `docs/architecture.md`.
+  Общие business commands определяются также в contracts/runtime; Electron-specific actions — в platform/host.
 - **Renderer должен работать со старыми main и preload.** В `pnpm dev` renderer обновляется по HMR, а
   main и preload — только после перезапуска. Перед вызовом нового API проверяй, что он есть, и показывай
   «перезапустите приложение» вместо падения (фикс 086a654: `docsApi()` и `staleAppMessage()` в
-  `renderer/src/docLinks.ts`).
+  `packages/ui/src/docLinks.ts`).
 - **Новая команда или метод CLI проходит всю цепочку:** store (core) → метод сокета
-  (`src/main/socket.ts`) → команда и `HELP` в `packages/cli/bin/orca-board.js` → разделы «Протокол
+  (`packages/runtime/src/agent-socket.ts`; Desktop facade — `src/main/socket.ts`) → команда и `HELP` в `packages/cli/bin/orca-board.js` → разделы «Протокол
   сокета» / «CLI» в `docs/architecture.md` → `skills/*.md`, если команда нужна агенту → тест.
 - **Меняешь поведение координатора или воркера — правь skills в том же коммите** и добавляй
   проверку в `prompts.test.ts`. Код, о котором не сказано в инструкции, агент не использует: фиксы
@@ -94,7 +98,7 @@ orca-board; `skills/*.md` — инструкции самого продукта
   незакрытые dispatch, задачи в `in_progress`/`review` от старого кода (7b1fa05, 2d3c5da).
 - **Тесты — рядом с кодом, `*.test.ts`, `node:test` + `node:assert`.** В desktop запускаются только
   `src/main/*.test.ts` (скрипт `test` в `apps/desktop/package.json`); общий UI запускает `packages/ui/src/*.test.ts`:
-  тест в подпапке (`about/`, `settings/`) не выполнится, клади его в `renderer/src/`
+  тест в подпапке (`about/`, `settings/`) не выполнится, клади его в `packages/ui/src/`
   (как `taskTypeEdit.test.ts`). Логику из компонентов выноси в `.ts`-модуль и тестируй его
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).
   В contracts чистые функции и границы проверяются через `test/*.test.ts`; перенесённые suites
@@ -102,7 +106,7 @@ orca-board; `skills/*.md` — инструкции самого продукта
   Runtime suites — `packages/runtime/test/*.test.ts`, `pnpm --filter @orca-board/runtime test`;
   AST-страж проверяет production graph, entrypoint работает под Node 24 без Electron loader.
 - **Новый UI-текст в renderer — только через `t()`, ключ сразу в ru и en.** Словари — по областям:
-  `renderer/src/i18n/ru/<область>.ts` и `i18n/en/<область>.ts` (`common`, `settings`, `board`, `shell`, `global`,
+  `packages/ui/src/i18n/ru/<область>.ts` и `i18n/en/<область>.ts` (`common`, `settings`, `board`, `shell`, `global`,
   `config`, `builtin`). В компоненте — `const t = useT()`, в `.ts`-модулях — `t()` из `./i18n`. Числа, даты и
   длительности — через `i18n/format.ts`, не `toLocaleString('ru-RU')`. Тексты main, которые видит человек (трей,
   уведомления, диалоги, ошибки IPC), — ключ в `main/strings/ru.ts` и `en.ts`, `mt()` или `OrcaError` (`main/i18n.ts`);
@@ -122,8 +126,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
 - Комментарии и JSDoc — по-русски. Они объясняют «почему», а не пересказывают код (образец —
   `withRoleInstructions` в `packages/core/src/types.ts`).
 - Ошибки для пользователя — по-русски и с контекстом: `роль «${r.id}»: системный промпт должен быть строкой`
-  (валидация ролей в `src/main/projects.ts`).
-- Renderer: компоненты лежат плоско в `renderer/src/*.tsx`, разделы «О проекте» и «Настройки» — в `about/`
+  (валидация ролей в `packages/runtime/src/projects.ts`; Desktop задаёт перевод ошибок).
+- Renderer: компоненты лежат плоско в `packages/ui/src/*.tsx`, разделы «О проекте» и «Настройки» — в `about/`
   и `settings/`. Стили — `styles.css` (документы — `docs-markdown.css`), без CSS-in-JS и новых UI-библиотек.
   Иконки — `icons.tsx` / `docsIcons.tsx`.
 - Markdown от агентов рендерить только через `Markdown.tsx` (`marked` + `DOMPurify`). Не использовать
@@ -138,8 +142,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
 
 ```
 pnpm install --frozen-lockfile # при первом запуске; Node 24, pnpm из packageManager
-pnpm typecheck   # pnpm -r typecheck: core/contracts — tsc, desktop — tsc node+web, cli — node --check
-pnpm test        # scripts + core, contracts (test/*.test.ts), cli, desktop (main + renderer)
+pnpm typecheck   # все workspace-пакеты: core/contracts/runtime/client/UI/headless/Desktop, CLI syntax
+pnpm test        # scripts + core/contracts/runtime/client/UI/CLI/Desktop; native тесты в отдельном Node root
 pnpm verify      # перед PR: check:git-flow + typecheck + test + build (как в CI)
 ```
 
@@ -149,7 +153,9 @@ pnpm verify      # перед PR: check:git-flow + typecheck + test + build (к�
 - Трогал skills, docs или HELP CLI — обязательно запусти `pnpm --filter @orca-board/core test`
   (`prompts.test.ts` сверяет команды).
 - Трогал сборку, `electron-builder.yml` или node-pty — запусти `pnpm build`.
-  `pnpm --filter @orca-board/desktop run pack` — только по просьбе: он пересобирает node-pty.
+  `pnpm --filter @orca-board/desktop run pack` пересобирает Electron node-pty. По [AGENTS.md](AGENTS.md)
+  локальная сборка и запуск после всей пользовательской задачи уже разрешены; публикация релиза
+  остаётся отдельным поручением. Node-native тесты используют собственный `.native` root.
 - UI-изменения typecheck не проверяет. В сводке `done` честно напиши, запускал ли `pnpm dev` и что
   проверил глазами; если не запускал — так и напиши.
 

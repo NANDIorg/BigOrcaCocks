@@ -1,5 +1,8 @@
 # Воркфлоу задачи
 
+Текущие границы backend/UI/host — [shared-foundation.md](shared-foundation.md).
+Основная логика общая; Electron-specific действия выполняет Desktop host.
+
 Node/Electron native roots раздельны: сборка Desktop не переключает ABI процесса,
 который проверяет common workflow. Installed Linux smoke использует настоящий Git/PTY
 из собственной Node поставки, production runtime не импортирует native backend.
@@ -41,7 +44,9 @@ late workflow results после начала stop отклоняются общ
 
 Код: модель, валидация и функция перехода — `packages/core/src/workflow.ts`; позиция задачи и переходы —
 `packages/core/src/store.ts` (`advanceStage`, `enterWork`, `blockStage`, `requestApproval`); эффекты —
-`apps/desktop/src/main/workflow.ts`; git-часть мержа — `mergeTaskBranch` в `apps/desktop/src/main/review.ts`.
+`packages/runtime/src/workflow.ts` и `workflow-run.ts`; review/merge — общий
+`packages/runtime/src/review.ts` и async Git ports. `apps/desktop/src/main/workflow.ts`
+и `review.ts` сохраняют совместимые exports и host messages.
 Подробности по слоям — `docs/architecture.md` («Воркфлоу: модель», «Воркфлоу: состояние в store», «Ревью и мерж»).
 
 Планирование/запись снимка показа и чтение showcase теперь доступны как общие
@@ -509,7 +514,10 @@ Store двигает граф и возвращает `WfAction`, **эффект
 подзадачи (`Task.stage`) и прогона (`Run.stage`) лежат в снимке и переживают рестарт вместе, путь читается из `Run.workflow`; подзадача на `gate`/`human` пути ждёт решения как обычно.
 Задачи-ответы (`answerFor`) идут своим циклом «Принять» / «Уточнить».
 
-**Ограничения.** Эффект, не доведённый до конца из-за выхода приложения, повторяется при следующем запуске координатора (`startRunWorkflow`) или, для закрытия этапа, фолбэком. Файлы показа
+**Восстановление.** `startRunWorkflow` и fallback закрытия этапа восстанавливают позицию графа
+с проверкой актуальности. Незавершённый native effect записан в journal: reconciliation
+сопоставляет его с Git/PTY/filesystem, неопределённый результат не повторяется автоматически.
+Recovery resolution фиксирует выбор оператора и сама не запускает effect. Файлы показа
 снимаются при `done` в userData и после автомержа читаются из снимка; показ, сданный до снимков, — из worktree задачи, затем из worktree
 ветки прогона, а когда нет и его — IPC отвечает ошибкой с именем ветки прогона («Показ человеку» → «Снимок»). `RunBranchSync` только убирает worktree после «Сделано»:
 push ветки прогона — нода `git push` или человек.
@@ -531,7 +539,7 @@ push ветки прогона — нода `git push` или человек.
 `answer` + `optionId`). Поля `StageChange.decision`, `options`, `fallback` необязательные: снапшот старого main без них
 ленту и карточку не роняет.
 
-Подзадача этапа «Работа» на доске и в карточке показывает **шаг своего пути** (`renderer/src/subtaskPath.ts`, `Task.stage` — позиция внутри `work.subflow`, а не на графе прогона):
+Подзадача этапа «Работа» на доске и в карточке показывает **шаг своего пути** (`packages/ui/src/subtaskPath.ts`, `Task.stage` — позиция внутри `work.subflow`, а не на графе прогона):
 пилюля «Реализация › Ревью кода» (этап › шаг; шаг «Работа» без названия — просто «Реализация», как заголовок в промпте воркера), «N-й заход» со второго захода в шаг. Названия нод пути
 берутся из **пути** ноды `Task.stageOf.nodeId` (`subflow ?? defaultSubflow()`), а не из графа прогона: id вроде `work`/`merge` в путях повторяются. Задача-проверка ветки подзадачи
 (`gateFor.taskId`) называет ноду пути проверяемой задачи. Метка «⧗ держит этап: ждёт проверки / человека» — у подзадачи текущего захода этапа, на которой сейчас стоит `Run.stage`, если она
@@ -541,7 +549,7 @@ push ветки прогона — нода `git push` или человек.
 
 **Вкладка «Граф»** экрана глобальной задачи (макет `docs/design/workflow-progress/variant-a.html`) — граф прогона только для чтения и панель выбранной ноды. Вкладка вторая, после «Доски», и есть
 только у прогона с `workflowScope: 'run'` (`visibleTabs`, `globalScreen.ts`); у старых прогонов её нет, чип этапа не показывается. Данные — только из снимка, новых полей нет
-(`renderer/src/workflowProgress.ts`, чистые функции, тест рядом):
+(`packages/ui/src/workflowProgress.ts`, чистые функции, тест рядом):
 - **Пройденный путь** (`runProgress`, `walkHistory`): ребро записи `stageHistory` — из `from` (у первой записи — из старта) с исходом `outcome` в `nodeId`; ноды, на которых задача не стоит
   (`start`, `condition`), проходятся насквозь — рёбра через них тоже пройдены; `restart` — прыжок без ребра. Счётчик ребра — сколько раз по нему шли. Текущая нода — `stage.nodeId`, заход — `stage.visits`;
   на `end` или у закрытой задачи текущей нет. «Вернули» — последний вход в текущую ноду с исходом `reject`/`restart`.
@@ -652,7 +660,7 @@ push ветки прогона — нода `git push` или человек.
 
 Эти же описания редактор показывает в инспекторе выбранной ноды («Как работает этап»), в легенде «Типы нод» под
 списком нод и в подсказках кнопок палитры: тексты — `WF_NODE_HELP` в
-`apps/desktop/src/renderer/src/workflowHelp.ts`, тест `workflowHelp.test.ts` требует описание и все исходы для
+`packages/ui/src/workflowHelp.ts`, тест `workflowHelp.test.ts` требует описание и все исходы для
 каждого типа. Меняешь поведение этапа — правь таблицу ниже, эту таблицу и `WF_NODE_HELP` вместе.
 
 ## Этапы и что делает приложение
@@ -1317,7 +1325,7 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   HTML, md и картинки открываются «На весь экран» в просмотрщике `ShowcaseViewer.tsx` (список файлов, ширина страницы,
   «Интернет-ресурсы», решение approval внизу — см. `docs/architecture.md` → «UI» → «Показ человеку»); «Открыть» / «В папке» —
   в меню «⋯», у PDF — кнопками. Разделы «## Показ» из `body` вычитаются (`bodyWithoutShowcases`), чтобы не дублировать.
-  Логика — `renderer/src/showcase.ts`: старые main/preload — «Перезапустите приложение» (`showcaseApi`,
+  Логика — `packages/ui/src/showcase.ts`: старые main/preload — «Перезапустите приложение» (`showcaseApi`,
   `showcasePreviewApi`). У «Принять» approval — поле «Решение / вариант» (`resolution.text` → `request_resolved.decision`),
   общее с просмотрщиком.
 

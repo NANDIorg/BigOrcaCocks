@@ -1,5 +1,8 @@
 # Двухуровневый канбан: глобальные задачи и подзадачи
 
+Текущие границы backend/UI/host — [shared-foundation.md](shared-foundation.md).
+Основная логика общая; Electron-specific действия выполняет Desktop host.
+
 Независимые product artifacts встраивают проверенный runtime snapshot своего commit.
 Обновление будущего CLI/Web не меняет уже установленный Desktop и не требует новой
 схемы глобальных задач; owner проверяет storage/connection schema до записи.
@@ -26,7 +29,7 @@ global task/workers/review/merge и lifecycle callbacks общие. Operator cli
 задачи**, внутри каждой — своя доска **подзадач** (обычных `Task`, на которых работают воркеры).
 Обе доски используют **реальные колонки проекта** (`Project.columns`, `columns list`), а не фиксированный
 набор: макет Planning / In Progress / AI Review / Human Review / Done — это просто пример колонок проекта.
-Локальный канбан подзадач показывает все колонки проекта, кроме «Готовы» (kind ready): её карточки лежат в «Бэклоге» — готовые к запуску сверху, ждущие зависимостей ниже с меткой «⧗ ждёт: …» (`localBoardColumns`, `renderer/src/boardColumns.ts`; статус ready в модели остаётся, см. «UI: доска» в `docs/architecture.md`); **глобальный — колонки `kind` backlog,
+Локальный канбан подзадач показывает все колонки проекта, кроме «Готовы» (kind ready): её карточки лежат в «Бэклоге» — готовые к запуску сверху, ждущие зависимостей ниже с меткой «⧗ ждёт: …» (`localBoardColumns`, `packages/ui/src/boardColumns.ts`; статус ready в модели остаётся, см. «UI: доска» в `docs/architecture.md`); **глобальный — колонки `kind` backlog,
 in_progress, needs_input, review и done** (`GLOBAL_BOARD_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`).
 Хранится карточка только в backlog / in_progress / review / done (`GLOBAL_COLUMN_KINDS`, `globalStoredColumns`);
 needs_input — **вычисляемая** колонка: там карточка, пока у прогона есть `pending`-запросы к человеку
@@ -361,7 +364,7 @@ channels. UI/preload не меняются, active selection переводит�
   без событий. Не на проверке — ошибка «глобальная задача … не на проверке». У прогона с воркфлоу (`workflowScope: 'run'`)
   это решение по approval ноды `human` (`docs/workflow.md`), а `decision` — поле «Решение / что делать дальше»: renderer
   открывает для такого прогона окно с этим полем (`AcceptGlobalModal`), оно уходит в `stage_started` следующего этапа.
-  В окне — показ подзадач ждущего approval (`showcaseDispatchIds`, `requestShowcases` в `renderer/src/showcase.ts`): блок на подзадачу с
+  В окне — показ подзадач ждущего approval (`showcaseDispatchIds`, `requestShowcases` в `packages/ui/src/showcase.ts`): блок на подзадачу с
   полосой её состояния, превью и просмотрщиком; в просмотрщике — то же поле решения и «Подтвердить» (вернуть оттуда нельзя — это отдельная
   кнопка экрана задачи). Файлы читаются из снимков запусков, поэтому видны и после мержа подзадач. Тот же показ, без поля решения, — на
   вкладке «Итог и цель» под «Что сделал» (`GlobalOverview`, проп `approval` = `runApprovalRequest`).
@@ -387,7 +390,7 @@ channels. UI/preload не меняются, active selection переводит�
   цели (`startCoordinator`) папку `returns/` не трогает (`clearStartImages`). Раздел «Повторный запуск» `skills/coordinator.md` велит считать уточнение новой работой; если
   координатор решил, что работы нет, `runs finish` снова ставит карточку на проверку.
 - **Что сделал** — блок на вкладке «Итог и цель» экрана глобальной задачи, на «Проверке» и в «Сделано» (`GlobalOverview.tsx`, выбор текста —
-  `globalDoneReport` в `renderer/src/globalDoneReport.ts`). Источник — итоговая сводка координатора
+  `globalDoneReport` в `packages/ui/src/globalDoneReport.ts`). Источник — итоговая сводка координатора
   `orca-board runs finish --summary "..."` (или `--summary-file`, markdown): `finishRun` сохраняет её в
   `Run.summary = {at, text}` (`GlobalTask.summary`), рендер — `Markdown.tsx`. Хранится **одна, последняя**:
   непустая сводка следующего `runs finish` (повторный запуск, возврат с проверки) заменяет прежнюю, пустая или
@@ -623,7 +626,7 @@ CLI этой команды нет: координатор тип не меня�
   (`accept`) и «Вернуть в работу…» (модалка `ReturnGlobalModal` с обязательным текстом → `returnToWork` →
   терминал координатора); «Запустить координатора» на ней скрыта. «Вернуть в работу…» доступна всегда: при
   живом прежнем координаторе (`returnClosesCoordinator`) модалка предупреждает, что его терминал закроется
-  (`returnHint`). Какие действия доступны — `globalTaskActions` (`renderer/src/globalReview.ts`), история уточнений —
+  (`returnHint`). Какие действия доступны — `globalTaskActions` (`packages/ui/src/globalReview.ts`), история уточнений —
   `GlobalReturns` (новые сверху; `GlobalOverview.tsx`). Старый preload без методов — «перезапустите приложение» (`globalReviewApi`),
   старый main («No handler registered») — то же, его отказ «ещё завершается» — «закройте терминал координатора
   или перезапустите» (`reviewErrorMessage`).
@@ -798,13 +801,13 @@ CLI этой команды нет: координатор тип не меня�
   При создании — селект «Тип задачи»: типы, доступные проекту (`availableTypes`), предвыбран тип проекта по умолчанию
   (`projectDefaultTypeId` — то же правило, что в main), под ним описание типа и предупреждение, если у какой-то роли
   типа агент в проекте выключен или не установлен (`rolesWithDisabledAgent`: тип создастся, но воркер этой роли не
-  стартует). При правке, пока задача не начата (`typeChangeOptions` в `renderer/src/globalTypeChange.ts` → `canChangeRunType`),
+  стартует). При правке, пока задача не начата (`typeChangeOptions` в `packages/ui/src/globalTypeChange.ts` → `canChangeRunType`),
   тип — такой же селект (текущий тип вне проекта остаётся первым вариантом); выбранный другой тип уходит в
   `globalTasks.changeType` (`changeTypeApi`: старый preload/main → «перезапустите приложение»). После старта — только бейдж.
   Старый main (прогоны в снимке без `priority`, `runsKnowPriority` в `taskPriority.ts`) приоритет не сохранит:
   вместо выбора — текущий приоритет и просьба перезапустить приложение, в `create`/`update` поле не уходит.
   «Новая подзадача» в шапке открыта задачей → `NewTaskModal` с зависимостями только из её подзадач и приоритетом (по умолчанию «обычный») → `globalTasks.createTask`.
-- Тип задачи в renderer — `renderer/src/taskTypes.ts`. `App` грузит библиотеку (`loadTaskTypes` → `taskTypes.list`)
+- Тип задачи в renderer — `packages/ui/src/taskTypes.ts`. `App` грузит библиотеку (`loadTaskTypes` → `taskTypes.list`)
   вместе со списком проектов и после закрытия «Настроек». Роли задачи — `rolesForRun(task.runId, runs, project, state)`
   через общее правило `resolveRunType` (core): тип прогона из библиотеки → снимок `Run.taskType` → тип проекта по
   умолчанию. Так подписаны роли на доске подзадач (`Board`), в `TaskModal`, в «Новой подзадаче» (выбор роли —
@@ -826,4 +829,4 @@ CLI этой команды нет: координатор тип не меня�
 
 ### Operator clients
 
-Выбор глобальной задачи/проекта остаётся состоянием клиента, а вызов общей команды содержит явный projectId и revision. Повтор mutation с тем же identity возвращает сохранённый результат; изменённый payload конфликтует, crash gap возвращает uncertain. Observer snapshots/replay независимы от agent check и consumedBy. Wiring owner composition и UI client выполняется следующими блоками.
+Выбор глобальной задачи/проекта остаётся состоянием клиента, а вызов общей команды содержит явный projectId и revision. Повтор mutation с тем же identity возвращает сохранённый результат; изменённый payload конфликтует, crash gap возвращает uncertain. Observer snapshots/replay независимы от agent check и consumedBy. Owner composition подключена к Desktop и Node host; общий UI/client использует Desktop. Браузерный Web adapter добавляется отдельно.
