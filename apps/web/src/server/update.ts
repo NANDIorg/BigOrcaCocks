@@ -68,12 +68,28 @@ export async function unpackRelease(archive: string, directory: string, version:
   execFileSync('tar', ['-xzf', archive, '--strip-components=1', '-C', directory], { stdio: 'pipe' })
   await validateInstalledRelease(directory, version)
 }
+async function replaceReleaseLink(base: string, name: 'current' | 'recovery', target: string): Promise<void> {
+  const destination = join(base, name); const link = join(base, `.${name}-${randomUUID()}`)
+  await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+  let previous: string | undefined
+  try {
+    // Linux-поставка переключается атомарно; Windows rename не заменяет существующую junction.
+    if (process.platform === 'win32') {
+      const info = await lstat(destination).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; return null })
+      if (info) {
+        if (!info.isSymbolicLink()) throw new Error('Путь версии должен быть ссылкой')
+        previous = await realpath(destination)
+        await rm(destination, { force: true })
+      }
+    }
+    try { await rename(link, destination) }
+    catch (error) { if (previous) await symlink(previous, destination, 'junction'); throw error }
+  } finally { await rm(link, { force: true }) }
+}
 export async function switchRelease(base: string, directory: string): Promise<void> {
   const releases = await realpath(join(base, 'releases')); const target = await realpath(directory); const rel = relative(releases, target)
   if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith('../')) throw new Error('Версия должна принадлежать releases')
-  const link = join(base, `.current-${randomUUID()}`)
-  await symlink(target, link, process.platform === 'win32' ? 'junction' : 'dir')
-  try { await rename(link, join(base, 'current')) } finally { await rm(link, { force: true }) }
+  await replaceReleaseLink(base, 'current', target)
 }
 export async function copyProfile(source: string, destination: string): Promise<void> {
   await mkdir(destination, { recursive: true, mode: 0o700 })
@@ -88,9 +104,7 @@ const transactionFile = (base: string) => join(base, 'updates', 'transaction.jso
 export const updateLockFile = (base: string) => join(base, 'updates', 'lock.json')
 export async function pinRecovery(base: string): Promise<void> {
   const target = await realpath(join(base, 'current'))
-  const temporary = join(base, `.recovery-${randomUUID()}`)
-  try { await symlink(target, temporary, process.platform === 'win32' ? 'junction' : 'dir'); await rename(temporary, join(base, 'recovery')) }
-  finally { await rm(temporary, { force: true }) }
+  await replaceReleaseLink(base, 'recovery', target)
 }
 interface UpdateTransaction { schemaVersion: 1; previous: string; next: string; version: string; backup: string | null }
 /** ExecStopPost выполняет recovery даже после SIGKILL/timeout worker, когда HTTP-сервис уже остановлен. */

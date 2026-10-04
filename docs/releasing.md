@@ -100,8 +100,9 @@ backup/rollback и отдельный systemd worker/recovery. Полный по
 Следуй последовательности `release/X.Y.Z` от develop → `fix/prepare-X.Y.Z` → PR в release.
 Для hotfix аналогично, исходная ветка — master. В fix-ветке:
 
-1. Обнови `/package.json`, `apps/desktop/package.json` и `apps/web/package.json` одним коммитом
-   `chore: release vX.Y.Z`. Версии внутренних core/cli не меняются вместе с приложением.
+1. Для Desktop обнови `/package.json` и `apps/desktop/package.json` одним коммитом
+   `chore: release vX.Y.Z`. Для Web меняется только `apps/web/package.json` с коммитом
+   `chore(web): релиз X.Y.Z`. Версии остальных продуктов и shared packages не выравниваются.
 2. Создай **`docs/releases/vX.Y.Z.md`**. Это проверяемый в PR источник release notes,
    который CI переносит в описание и файл `RELEASE_NOTES.md` GitHub Release, а сборка
    вшивает в приложение для офлайн-просмотра описания установленной версии.
@@ -168,7 +169,7 @@ backup/rollback и отдельный systemd worker/recovery. Полный по
 Релизные jobs `.github/workflows/release.yml` запускаются только по push тега `v*`
 (отдельный ручной validation без выпуска описан ниже):
 
-1. Проверяет тег, три версии, master, реестр морских имён и непустое описание
+1. Проверяет тег, root/Desktop версии, master, реестр морских имён и непустое описание
    `docs/releases/vX.Y.Z.md`. Формирует заголовок `Orca X.Y.Z · <имя серии>`.
 2. Ставит зависимости, готовит отдельный Node native root через `scripts/node-native.mjs`
    до параллельных suites, выполняет `pnpm verify` и упаковывает приложение на macOS/Windows.

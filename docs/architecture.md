@@ -3886,6 +3886,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Git process | async `spawn('git', args, {shell:false, detached:true})`; отмена/таймаут завершают собственную process group | `git.exe` по PATH без shell; taskkill `/PID /T /F` завершает owned дерево hooks | `packages/runtime/src/git-process.ts`; workflow использует scoped `git-workflow.ts` |
 | Каталог файлов (`files:*`, резолвер путей `docs:*`) | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
+| Ссылки версий Web | атомарный rename новой ссылки поверх `current` / `recovery`; установленная поставка — Linux x64 | исходники и CI используют junction: удаление только самой старой ссылки, затем rename новой; при ошибке прежняя ссылка восстанавливается. Установка Web как Windows-сервис не поддерживается | `replaceReleaseLink()` — `apps/web/src/server/update.ts` |
 | Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `packages/ui/src/styles.css` |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
@@ -4060,6 +4061,12 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 снимка. Тесты — `assistant-settings.test.ts`.
 
 ## Грабли разработки
+
+- **Windows rename не заменяет существующую directory junction.** Первая подготовка
+  recovery проходила, повторная давала EPERM; обновление и откат ломались на current.
+  Общая замена ссылок сохраняет атомарный Linux rename, а на Windows удаляет только
+  проверенную junction и восстанавливает её при ошибке. Проверки повторного pin,
+  успешного обновления, rollback и recovery после SIGKILL выполняются на всех ОС.
 
 - **Node execFile не передаёт detached в spawn.** Таймаут Git родителя оставлял hook
   и его ребёнка живыми; тест без проверки времени проходил по собственному deadline

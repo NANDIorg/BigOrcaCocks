@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, realpath, symlink, rm, access } fr
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
-import { activateRelease, archiveNamesSafe, recoverRelease, selectWebRelease } from '../src/server/update.ts'
+import { activateRelease, archiveNamesSafe, recoverRelease, selectWebRelease, switchRelease, pinRecovery } from '../src/server/update.ts'
 import { acquireProfileOwnership } from '@orca-board/runtime'
 import { serviceUnit, caddyConfig } from '../src/server/deployment.ts'
 import { parseWebConfig } from '../src/server/config.ts'
@@ -56,6 +56,18 @@ test('successful update retains backup and schema validation remains with the ne
   const result = await activateRelease({ ...value, directory: value.next, version: '2.0.0', stop: async () => {}, start: async () => {}, healthy: async version => { assert.equal(version, '2.0.0') } })
   assert.equal(await realpath(join(value.base, 'current')), value.next)
   assert.equal(await readFile(join(result.backup, 'profile', 'projects.json'), 'utf8'), '{"version":1}')
+})
+test('repeated release and recovery link replacement preserves both installed directories', async t => {
+  const value = await fixture(); t.after(() => rm(value.base, { recursive: true, force: true }))
+  await writeFile(join(value.previous, 'keep'), 'previous'); await writeFile(join(value.next, 'keep'), 'next')
+  await pinRecovery(value.base)
+  await switchRelease(value.base, value.next); await pinRecovery(value.base)
+  assert.equal(await realpath(join(value.base, 'recovery')), value.next)
+  await switchRelease(value.base, value.previous); await pinRecovery(value.base)
+  assert.equal(await realpath(join(value.base, 'current')), value.previous)
+  assert.equal(await realpath(join(value.base, 'recovery')), value.previous)
+  assert.equal(await readFile(join(value.previous, 'keep'), 'utf8'), 'previous')
+  assert.equal(await readFile(join(value.next, 'keep'), 'utf8'), 'next')
 })
 test('killed install worker is recovered from durable transaction with consistent profile/config', async t => {
   const value = await fixture(); t.after(() => rm(value.base, { recursive: true, force: true }))
