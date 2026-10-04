@@ -11,6 +11,7 @@ export default {
   'command.requestNotFound': 'Запрос «{requestId}» не найден в выбранном проекте.',
   'command.questionNotFound': 'Вопрос «{questionId}» не найден в выбранном проекте.',
   'command.rejected': 'Команда не выполнена: {reason}.',
+  'command.conflict': 'Управление уже занято или состояние команды изменилось.',
   'command.stale': 'Результат команды устарел: проект изменился или удалён.',
   'runtime.startupTitle': 'Не удалось запустить Orca',
   'runtime.profileBusy': 'Этот профиль Orca уже открыт в другом процессе. Закройте его перед запуском Desktop.',

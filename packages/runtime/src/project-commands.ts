@@ -10,6 +10,7 @@ const messages: Record<CommandErrorCode, string> = {
   'command.globalTaskNotFound': 'Глобальная задача не найдена',
   'command.requestNotFound': 'Запрос не найден',
   'command.questionNotFound': 'Вопрос не найден',
+  'command.conflict': 'Конфликт состояния команды',
   'command.stale': 'Результат команды устарел',
   'command.rejected': 'Команда не выполнена'
 }

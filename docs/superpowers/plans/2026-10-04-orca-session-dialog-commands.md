@@ -32,13 +32,13 @@
 
 **Files:** create contracts/session-commands.ts, runtime/session-writer-leases.ts, session-commands.ts, test/session-commands.test.ts; barrels, docs4/dashboard/plan, command errors/ru/en если необходим отдельный conflict code.
 
-**Interfaces:** createSessionWriterLeases({isAlive,now?,ttlMs?}) -> claim(ptyId,clientId), require(ptyId,clientId,leaseId), renew/release/dropClient/dropSession; один lease {id,ptyId,clientId,expiresAt}. createSessionCommands(host) -> spawn/list/claimWriter/renewWriter/releaseWriter/write/resize/kill, ClientCommandContext explicit. Host project(id), sessions (общий registry), leases, env(project?), defaultCwd, onExit and authorize. Spawn payload existing PtySpawnOptions, projectId optional explicit; backend не читает active project. Shell meta/env/defaults собираются общим service; Desktop адаптер добавляет legacy selected project. Нативные любые cwd/command/env остаются trusted operator capability, не выданы агенту.
+**Interfaces:** createSessionWriterLeases({isAlive,now?,ttlMs?}) -> claim(ptyId,clientId), require(ptyId,clientId,leaseId), renew/release/dropClient/dropSession; один lease {id,ptyId,clientId,expiresAt}. createSessionCommands(host) -> spawn/list/writer/claimWriter/renewWriter/releaseWriter/write/resize/kill, ClientCommandContext explicit. Host project(id), sessions (общий registry), leases, env(project?), defaultCwd, onExit and authorize. Spawn payload existing PtySpawnOptions, projectId optional explicit; backend не читает active project. Shell meta/env/defaults собираются общим service; Desktop адаптер добавляет legacy selected project. Нативные любые cwd/command/env остаются trusted operator capability, не выданы агенту.
 
-- [ ] **Step 1:** Real SessionRegistry с controllable minimal PTY port: forbidden/invalid before effects, two clients metadata/tail, expired/foreign lease no input/resize, claim conflict и renew, disconnect сохраняет process/tail, exit/kill удаляет lease, dimensions/env/project validation и host execution defaults. Assert registry activity/output/input, not mock factory existence.
-- [ ] **Step 2:** `node --test packages/runtime/test/session-commands.test.ts`; Expected FAIL missing factories.
-- [ ] **Step 3:** Implement validation, writer identity/TTL guards; require writer before input/resize, operator kill separate from writer. Returned DTO detached. Lease refusal code command.conflict, unknown terminal command.rejected with host message.
-- [ ] **Step 4:** Session commands/sessions/import-boundary suites, contracts/runtime/Desktop types/core docs; Expected PASS.
-- [ ] **Step 5:** Diff/staged diff/code+tests+docs commit/task-done affected suite.
+- [x] **Step 1:** Real SessionRegistry с controllable minimal PTY port: forbidden/invalid before effects, two clients metadata/tail, expired/foreign lease no input/resize, claim conflict и renew, disconnect сохраняет process/tail, exit/kill удаляет lease, dimensions/env/project validation и host execution defaults. Assert registry activity/output/input, not mock factory existence.
+- [x] **Step 2:** `node --test packages/runtime/test/session-commands.test.ts`; Expected FAIL missing factories.
+- [x] **Step 3:** Implement validation, writer identity/TTL guards; require writer before input/resize, operator kill separate from writer. Returned DTO detached. Lease refusal code command.conflict, unknown terminal command.rejected with host message.
+- [x] **Step 4:** Session commands/sessions/import-boundary suites, contracts/runtime/Desktop types/core docs; Expected PASS.
+- [x] **Step 5:** Diff/staged diff/code+tests+docs commit/task-done affected suite.
 
 ### Task 2: Dialog и legacy Assistant commands
 

@@ -36,6 +36,10 @@ EffectToken run/node/visit/lane/dispatch: общий async workflow Git — сл
 Девять старых Desktop IPC теперь вызывают common commands; private Git root helper
 удалён, process count передаётся как callback общей операции checkout.
 
+Общие SessionCommands отделяют input/resize writer от lifetime PTY. Client lease
+expiry/disconnect не меняет workflow и не запускает новый dispatch; explicit kill
+идёт по существующему callback ptyExited. Validation payload предшествует process spawn.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

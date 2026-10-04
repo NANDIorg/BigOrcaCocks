@@ -11,6 +11,7 @@ export default {
   'command.requestNotFound': 'Request “{requestId}” was not found in the selected project.',
   'command.questionNotFound': 'Question “{questionId}” was not found in the selected project.',
   'command.rejected': 'The command failed: {reason}.',
+  'command.conflict': 'Control is already taken or the command state changed.',
   'command.stale': 'The command result is stale: the project changed or was removed.',
   'runtime.startupTitle': 'Could not start Orca',
   'runtime.profileBusy': 'This Orca profile is already open in another process. Close it before starting Desktop.',

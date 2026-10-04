@@ -24,6 +24,10 @@ root остаётся внутренним. Общие FileCommands провер
 не является workflow completion и не создаёт повторный run_done. Desktop сохраняет
 legacy selection на verified границе IPC, socket counts использует ту же projection.
 
+Session writer lease управляет вводом и resize живого PTY, не состоянием Run/Dispatch.
+Освобождение управления при disconnect не закрывает координатора, не удаляет
+worktree и не меняет глобальную задачу. Явный operator kill сохраняет прежний exit flow.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime

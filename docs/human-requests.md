@@ -52,6 +52,10 @@ Preflight проверяет роль, доступность агента и ф
 Desktop Git/runs/agents channels проверяют caller до чтения legacy selection;
 чтение прогонов из UI не меняет доступность pending ответов в agent socket.
 
+Наблюдатель терминала не получает writer capability из подписки. Смена writer не
+отвечает на request/question и не потребляет agent check; после disconnect pending
+запрос продолжает ожидать ответа, а процесс сохраняется.
+
 ## Модель
 
 ```ts

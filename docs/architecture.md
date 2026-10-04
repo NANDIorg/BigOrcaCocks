@@ -380,6 +380,23 @@ compatibility adapter, неизвестный badge остаётся non-repo, �
 остаётся empty. Socket runs.list использует общую projection; close уже общий core.
 [План и проверки](superpowers/plans/2026-10-04-orca-project-run-agent-commands.md).
 
+### Общие команды терминальных сессий
+
+SessionCommands адресуют verified client; shell spawn валидирует dimensions/argv/env
+до lookup и формирует meta/root/окружение из host ports без active selection.
+Глобальный shell использует host defaultCwd, проектный — явный registered project.
+Произвольные command/cwd/env остаются capability доверенного operator; agent их не
+получает от наличия публичного DTO. Runtime graph не содержит native node-pty.
+
+SessionWriterLeases ограничивают input/resize одним client/token. TTL30000ms по
+умолчанию, max60000ms; claim/renew/expiry/release проходят owner registry, lease DTO
+отделён. release→claim явно передаёт управление. dropClient освобождает leases и
+сохраняет process/tail; operator kill — отдельная команда, не writer takeover.
+Лимит ввода64KiB проверяется до lastInputAt/native write; dimensions2..1000/1..1000.
+Expiry/dead records удаляются на обращении, background interval не создаётся.
+Desktop bridge подключается после dialog API:
+[план](superpowers/plans/2026-10-04-orca-session-dialog-commands.md).
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,
