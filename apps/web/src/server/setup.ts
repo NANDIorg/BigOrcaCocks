@@ -10,13 +10,14 @@ import { readPassword } from './password.ts'
 import { serviceUnit, caddyConfig, proxyUnit, updateWorkerUnit, updateSudoers } from './deployment.ts'
 import { execFileSync } from 'node:child_process'
 import { pinRecovery } from './update.ts'
+import { execPrivileged, warnRoot } from './privileges.ts'
 
 export const configFile = () => process.env.ORCA_WEB_CONFIG ?? join(homedir(), '.config', 'orca-web', 'config.json')
 export const configDirectory = () => dirname(configFile())
 export const installationDirectory = () => process.env.ORCA_WEB_HOME ?? join(homedir(), '.local', 'share', 'orca-web')
 export async function setup(): Promise<void> {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error('Мастер настройки запускается в интерактивном терминале')
-  if (process.getuid?.() === 0) throw new Error('Устанавливайте Orca под обычным пользователем, которому принадлежат проекты')
+  warnRoot()
   try { await access(configFile()); throw new Error('Конфигурация уже существует. Измените config.json и перезапустите сервис.') } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
   const ask = createInterface({ input: stdin, output: stdout })
   let root: string; let login: string; let domain: string; let preview: string
@@ -53,9 +54,10 @@ export async function writeTemplates(): Promise<void> {
   }
 }
 export async function installService(): Promise<void> {
-  if (process.platform !== 'linux' || process.getuid?.() === 0) throw new Error('Установка сервиса выполняется обычным пользователем Linux с sudo')
+  if (process.platform !== 'linux') throw new Error('Установка сервиса выполняется на Linux')
+  warnRoot()
   const config = await loadWebConfig(configFile()); await writeTemplates()
-  const sudo = (args: string[]) => execFileSync('sudo', args, { stdio: 'inherit' })
+  const sudo = ([command, ...args]: string[]) => execPrivileged(command, args)
   if (config.mode === 'proxy') {
     await access('/usr/bin/caddy')
     // Не перехватываем уже работающий Caddy с другими сайтами.
@@ -68,13 +70,18 @@ export async function installService(): Promise<void> {
   sudo(['systemctl', 'daemon-reload']); sudo(['systemctl', 'enable', '--now', ...services])
 }
 export async function installAppService(): Promise<void> {
-  if (process.platform !== 'linux' || process.getuid?.() === 0) throw new Error('Требуется обычный пользователь Linux с sudo')
-  await writeTemplates(); execFileSync('sudo', ['install', '-m', '644', join(configDirectory(), 'orca-web.service'), '/etc/systemd/system/orca-web.service'], { stdio: 'inherit' })
+  if (process.platform !== 'linux') throw new Error('Требуется Linux')
+  warnRoot()
+  await writeTemplates(); execPrivileged('install', ['-m', '644', join(configDirectory(), 'orca-web.service'), '/etc/systemd/system/orca-web.service'])
   installUpdater(configDirectory())
-  execFileSync('sudo', ['systemctl', 'daemon-reload'], { stdio: 'inherit' }); execFileSync('sudo', ['systemctl', 'enable', '--now', 'orca-web.service'], { stdio: 'inherit' })
+  execPrivileged('systemctl', ['daemon-reload']); execPrivileged('systemctl', ['enable', '--now', 'orca-web.service'])
 }
 function installUpdater(directory: string): void {
-  const sudo = (args: string[]) => execFileSync('sudo', args, { stdio: 'inherit' })
+  if (process.getuid?.() === 0) {
+    execPrivileged('install', ['-m', '644', join(directory, 'orca-web-update.service'), '/etc/systemd/system/orca-web-update.service'])
+    return
+  }
+  const sudo = ([command, ...args]: string[]) => execPrivileged(command, args)
   sudo(['/usr/sbin/visudo', '-cf', join(directory, 'orca-web-update.sudoers')])
   sudo(['install', '-m', '644', join(directory, 'orca-web-update.service'), '/etc/systemd/system/orca-web-update.service'])
   sudo(['install', '-m', '440', join(directory, 'orca-web-update.sudoers'), '/etc/sudoers.d/orca-web-update'])

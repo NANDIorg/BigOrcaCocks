@@ -8,6 +8,7 @@ import { compareVersions } from '@orca-board/runtime'
 import { readPrivateJson, createPrivateJson, replacePrivateJson, record } from './private-json.ts'
 import { installationDirectory } from './setup.ts'
 import { latestWebRelease, prepareWebRelease, installWebRelease, recoverWebRelease, updateLockFile, pinRecovery, type WebRelease } from './update.ts'
+import { privilegedCommand } from './privileges.ts'
 
 const execute = promisify(execFile)
 type Action = 'download' | 'install'
@@ -45,7 +46,7 @@ function initial(version: string, managed: boolean): UpdateState {
     installPending: null, mode: managed ? 'server' : 'manual-download', unsupportedReason: managed ? null : 'server-unmanaged', error: null }
 }
 export async function managedWebInstallation(resourceDir: string): Promise<boolean> {
-  if (process.platform !== 'linux' || process.arch !== 'x64' || process.getuid?.() === 0 || process.env.ORCA_WEB_MANAGED !== '1') return false
+  if (process.platform !== 'linux' || process.arch !== 'x64' || process.env.ORCA_WEB_MANAGED !== '1') return false
   return await realpath(join(installationDirectory(), 'current', 'app')).then(path => realpath(resourceDir).then(resource => path === resource), () => false)
 }
 export interface BrowserUpdates {
@@ -68,7 +69,10 @@ export function createBrowserUpdates(options: { version: string; managed: boolea
     const { stdout } = await execute('/usr/bin/systemctl', ['show', '-p', 'ActiveState', '--value', 'orca-web-update.service'], { timeout: 5000 })
     return ['active', 'activating', 'deactivating', 'reloading'].includes(stdout.trim())
   })
-  const dispatch = options.dispatch ?? (async () => { await execute('sudo', ['-n', '/usr/bin/systemctl', 'start', '--no-block', 'orca-web-update.service'], { timeout: 10_000 }) })
+  const dispatch = options.dispatch ?? (async () => {
+    const [command, args] = privilegedCommand('/usr/bin/systemctl', ['start', '--no-block', 'orca-web-update.service'], true)
+    await execute(command, args, { timeout: 10_000 })
+  })
   async function getState(): Promise<UpdateState> {
     if (!options.managed) return { ...state }
     let saved = await load(base)

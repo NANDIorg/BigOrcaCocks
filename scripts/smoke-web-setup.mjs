@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, copyFile, symlink, chmod } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, copyFile, symlink, chmod } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-// Только disposable Linux-user: реальный мастер с TTY и шаблоны, без публичного DNS/сертификатов.
-if (process.platform !== 'linux' || process.getuid() === 0) throw new Error('Требуется обычный Linux-пользователь')
+// Root разрешён только явно в disposable Linux-окружении.
+if (process.platform !== 'linux' || process.getuid() === 0 && process.env.ORCA_WEB_SMOKE_ROOT !== '1') throw new Error('Требуется Linux-пользователь; root smoke включается явно')
 const release = resolve(process.argv[2]); const root = await mkdtemp(join(tmpdir(), 'orca-setup-'))
 const configFile = join(root, 'config', 'config.json'); const base = join(root, 'installed')
 const native = createRequire(join(release, 'app/package.json'))('node-pty')
@@ -39,6 +39,17 @@ try {
     execFileSync('systemd-analyze', ['verify', '--man=no', unit, join(config.configDir, 'orca-web-proxy.service'), join(config.configDir, 'orca-web-update.service')], { env, stdio: 'pipe', timeout: 15_000 })
     execFileSync('/usr/sbin/visudo', ['-cf', join(config.configDir, 'orca-web-update.sudoers')], { env, stdio: 'pipe', timeout: 15_000 })
     execFileSync('/usr/bin/caddy', ['validate', '--config', join(config.configDir, 'Caddyfile'), '--adapter', 'caddyfile'], { env, stdio: 'pipe', timeout: 15_000 })
+  }
+  if (process.getuid() === 0 && process.env.ORCA_WEB_TEST_ROOT_SERVICE === '1') {
+    // Только disposable root runner: файлы сервиса настоящие, PID1/systemctl заменён.
+    const tools = join(root, 'tools'); const log = join(root, 'systemctl.log'); await mkdir(tools)
+    await writeFile(join(tools, 'systemctl'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$ORCA_WEB_TEST_SYSTEMCTL"\nif [ "$1" = is-active ]; then exit 1; fi\n', { mode: 0o755 })
+    await writeFile(join(tools, 'sudo'), '#!/bin/sh\necho "root must not invoke sudo" >&2\nexit 99\n', { mode: 0o755 })
+    execFileSync(join(release, 'node/bin/node'), [join(release, 'app/control.mjs'), 'service', 'install'], { env: { ...env, PATH: `${tools}:${env.PATH}`, ORCA_WEB_TEST_SYSTEMCTL: log }, stdio: 'pipe', timeout: 15_000 })
+    assert.equal(await readFile('/etc/systemd/system/orca-web.service', 'utf8'), await readFile(unit, 'utf8'))
+    assert.ok((await readFile('/etc/systemd/system/orca-web-update.service', 'utf8')).includes('User=root\n'))
+    assert.ok((await readFile(log, 'utf8')).includes('enable --now orca-web.service orca-web-proxy.service'))
+    process.stdout.write('Root service smoke PASS: real unit installation, no sudo, systemctl boundary\n')
   }
   process.stdout.write('Setup TTY smoke PASS: fresh account, masked password, custom config, systemd/Caddy templates\n')
 } finally { terminal?.kill(); await rm(root, { recursive: true, force: true }) }
