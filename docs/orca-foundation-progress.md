@@ -44,6 +44,11 @@ filesystem/Git identity; реальные stale/authority guards не ослаб
 также сопоставляет canonical realpath (новая equivalent-path regression RED→GREEN).
 Целевые suites72/72 и runtime types PASS; Linux foreign endpoint4/4 PASS в Docker.
 
+На `8f451c7` полный verify прошёл на Linux, macOS и Windows. Installed CI runner
+исправлен: `DISPLAY` удаляется из env вместо пустой строки, строгий smoke guard
+сохранён. Тот же CI runner с установленным пакетом вне workspace прошёл в Linux
+Docker; последующий коммит меняет только runner и этот receipt, код продуктов прежний.
+
 Последний installed Linux artifact smoke EXIT0: native PTY/default shell, Git, legacy CLI,
 operator snapshot/disconnect, writer duplicate ровно один раз, second owner refusal/restart.
 `pnpm --filter @orca-board/desktop run pack` EXIT0; приложение открыто и его процесс подтверждён:

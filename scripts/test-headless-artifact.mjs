@@ -8,7 +8,8 @@ import { spawnSync } from 'node:child_process'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const installed = mkdtempSync(join(tmpdir(), 'orca-installed-artifact-'))
 function run(args, cwd) {
-  const result = spawnSync(process.execPath, args, { cwd, stdio: 'inherit', env: { ...process.env, DISPLAY: '', NODE_OPTIONS: '' }, shell: false })
+  const env = { ...process.env, NODE_OPTIONS: '' }; delete env.DISPLAY
+  const result = spawnSync(process.execPath, args, { cwd, stdio: 'inherit', env, shell: false })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`Installed artifact check завершился с кодом ${result.status}`)
 }
