@@ -5,13 +5,26 @@
   "bypass_actors": [],
   "conditions": {
     "ref_name": {
-      "include": ["refs/heads/master", "refs/heads/develop", "refs/heads/release/*", "refs/heads/hotfix/*"],
+      "include": [
+        "refs/heads/master",
+        "refs/heads/develop",
+        "refs/heads/release/*",
+        "refs/heads/hotfix/*",
+        "refs/heads/release/cli/*",
+        "refs/heads/release/web/*",
+        "refs/heads/hotfix/cli/*",
+        "refs/heads/hotfix/web/*"
+      ],
       "exclude": []
     }
   },
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
     {
       "type": "pull_request",
       "parameters": {
@@ -20,7 +33,9 @@
         "require_code_owner_review": false,
         "require_last_push_approval": true,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": ["merge"]
+        "allowed_merge_methods": [
+          "merge"
+        ]
       }
     },
     {
@@ -28,7 +43,16 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": true,
-        "required_status_checks": [{ "context": "git-flow", "integration_id": 15368 }, { "context": "quality", "integration_id": 15368 }]
+        "required_status_checks": [
+          {
+            "context": "git-flow",
+            "integration_id": 15368
+          },
+          {
+            "context": "quality",
+            "integration_id": 15368
+          }
+        ]
       }
     }
   ]

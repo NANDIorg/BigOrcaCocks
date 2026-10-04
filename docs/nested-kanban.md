@@ -1,10 +1,35 @@
 # Двухуровневый канбан: глобальные задачи и подзадачи
 
+Текущие границы backend/UI/host — [shared-foundation.md](shared-foundation.md).
+Основная логика общая; Electron-specific действия выполняет Desktop host.
+
+Независимые product artifacts встраивают проверенный runtime snapshot своего commit.
+Обновление будущего CLI/Web не меняет уже установленный Desktop и не требует новой
+схемы глобальных задач; owner проверяет storage/connection schema до записи.
+
+Длительная работа терминала не расходует журнал мутаций доски: продление writer lease
+остаётся ephemeral heartbeat, а создание/изменение задач сохраняет durable dedup.
+Повторный выход Desktop во время остановки ждёт native processes и освобождения owner.
+
+Recovery считает worktree задачи/run referenced по canonical filesystem identity,
+даже если Git и metadata записали разделители или короткие имена пути по-разному.
+
+
+Прежняя доска/подзадачи теперь находятся в общем `packages/ui`; Desktop передаёт
+client/platform ports. Новый operator bridge задаёт project явно и не переключает
+ProjectManager.activeId; общая модель/канбан остаются прежними.
+
+
+Desktop и самостоятельный Node host собирают один `createRuntimeServices` graph:
+global task/workers/review/merge и lifecycle callbacks общие. Operator clients
+имеют собственный project/dialog selection; observer snapshot не забирает события
+координатора. Disconnect не закрывает PTY/run и не удаляет worktree.
+
 Контракт слоя данных и API для UI (renderer пишется отдельно). Верхний уровень доски — **глобальные
 задачи**, внутри каждой — своя доска **подзадач** (обычных `Task`, на которых работают воркеры).
 Обе доски используют **реальные колонки проекта** (`Project.columns`, `columns list`), а не фиксированный
 набор: макет Planning / In Progress / AI Review / Human Review / Done — это просто пример колонок проекта.
-Локальный канбан подзадач показывает все колонки проекта, кроме «Готовы» (kind ready): её карточки лежат в «Бэклоге» — готовые к запуску сверху, ждущие зависимостей ниже с меткой «⧗ ждёт: …» (`localBoardColumns`, `renderer/src/boardColumns.ts`; статус ready в модели остаётся, см. «UI: доска» в `docs/architecture.md`); **глобальный — колонки `kind` backlog,
+Локальный канбан подзадач показывает все колонки проекта, кроме «Готовы» (kind ready): её карточки лежат в «Бэклоге» — готовые к запуску сверху, ждущие зависимостей ниже с меткой «⧗ ждёт: …» (`localBoardColumns`, `packages/ui/src/boardColumns.ts`; статус ready в модели остаётся, см. «UI: доска» в `docs/architecture.md`); **глобальный — колонки `kind` backlog,
 in_progress, needs_input, review и done** (`GLOBAL_BOARD_KINDS`, `globalBoardColumns` в `packages/core/src/global-tasks.ts`).
 Хранится карточка только в backlog / in_progress / review / done (`GLOBAL_COLUMN_KINDS`, `globalStoredColumns`);
 needs_input — **вычисляемая** колонка: там карточка, пока у прогона есть `pending`-запросы к человеку
@@ -13,7 +38,94 @@ needs_input — **вычисляемая** колонка: там карточк
 (см. «Проверка»). Отдельный kind не заводится — `review` есть в каждом проекте (`validateColumns`), миграция
 колонок не нужна. Готовы (и пользовательские `custom`) — этапы подзадач, глобальной задаче там делать нечего.
 
+Файловые sources и показы извлекаются в runtime services: источник задачи — её
+разрешённый worktree либо снимок dispatch. Project/file DTO сохраняются, backend
+root остаётся внутренним. Общие FileCommands проверяют source/dispatch после await;
+удалённая или заменённая задача не выдаёт поздний preview URL. Desktop IPC использует
+тот же API, выбор проекта на legacy границе не меняет source другого клиента.
+
+Общие RunCommands читают/закрывают прогон явного проекта. listWithCounts использует
+общую projection задач/done; close сохраняет прежние closedAt и историю автора,
+не является workflow completion и не создаёт повторный run_done. Desktop сохраняет
+legacy selection на verified границе IPC, socket counts использует ту же projection.
+
+Session writer lease управляет вводом и resize живого PTY, не состоянием Run/Dispatch.
+Освобождение управления при disconnect не закрывает координатора, не удаляет
+worktree и не меняет глобальную задачу. Явный operator kill сохраняет прежний exit flow.
+
+Общий DialogCommands задаёт project binding отдельно от выбора проекта клиентом;
+реальный процесс получает только явный ORCA_PROJECT owner. Удаление/замена project
+registration во время ожидаемого ACK делает результат команды stale; другой диалог
+сохраняет свой transcript/provider binding. Глобальный Desktop assistant по-прежнему
+не привязан к глобальной задаче или унаследованному run/dispatch.
+
+Desktop global attachment open/reveal теперь входит в тот же verified project
+adapter, что CRUD глобальной задачи. OS получает только путь из metadata и общего
+file guard; чужой frame не читает selection/store. PTY ввод Desktop использует
+common writer lease; закрытие окна не завершает координаторов и воркеров.
+
+Git effects global/worker теперь асинхронны: общий GitProcessService и очередь canonical
+commonDir сериализуют root, linked worktree и symlink; независимые repo не ждут друг друга.
+Именованные compatibility exports вызывают этот же async port; второй sync Git body удалён.
+Compound branch/commit/review/merge/cleanup занимает очередь один раз. Stop/timeout
+завершает также hooks; failure не отравляет следующий job, закрытый port недоступен.
+
+Async RunBranchServices подключён к Desktop/workflow/coordinator/review. Одновременные
+подготовки feature одного run объединяются с индивидуальным guard каждого ожидающего.
+Git metadata отдельно защищает branch port: инициализация ветки соседом не отменяет
+актуальный lane. Nonforce уборка пропускает живые/возобновлённые прогоны и dirty worktree.
+
+EffectScope проверяет immutable позицию конкретного lane и поколение fork после await.
+Все RunAction scopes захватываются до первого ожидания, включая соседние пути. Новый
+заход с тем же node/lane не принимает старый result; устаревший failure не блокирует его.
+CancelRun действует только на scopes этого project/run, pending start отменяется до dispatch.
+Global remove ожидает nonforce уборку после durable deletion и не убирает повторно созданный run.
+
+Project branch/list/initialCommit/fetch/pull/checkout используют async HEAD metadata;
+отзыв policy или удаление registration запрещает следующий effect. Авторство store phases
+захватывается до await, выбор проекта другого клиента не меняется. Добавление проекта и docs/preview
+Git reads тоже async; guard запрещает позднее сохранение registration после отзыва policy.
+Persistent journal/reconciliation подключены. Native effect после отмены
+может остаться без metadata; автоматический rollback не выполняется.
+
 ## Модель: глобальная задача = прогон (`Run`)
+
+Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime
+адресуют project/client/actor явно: CRUD, типы, подзадачи и вложения используют core
+guards и общие resources. Общая операция `createGlobalTaskRemoval` проверяет живого
+координатора и cascade/dispatch до очистки файлов/PTY/worktree; ветка сохраняется.
+Запуск/перезапуск координатора и accept/return проходят `CoordinatorCommands` с тем
+же явным context/policy. Общая trusted orchestration используется также старым
+agent socket. Run scope решает approval без закрытия живого координатора, legacy
+task scope перезапускает его; failed launch после решения сохраняет feedback/files.
+Подробности — «Общие команды глобальных задач» и «Общие команды координатора»
+в [architecture.md](architecture.md). Запуск/остановка подзадач идут через общий
+`WorkerCommands` с тем же context; workflow и agent socket используют одну trusted
+`WorkerOperations`. Lifecycle закрывает dispatch до PTY, включая терминалы уже
+закрытых запусков после done. `ReviewCommands` и `HumanRequestCommands` используют
+тот же context/policy, проверяют task/question/request в выбранном store до effects.
+Общие ReviewOperations сохраняют прежний router run gate и taskless approval/decision,
+живость перед ответом, byte validation/rollback вложений; server paths клиент не задаёт.
+Остальные lifecycle команды и transport guarantees переносятся дальше.
+
+Настройки типов/шаблонов и workflow относятся к общему `ProfileCommands` без selection;
+`ProjectConfigCommands` меняет доступные/default типы конкретного project context.
+Запущенные прогоны сохраняют прежние live/snapshot правила менеджера; новые commands
+не подменяют их тип и не выбирают проект соседнего клиента.
+Desktop profile adapter передаёт explicit id при настройке доступных типов/default,
+сохраняя старые IPC DTO; legacy selection после add остаётся только в Desktop.
+
+Статистика прогона имеет общий `StatsCommands.global` с явным проектом; builder
+по-прежнему включает координатора и подзадачи выбранного run. Async чтение
+транскриптов работает с detached snapshot; найденный session id не применяется
+после удаления проекта или замены dispatch. Workflow engine использует общий async Git;
+смысл графов, live/snapshot правила и диффы общей ветки сохранены.
+Desktop stats:global вызывает этот общий API с explicit project id; shared deps
+сохраняют названия ролей из снимка удалённого типа и не выбирают соседнюю доску.
+
+Desktop уже подключает эти 12 команд через compatibility adapter прежних IPC
+channels. UI/preload не меняются, active selection переводится в явный context
+одного вызова на IPC границе; runtime не зависит от выбора проекта в окне.
 
 Отдельной сущности нет. Прогон (`Run`, `packages/core/src/types.ts`) уже был «набором задач одного
 координатора» со своим жизненным циклом (`closedAt`, `run_done`, `runs finish`), а связь задача → прогон
@@ -252,7 +364,7 @@ needs_input — **вычисляемая** колонка: там карточк
   без событий. Не на проверке — ошибка «глобальная задача … не на проверке». У прогона с воркфлоу (`workflowScope: 'run'`)
   это решение по approval ноды `human` (`docs/workflow.md`), а `decision` — поле «Решение / что делать дальше»: renderer
   открывает для такого прогона окно с этим полем (`AcceptGlobalModal`), оно уходит в `stage_started` следующего этапа.
-  В окне — показ подзадач ждущего approval (`showcaseDispatchIds`, `requestShowcases` в `renderer/src/showcase.ts`): блок на подзадачу с
+  В окне — показ подзадач ждущего approval (`showcaseDispatchIds`, `requestShowcases` в `packages/ui/src/showcase.ts`): блок на подзадачу с
   полосой её состояния, превью и просмотрщиком; в просмотрщике — то же поле решения и «Подтвердить» (вернуть оттуда нельзя — это отдельная
   кнопка экрана задачи). Файлы читаются из снимков запусков, поэтому видны и после мержа подзадач. Тот же показ, без поля решения, — на
   вкладке «Итог и цель» под «Что сделал» (`GlobalOverview`, проп `approval` = `runApprovalRequest`).
@@ -278,7 +390,7 @@ needs_input — **вычисляемая** колонка: там карточк
   цели (`startCoordinator`) папку `returns/` не трогает (`clearStartImages`). Раздел «Повторный запуск» `skills/coordinator.md` велит считать уточнение новой работой; если
   координатор решил, что работы нет, `runs finish` снова ставит карточку на проверку.
 - **Что сделал** — блок на вкладке «Итог и цель» экрана глобальной задачи, на «Проверке» и в «Сделано» (`GlobalOverview.tsx`, выбор текста —
-  `globalDoneReport` в `renderer/src/globalDoneReport.ts`). Источник — итоговая сводка координатора
+  `globalDoneReport` в `packages/ui/src/globalDoneReport.ts`). Источник — итоговая сводка координатора
   `orca-board runs finish --summary "..."` (или `--summary-file`, markdown): `finishRun` сохраняет её в
   `Run.summary = {at, text}` (`GlobalTask.summary`), рендер — `Markdown.tsx`. Хранится **одна, последняя**:
   непустая сводка следующего `runs finish` (повторный запуск, возврат с проверки) заменяет прежнюю, пустая или
@@ -514,7 +626,7 @@ CLI этой команды нет: координатор тип не меня�
   (`accept`) и «Вернуть в работу…» (модалка `ReturnGlobalModal` с обязательным текстом → `returnToWork` →
   терминал координатора); «Запустить координатора» на ней скрыта. «Вернуть в работу…» доступна всегда: при
   живом прежнем координаторе (`returnClosesCoordinator`) модалка предупреждает, что его терминал закроется
-  (`returnHint`). Какие действия доступны — `globalTaskActions` (`renderer/src/globalReview.ts`), история уточнений —
+  (`returnHint`). Какие действия доступны — `globalTaskActions` (`packages/ui/src/globalReview.ts`), история уточнений —
   `GlobalReturns` (новые сверху; `GlobalOverview.tsx`). Старый preload без методов — «перезапустите приложение» (`globalReviewApi`),
   старый main («No handler registered») — то же, его отказ «ещё завершается» — «закройте терминал координатора
   или перезапустите» (`reviewErrorMessage`).
@@ -689,13 +801,13 @@ CLI этой команды нет: координатор тип не меня�
   При создании — селект «Тип задачи»: типы, доступные проекту (`availableTypes`), предвыбран тип проекта по умолчанию
   (`projectDefaultTypeId` — то же правило, что в main), под ним описание типа и предупреждение, если у какой-то роли
   типа агент в проекте выключен или не установлен (`rolesWithDisabledAgent`: тип создастся, но воркер этой роли не
-  стартует). При правке, пока задача не начата (`typeChangeOptions` в `renderer/src/globalTypeChange.ts` → `canChangeRunType`),
+  стартует). При правке, пока задача не начата (`typeChangeOptions` в `packages/ui/src/globalTypeChange.ts` → `canChangeRunType`),
   тип — такой же селект (текущий тип вне проекта остаётся первым вариантом); выбранный другой тип уходит в
   `globalTasks.changeType` (`changeTypeApi`: старый preload/main → «перезапустите приложение»). После старта — только бейдж.
   Старый main (прогоны в снимке без `priority`, `runsKnowPriority` в `taskPriority.ts`) приоритет не сохранит:
   вместо выбора — текущий приоритет и просьба перезапустить приложение, в `create`/`update` поле не уходит.
   «Новая подзадача» в шапке открыта задачей → `NewTaskModal` с зависимостями только из её подзадач и приоритетом (по умолчанию «обычный») → `globalTasks.createTask`.
-- Тип задачи в renderer — `renderer/src/taskTypes.ts`. `App` грузит библиотеку (`loadTaskTypes` → `taskTypes.list`)
+- Тип задачи в renderer — `packages/ui/src/taskTypes.ts`. `App` грузит библиотеку (`loadTaskTypes` → `taskTypes.list`)
   вместе со списком проектов и после закрытия «Настроек». Роли задачи — `rolesForRun(task.runId, runs, project, state)`
   через общее правило `resolveRunType` (core): тип прогона из библиотеки → снимок `Run.taskType` → тип проекта по
   умолчанию. Так подписаны роли на доске подзадач (`Board`), в `TaskModal`, в «Новой подзадаче» (выбор роли —
@@ -712,3 +824,9 @@ CLI этой команды нет: координатор тип не меня�
   переживает перезагрузку; id, которого нет в снимке активного проекта, показывает общую доску.
 - Клавиатура: карточка фокусируется Tab, Enter/Space открывает; на экране задачи фокус на «назад», Esc (вне полей и
   модалок) возвращает, фокус — обратно на карточку. Повторный клик по вкладке «Канбан» тоже возвращает.
+
+Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.
+
+### Operator clients
+
+Выбор глобальной задачи/проекта остаётся состоянием клиента, а вызов общей команды содержит явный projectId и revision. Повтор mutation с тем же identity возвращает сохранённый результат; изменённый payload конфликтует, crash gap возвращает uncertain. Observer snapshots/replay независимы от agent check и consumedBy. Owner composition подключена к Desktop и Node host; общий UI/client использует Desktop. Браузерный Web adapter добавляется отдельно.

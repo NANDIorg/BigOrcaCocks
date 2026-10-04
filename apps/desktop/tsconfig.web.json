@@ -2,10 +2,34 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "types": [],
-    "paths": { "@orca-board/core": ["../../packages/core/src/index.ts"] }
+    "paths": {
+      "@orca-board/core": [
+        "../../packages/core/src/index.ts"
+      ],
+      "@orca-board/contracts": [
+        "../../packages/contracts/src/index.ts"
+      ],
+      "@orca-board/client": [
+        "../../packages/client/src/index.ts"
+      ],
+      "@orca-board/ui": [
+        "../../packages/ui/src/index.ts"
+      ]
+    }
   },
-  "include": ["src/renderer", "src/shared", "src/preload/api.d.ts"],
-  "exclude": ["src/renderer/**/*.test.ts"]
+  "include": [
+    "src/renderer",
+    "src/shared",
+    "src/preload/api.d.ts",
+    "../../packages/ui/src/env.d.ts"
+  ],
+  "exclude": [
+    "src/renderer/**/*.test.ts"
+  ]
 }

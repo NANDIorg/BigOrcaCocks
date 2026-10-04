@@ -1,5 +1,21 @@
 # Выпуск релиза по поручению человеку или агенту
 
+## Линейки продуктов
+
+Общий runtime/client/UI уже выделен; состояние продуктов и границы пакетов —
+[shared-foundation.md](shared-foundation.md). Сейчас существует Desktop Release workflow
+и установленный Node artifact для проверок; отдельные Web/терминальный CLI releases
+ещё не выпускаются. Сборка Node host не является публикацией Web-сайта.
+
+Эта существующая инструкция упаковки/подписи/marine codenames относится к Desktop.
+CLI/Web позже получают свои workflows; общая policy уже задаётся product-release.mjs:
+own manifest/version, cli/vX.Y.Z или web/vX.Y.Z, product-specific release/hotfix ветки,
+make_latest=false и запрет Desktop latest manifests/установщиков в их assets.
+Root/Desktop alignment для Desktop сохраняется; чужие версии при preparation/backmerge
+не изменяются. Product version не является protocol/schema version; совместимость
+проверяется handshake. Подготовка общего фундамента не разрешает публикацию/tag/bump.
+
+
 Это инструкция для разработки **orca-board**, а не для агентов продукта в чужих проектах.
 Перед выпуском прочитай [Git Flow](git-flow.md); устройство пакетов и автообновления —
 [architecture.md, «Сборка»](architecture.md#сборка). `master` — релизы и hotfix;

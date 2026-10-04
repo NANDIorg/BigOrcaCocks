@@ -9,6 +9,9 @@
 [docs/releasing.md](docs/releasing.md): версия, описание, PR, тег, сборки и файлы выпуска.
 
 Краткий вход для разработчика — [CONTRIBUTING.md](CONTRIBUTING.md).
+Карта общих пакетов и Node host — [docs/shared-foundation.md](docs/shared-foundation.md).
+Бизнес-логику добавляй в core/runtime, общий интерфейс — в packages/ui;
+Electron и системные действия оставляй в Desktop host.
 Не работай напрямую в `master` / `develop`. Обычная задача — отдельный worktree
 и `feature/*` от `origin/develop`; уже назначенный worktree не заменяй новым.
 Если запущен воркером Orca (`ORCA_DISPATCH_ID`), сохраняй назначенную `orca/*`:

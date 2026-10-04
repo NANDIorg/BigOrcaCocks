@@ -1,0 +1,369 @@
+import { getUiApi } from '../host'
+import type { WorkflowAssistantContext } from '../../shared/assistant-workflow'
+import { requestedWorkflowTypeExists, type WorkflowSectionRequest } from '../workflowAssistant'
+import type React from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { DEFAULT_ROLES, presetTaskTypes, type AgentKind, type AgentInfo, type AssistantSettings, type Role, type TaskType } from '@orca-board/core'
+import type { AppSettings, AppSettingsPatch, Project } from '../../shared/ipc'
+import { Icon } from '../icons'
+import { ipcErrorMessage } from '../useAutoSave'
+import { NavItem, storeSection, type NavEntry } from '../about/parts'
+import {
+  SETTINGS_SECTION_KEY, TASK_TYPE_TABS, libraryRoles, settingsTypeSection, pickTaskTypeId, taskTypeUsage, presetTaskTypeInput, type TaskTypeTab
+} from '../taskTypeEdit'
+import { GeneralSection } from './GeneralSection'
+import { AppearanceSection } from './AppearanceSection'
+import { NotificationsSection } from './NotificationsSection'
+import { UpdatesSection } from './UpdatesSection'
+import { AssistantSection } from './AssistantSection'
+import { NodeTemplatesSection } from './NodeTemplatesSection'
+import { useNodeTemplates } from './useNodeTemplates'
+import { TaskTypePane } from './TaskTypePane'
+import { useTaskTypes } from './useTaskTypes'
+import { useT } from '../i18n'
+import { saveAppSettings } from '../appSettingsSave'
+import { assistantSavePatch } from '../assistantSettings'
+import { extraArgsSupported } from '../extraArgsHints'
+import { builtinText } from '../defaultTitles'
+import { versionLabel } from '../updateState'
+import type { UpdatesController } from '../useUpdates'
+import { PopupMenu, type PopupItem } from '../PopupMenu'
+
+/** Раздел меню: общие настройки, внешний вид, уведомления, обновления, ассистент, свои ноды или тип задачи (`type:<id>`). */
+type Section = 'general' | 'appearance' | 'notifications' | 'updates' | 'assistant' | 'nodes' | `type:${string}`
+
+const TAB_KEY = 'orca.settingsTypeTab'
+const TYPE = 'type:'
+/** Префикс разделов шаблонов проектов до типов задач: id встроенных и перенесённых шаблонов совпадают с id типов. */
+const OLD_TPL = 'tpl:'
+
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/** Запомненный раздел. Старые разделы шаблонов (`tpl:<id>`) и «Для новых проектов» ведут в типы задач. */
+function initialSection(): Section {
+  const v = stored(SETTINGS_SECTION_KEY)
+  if (v === 'general' || v === 'appearance' || v === 'notifications' || v === 'updates' || v === 'assistant' || v === 'nodes') return v
+  if (v?.startsWith(TYPE)) return v as Section
+  if (v?.startsWith(OLD_TPL)) return `${TYPE}${v.slice(OLD_TPL.length)}`
+  return v ? `${TYPE}` : 'general'
+}
+
+function initialTab(): TaskTypeTab {
+  const v = stored(TAB_KEY)
+  return TASK_TYPE_TABS.find((t) => t === v) ?? 'roles'
+}
+
+interface Props {
+  /** Системное меню ведёт прямо в обновления, даже если настройки уже открыты на другом разделе. */
+  sectionRequest?: WorkflowSectionRequest
+  onWorkflowAssistant(context: WorkflowAssistantContext): void
+  workflowHandoff: boolean
+  onWorkflowAgentSelected(agent: AgentKind): void
+  /** Агенты реестра; у типа своих агентов нет — в выборе все установленные. */
+  agents: AgentInfo[]
+  /** Заново просканировать PATH. */
+  onRefreshAgents(): Promise<void>
+  /** Состояние обновления приложения (общее с плашкой в сайдбаре). */
+  updates: UpdatesController
+  /** Типы изменились: перечитать проекты в приложении (роли типа по умолчанию, выбор типов в «О проекте»). */
+  onProjectsChanged(): Promise<void>
+  /** Настройки приложения записаны: App держит их для подписи терминала ассистента. */
+  onAppSettings?(settings: AppSettings): void
+  /** «Пройти заново» в «Общие»: закрыть настройки и открыть мастер первого запуска. */
+  onRunOnboarding(): void
+  onClose(): void
+}
+
+/**
+ * «Настройки» (шестерёнка в rail): общие настройки приложения и библиотека типов задач (taskTypes:*).
+ * Вид — как у вкладки «О проекте»: меню разделов слева (каждый тип — пункт), раздел справа.
+ */
+export function SettingsModal({ sectionRequest, agents, updates, onProjectsChanged, onAppSettings, onRunOnboarding, onClose, onWorkflowAssistant, workflowHandoff, onWorkflowAgentSelected }: Props): React.JSX.Element {
+  const t = useT()
+  const [section, setSection] = useState<Section>(initialSection)
+  const [workflowRequest, setWorkflowRequest] = useState<Extract<WorkflowSectionRequest, { tab: 'workflow' }> | null>(null)
+  const handledRequest = useRef<number | null>(null)
+  const [tab, setTab] = useState<TaskTypeTab>(initialTab)
+  const [projectList, setProjectList] = useState<Project[]>([])
+  const types = useTaskTypes(reloadProjects)
+  /** Библиотека своих нод: одно состояние на редактор воркфлоу типа и раздел «Свои ноды». */
+  const nodeTemplates = useNodeTemplates()
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
+  const [appError, setAppError] = useState<string | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [presetMenu, setPresetMenu] = useState<{ x: number; y: number } | null>(null)
+  const createButton = useRef<HTMLButtonElement>(null)
+  const creating = useRef(false)
+  const wasCreating = useRef(false)
+
+  useEffect(() => {
+    // После async-создания кнопка снова доступна; не уводим фокус, если человек уже перешёл к другому полю.
+    if (wasCreating.current && !createBusy && document.activeElement === document.body) createButton.current?.focus({ preventScroll: true })
+    wasCreating.current = createBusy
+  }, [createBusy])
+
+  useEffect(() => {
+    if (!sectionRequest || handledRequest.current === sectionRequest.nonce) return
+    handledRequest.current = sectionRequest.nonce
+    go(sectionRequest.section)
+    if ('tab' in sectionRequest) {
+      goTab(sectionRequest.tab)
+      setWorkflowRequest(sectionRequest)
+    }
+  }, [sectionRequest])
+
+  useEffect(() => {
+    getUiApi().app.getSettings().then(setAppSettings, (e) => setAppError(ipcErrorMessage(e)))
+    getUiApi().projects.list().then((r) => setProjectList(r.projects), () => undefined)
+    // Настройки/проекты/типы задач/шаблоны нод правит и CLI/ассистент, пока это окно открыто
+    // (`app:changed`, опционален — старый preload).
+    return getUiApi().app.onChanged?.(() => {
+      getUiApi().app.getSettings().then(setAppSettings, () => undefined)
+      void reloadProjects()
+      void types.reload()
+      void nodeTemplates.reload()
+    })
+  }, [])
+
+  // Вложенные формы и холст гасят свой Escape раньше: настройки закрываются только свободным нажатием.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !e.isComposing) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  function go(s: Section): void {
+    setSection(s)
+    setWorkflowRequest(null)
+    storeSection(SETTINGS_SECTION_KEY, s)
+  }
+
+  function goTab(t: TaskTypeTab): void {
+    setTab(t)
+    storeSection(TAB_KEY, t)
+  }
+
+  /** Снимок применён редактором; nonce оставляем, чтобы его снятие не меняло key живого черновика. */
+  function workflowRestoreApplied(nonce: number): void {
+    setWorkflowRequest((current) => current?.nonce === nonce && current.restore
+      ? { section: current.section, tab: current.tab, nonce: current.nonce }
+      : current)
+  }
+
+  /** Показать тип; null — тип по умолчанию. */
+  function selectType(id: string | null): void {
+    go(settingsTypeSection(id ?? ''))
+  }
+
+  /** После записи в библиотеку: свой список проектов (использование) и список приложения (доска, «О проекте»). */
+  async function reloadProjects(): Promise<void> {
+    setProjectList((await getUiApi().projects.list()).projects)
+    await onProjectsChanged()
+  }
+
+  async function saveApp(patch: AppSettingsPatch): Promise<void> {
+    const res = await saveAppSettings(getUiApi().app, patch)
+    if (res.settings) applySettings(res.settings)
+    setAppError(res.error)
+  }
+
+  function applySettings(next: AppSettings): void {
+    setAppSettings(next)
+    onAppSettings?.(next)
+  }
+
+  /** Ассистент сохраняется автосохранением редактора: сбой бросаем — его покажет сам редактор. */
+  async function saveAssistant(assistant: AssistantSettings): Promise<void> {
+    const res = await saveAppSettings(getUiApi().app, { assistant: assistantSavePatch(assistant, extraArgsSupported(agents)) })
+    if (res.settings) applySettings(res.settings)
+    if (res.error) throw new Error(res.error)
+  }
+
+  async function createType(presetId?: string): Promise<void> {
+    if (!types.state || creating.current) return
+    creating.current = true
+    setCreateBusy(true)
+    try {
+      const input = presetId
+        ? presetTaskTypeInput(presetId, types.state.taskTypes)
+        : { title: t('settings.newTypeTitle'), settings: {} }
+      const created = await types.create(input)
+      setCreateError(null)
+      selectType(created.id)
+    } catch (e) {
+      setCreateError(ipcErrorMessage(e))
+    } finally {
+      creating.current = false
+      setCreateBusy(false)
+    }
+  }
+
+  function closePresetMenu(restoreFocus: boolean): void {
+    setPresetMenu(null)
+    if (restoreFocus) createButton.current?.focus({ preventScroll: true })
+  }
+
+  const presetItems: PopupItem[] = [
+    { id: 'assistant', label: t('settings.presets.assistant') },
+    { id: 'empty', label: t('settings.presets.empty') },
+    ...presetTaskTypes().map((preset, index) => ({
+      id: preset.id, label: builtinText(preset.title),
+      ...(index === 0 ? { separatorBefore: true, heading: t('settings.presets.current') } : {})
+    }))
+  ]
+
+  // ---------- типы ----------
+
+  const state = types.state
+  const usage = state ? taskTypeUsage(projectList, state) : {}
+  const exactRequest = workflowRequest?.section === section ? workflowRequest : null
+  const currentId = state && section.startsWith(TYPE) ? (exactRequest ? section.slice(TYPE.length) : pickTaskTypeId(state, section.slice(TYPE.length))) : null
+  const current: TaskType | undefined = state?.taskTypes.find((t) => t.id === currentId)
+
+  // Роли для фильтра уведомлений: роли всех типов библиотеки; старый main без типов — встроенные.
+  const notifyRoles: Role[] = state ? libraryRoles(state.taskTypes) : DEFAULT_ROLES
+
+  // ---------- меню ----------
+
+  const general: NavEntry<Section> = { id: 'general', label: t('settings.nav.general'), icon: Icon.gear }
+  const appearanceNav: NavEntry<Section> = { id: 'appearance', label: t('settings.nav.appearance'), icon: Icon.palette }
+  const notifyOn = appSettings?.notifications.enabled
+  const notifications: NavEntry<Section> = {
+    id: 'notifications', label: t('settings.nav.notifications'), icon: Icon.bell,
+    count: notifyOn === undefined ? undefined : notifyOn ? t('common.on') : t('common.off')
+  }
+  const updateState = updates.state
+  const updatesNav: NavEntry<Section> = {
+    id: 'updates', label: t('settings.nav.updates'), icon: Icon.download,
+    count: updateState?.availableVersion ? versionLabel(updateState.availableVersion, false) : undefined,
+    tone: updateState?.status === 'available' || updateState?.status === 'ready' ? 'warn' : undefined
+  }
+  const assistantNav: NavEntry<Section> = { id: 'assistant', label: t('settings.nav.assistant'), icon: Icon.assistant }
+  const nodesNav: NavEntry<Section> = {
+    id: 'nodes', label: t('settings.nav.nodeTemplates'), icon: Icon.star,
+    count: nodeTemplates.templates ? String(nodeTemplates.templates.length) : undefined
+  }
+  /** Текущий пункт меню: у типа — с фактическим id (пустой `type:` после удаления — тип по умолчанию). */
+  const navCurrent: Section = currentId ? `${TYPE}${currentId}` : section
+  const typeItem = (type: TaskType): React.JSX.Element => {
+    const u = usage[type.id]
+    const item: NavEntry<Section> = {
+      id: `${TYPE}${type.id}`, label: builtinText(type.title), icon: Icon.layers,
+      count: state?.defaultTaskTypeId === type.id ? t('settings.nav.defaultType') : u?.asDefault ? String(u.asDefault) : undefined,
+      title: [type.description && builtinText(type.description), u?.asDefault ? t('settings.nav.typeUsage', { count: u.asDefault }) : ''].filter(Boolean).join('\n') || undefined
+    }
+    return <NavItem key={type.id} item={item} current={navCurrent} onGo={go} />
+  }
+
+  function renderType(): React.ReactNode {
+    if (state && exactRequest && !requestedWorkflowTypeExists(state.taskTypes.map((type) => type.id), exactRequest.section.slice(TYPE.length))) {
+      return <div className="editor-error" role="alert">{t('config.taskType.notFound', { id: exactRequest.section.slice(TYPE.length) })}</div>
+    }
+    if (!state || !current) {
+      return types.error ? <div className="editor-error">{types.error}</div> : <div className="muted">{t('common.loading')}</div>
+    }
+    return (
+      <TaskTypePane
+        type={current}
+        workflowRequest={exactRequest ?? undefined}
+        onWorkflowRestoreApplied={workflowRestoreApplied}
+        onWorkflowAssistant={onWorkflowAssistant}
+        state={state}
+        usage={usage[current.id]}
+        agents={agents}
+        tab={tab}
+        onTab={goTab}
+        api={types}
+        onSelect={selectType}
+        projects={projectList}
+        nodeTemplates={nodeTemplates}
+      />
+    )
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={t('settings.title')}>
+        <div className="settings-head">
+          <h3>{t('settings.title')}</h3>
+          <button className="icon-btn task-modal-close" title={t('common.close')} aria-label={t('common.close')} onClick={onClose}>
+            <Icon.close />
+          </button>
+        </div>
+        {/* Контейнер @container about: на узком окне меню становится полосой над разделом, как во вкладке. */}
+        <div className="about-host">
+          <div className="about">
+            <nav className="about-nav" aria-label={t('settings.nav.aria')}>
+              <NavItem item={general} current={section} onGo={go} />
+              <NavItem item={appearanceNav} current={section} onGo={go} />
+              <NavItem item={notifications} current={section} showCount={!!appSettings} onGo={go} />
+              <NavItem item={updatesNav} current={section} onGo={go} />
+              <NavItem item={assistantNav} current={section} onGo={go} />
+              <div className="about-nav-group">{t('settings.nav.taskTypes')}</div>
+              {types.stale || (!state && types.error) ? (
+                <NavItem item={{ id: `${TYPE}`, label: t('settings.nav.taskTypes'), icon: Icon.layers }} current={navCurrent} onGo={go} />
+              ) : (
+                <div className="tpl-nav">
+                  {state?.taskTypes.map(typeItem)}
+                  <button
+                    ref={createButton} type="button" className="about-nav-item tpl-nav-add" disabled={!state || createBusy}
+                    aria-haspopup="menu" aria-expanded={!!presetMenu} aria-busy={createBusy || undefined}
+                    onClick={() => {
+                      const rect = createButton.current?.getBoundingClientRect()
+                      if (rect) setPresetMenu({ x: rect.left, y: rect.bottom + 4 })
+                    }}
+                  >
+                    <Icon.plus />
+                    <span className="about-nav-label">{t('settings.nav.newType')}</span>
+                  </button>
+                  {createError && <div className="editor-error tpl-nav-error" role="alert">{createError}</div>}
+                </div>
+              )}
+              <NavItem item={nodesNav} current={section} showCount={nodeTemplates.templates !== null} onGo={go} />
+            </nav>
+            <div className="about-pane">
+              <section className="about-sec">
+                {section === 'general' ? (
+                  <GeneralSection settings={appSettings} error={appError} onChange={(p) => void saveApp(p)} onRunOnboarding={onRunOnboarding} />
+                ) : section === 'appearance' ? (
+                  <AppearanceSection settings={appSettings} error={appError} onChange={saveApp} />
+                ) : section === 'notifications' ? (
+                  <NotificationsSection
+                    settings={appSettings}
+                    roles={notifyRoles}
+                    error={appError}
+                    onChange={(p) => void saveApp({ notifications: p })}
+                  />
+                ) : section === 'updates' ? (
+                  <UpdatesSection settings={appSettings} updates={updates} error={appError} onChange={(p) => void saveApp({ updates: p })} />
+                ) : section === 'assistant' ? (
+                  <AssistantSection workflowHandoff={workflowHandoff} onAgentSelected={onWorkflowAgentSelected} settings={appSettings} agents={agents} error={appError} onSave={saveAssistant} />
+                ) : section === 'nodes' ? (
+                  <NodeTemplatesSection library={nodeTemplates} />
+                ) : (
+                  renderType()
+                )}
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
+      {presetMenu && (
+        <PopupMenu
+          {...presetMenu} ariaLabel={t('settings.presets.aria')} items={presetItems}
+          onPick={(id) => { closePresetMenu(id !== 'assistant'); if (id === 'assistant') onWorkflowAssistant({ mode: 'create' }); else void createType(id === 'empty' ? undefined : id) }}
+          onClose={closePresetMenu}
+        />
+      )}
+    </div>
+  )
+}

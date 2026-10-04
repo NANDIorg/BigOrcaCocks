@@ -16,9 +16,14 @@
   <a href="#установка">Установка</a> · <a href="#как-это-работает">Как это работает</a> · <a href="#документация">Документация</a>
 </p>
 
-orca-board — десктоп-приложение, в котором задача на доске — это CLI-агент (Claude Code, Codex, OpenCode и другие)
+orca-board — оркестратор, в котором задача на доске — это CLI-агент (Claude Code, Codex, OpenCode и другие)
 в своём git worktree. Вы ставите цель, агент-координатор раскладывает её на подзадачи, воркеры делают их параллельно,
 а ревью и решения остаются за вами.
+
+Сейчас пользовательский продукт — **Desktop для macOS и Windows**. Репозиторий также содержит
+общий backend, клиент и интерфейс, а также самостоятельный Node.js host. На этой базе следующим
+этапом строится Web для собственного сервера и позже отдельный терминальный CLI.
+Web-сайт и терминальный чат ещё не реализованы; существующая команда `orca-board` служит агентам.
 
 - **Задача = агент в своём worktree.** Каждая подзадача — отдельная ветка и терминал, агенты не мешают друг другу.
 - **По вашей подписке.** Приложение не знает про API-ключи: оно запускает CLI-агента в PTY, как обычный терминал.
@@ -53,7 +58,7 @@ orca-board — десктоп-приложение, в котором задач
 | Windows x64 | `orca-board-<версия>-x64.exe` | установщик NSIS, можно выбрать папку; без подписи кода |
 | Windows x64 | `orca-board-<версия>-portable-x64.exe` | запускается без установки; без подписи кода |
 
-Linux-сборки нет. Быстрый старт:
+Desktop-сборки Linux нет; Node host проверяется на Linux отдельно. Быстрый старт Desktop:
 
 1. Поставьте **git** и хотя бы один CLI-агент — нужен **`claude`** (Claude Code с подпиской): на нём по умолчанию
    работает координатор. Node не нужен: CLI `orca-board` внутри приложения работает на Node из Electron.
@@ -179,6 +184,10 @@ pnpm verify    # перед PR: git-flow, typecheck, тесты, сборка �
 | `pnpm --filter @orca-board/desktop run pack` | локальная ad-hoc `.app` в `apps/desktop/release/local/`, не для распространения |
 | `pnpm --filter @orca-board/desktop run dist:mac` | dmg и zip arm64/x64 с подписью и нотаризацией; без credentials падает |
 | `pnpm --filter @orca-board/desktop run dist:win` | NSIS и portable x64 в `apps/desktop/release/`; собирается и с macOS |
+| `pnpm --filter @orca-board/headless build` | самостоятельный Node.js artifact в `apps/headless/dist/`, без Electron |
+
+Запуск установленного Node host и границы общей логики — [docs/shared-foundation.md](docs/shared-foundation.md).
+Его native зависимости устанавливаются отдельно от Desktop: Electron и Node.js используют разные ABI.
 
 Сборки ничего не публикуют: черновик релиза создаёт CI — [docs/releasing.md](docs/releasing.md). Процесс веток и PR —
 [docs/git-flow.md](docs/git-flow.md), вход для разработчика — [CONTRIBUTING.md](CONTRIBUTING.md), для агентов —
@@ -190,21 +199,29 @@ pnpm verify    # перед PR: git-flow, typecheck, тесты, сборка �
 
 | Слой | Технология |
 |---|---|
-| Оболочка | Electron + electron-vite |
-| UI | React + TypeScript |
-| Терминал | xterm.js + node-pty |
-| Состояние | JSON-файлы в userData Electron: задачи, события и настройки переживают рестарт |
-| CLI | `orca-board` — голый Node из Electron, кладётся в ресурсы приложения |
-| Связь CLI ↔ приложение | unix socket (Windows — named pipe) + JSON-RPC |
+| Desktop | Electron + electron-vite; окна, трей, системные диалоги и обновления |
+| Общий UI | React 19 + TypeScript, CSS, ru/en, xterm.js; `packages/ui` |
+| Домен и backend | `packages/core` + `packages/runtime`: задачи, workflow, процессы агентов, Git, хранение и команды |
+| Серверный host | Node.js 24, esbuild artifact; `apps/headless` |
+| Терминальные процессы | node-pty, отдельные native установки для Node.js и Electron |
+| Состояние | JSON-файлы в профиле runtime; Desktop использует userData Electron; один владелец профиля |
+| Клиент оператора | `packages/client` + `contracts`, typed API, HTTP/IPC, revisions, повторная доставка и snapshot/replay |
+| Агентский CLI | `orca-board` — JS без зависимостей, запускается Node из Electron или Node host |
+| Связь агентов ↔ backend | Unix socket (Windows — named pipe) + прежний JSON-RPC; отдельно от operator API |
 </details>
 
 <details>
 <summary>Структура репозитория</summary>
 
 ```
-apps/desktop/      Electron-приложение (main, preload, renderer)
-packages/core/     модель задач, store, миграции, события и графы воркфлоу
-packages/cli/      команда orca-board
+apps/desktop/      Electron host, preload и точка подключения общего UI
+apps/headless/     самостоятельный Node host, сборка установленного artifact
+packages/core/     доменная модель, store, миграции, события, workflow и промпты
+packages/contracts/ browser-safe DTO, команды и operator protocol
+packages/runtime/  общий Node backend: application services, Git, PTY, диалоги, файлы
+packages/client/   browser-safe клиент, HTTP/IPC и platform ports
+packages/ui/       общий React UI, CSS, i18n, assets и presentation helpers
+packages/cli/      существующая агентская команда orca-board (JS без зависимостей)
 skills/            встроенные инструкции координатора, воркера и ассистента
 docs/              архитектура и решения
 scripts/           проверки Git Flow и macOS-релиза
@@ -216,6 +233,8 @@ scripts/           проверки Git Flow и macOS-релиза
 
 | Файл | О чём |
 |---|---|
+| [docs/shared-foundation.md](docs/shared-foundation.md) | карта общих слоёв, Node host, границы Desktop/Web/CLI и следующие шаги |
+| [docs/orca-foundation-progress.md](docs/orca-foundation-progress.md) | готовность фундамента и результаты проверок |
 | [docs/architecture.md](docs/architecture.md) | процессы, модель, IPC, сокет, CLI, сборка, грабли |
 | [docs/nested-kanban.md](docs/nested-kanban.md) | глобальные задачи и подзадачи |
 | [docs/workflow.md](docs/workflow.md) | граф воркфлоу: этапы, проверки, мерж |
@@ -228,6 +247,10 @@ scripts/           проверки Git Flow и macOS-релиза
 
 - Текущая версия — на бейдже релиза; первая подписанная сборка macOS — 1.0.1.
 - Windows собирается и проходит CI, но на живой машине проверена мало.
+- Общий фундамент реализован; новый Web и терминальный CLI разрабатываются отдельно в этом монорепозитории.
+- Operator endpoint Node host пока приватный и доступен на loopback. Публичный вход, авторизация,
+  HTTPS, серверные пути и Web-адаптер общего UI входят в следующий этап для собственного сервера.
+- Версии Desktop/Web/CLI независимы; общий protocol/schema проверяется при подключении. Сейчас публикуется Desktop.
 - Мерж локальный: приложение ничего не пушит и не открывает PR, пока этого не делает нода `git` вашего графа.
 - Ошибки и предложения — в [issues](https://github.com/NANDIorg/BigOrcaCocks/issues).
 

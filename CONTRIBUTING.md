@@ -23,3 +23,34 @@
 
 Изменение процесса тоже проходит PR. Не создавай копии правил в персональных промптах:
 дай агенту ссылку на `AGENTS.md` и документы из него.
+
+Общий фундамент уже реализован. Доменная модель и store — `packages/core`, browser-safe
+контракты — `packages/contracts`, application services и Node backend — `packages/runtime`,
+HTTP/IPC client — `packages/client`, React/CSS/i18n/assets — `packages/ui`.
+`apps/desktop` подключает backend и UI к Electron, `apps/headless` запускает тот же backend
+без окна. Карта зависимостей, запуск Node host и оставшаяся работа над Web/CLI —
+[docs/shared-foundation.md](docs/shared-foundation.md).
+
+Размещай общую бизнес-логику в core/runtime, клиентские контракты — в contracts,
+представление — в UI. Runtime не импортирует Electron/Desktop; contracts/client/UI
+не импортируют Node backend даже через type-only exports. Browser-safe части core
+проверяются транзитивно. Native PTY передаёт host; Node и Electron устанавливают
+его в разные корни, описанные в [архитектуре](docs/architecture.md).
+
+Desktop shared-модули сохраняют совместимые экспорты; API и platform ports теперь
+определены в client, общие UI-токены — в `packages/ui/shared`. Старый preload поддерживается
+через UI-адаптер, пока отдельные экраны подключаются к typed operator client.
+Web должен реализовать свой adapter, авторизацию и серверные file actions.
+
+Для локальной проверки одного пакета используй `pnpm --filter @orca-board/<пакет> test`
+или `typecheck`; перед PR обязательный `pnpm verify` проверяет все workspace-пакеты,
+границы импортов и сборки. После правок docs/skills/HELP обязательно проверяются
+тесты core, которые сверяют документированные команды с реальным агентским CLI.
+После всей пользовательской задачи собери и открой локальный Desktop по [AGENTS.md](AGENTS.md);
+ручную проверку интерфейса выполняет пользователь.
+
+Desktop сохраняет существующий release workflow. Версии, ветки и теги CLI/Web
+отделены product-aware guards; их реальные поставки и workflows добавляются вместе
+с продуктами. Shared packages пока private и встраиваются в сборки приложений.
+Согласованный исходный проект — [спецификация](docs/superpowers/specs/2026-10-02-orca-shared-foundation-design.md),
+фактический результат и проверки — [журнал готовности](docs/orca-foundation-progress.md).

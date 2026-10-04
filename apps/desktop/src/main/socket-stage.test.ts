@@ -1,9 +1,10 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Хендлеры сокета воркфлоу глобальной задачи (`scope: 'run'`):
 // `stage finish`, `workflow show` по прогону, `review accept/reject` по проверке ветки прогона, ошибки `task create`,
-// `runs finish`, запросы без `taskId`, история этапов с решением «Решения ИИ». Настоящий TaskStore и сокет; PTY и git не участвуют.
+// `runs finish`, запросы без `taskId`, история этапов с решением «Решения ИИ». Настоящий TaskStore, сокет и unborn Git для metadata; PTY заменён.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { connect, type Server } from 'node:net'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -55,15 +56,15 @@ function fakeDeps(): ProjectDeps {
     stopWorker: () => ({ stopped: [] }),
     review: () => ({}),
     // Как `reviewDecision` в index.ts для проверки ветки прогона: решение двигает граф и делает эффекты следующей ноды.
-    accept: (taskId, decision) => runGateDecision(workflowDeps(), taskId, 'accept', decision),
-    reject: (taskId, feedback) => {
-      runGateDecision(workflowDeps(), taskId, 'reject', feedback)
+    accept: async (taskId, decision) => await runGateDecision(workflowDeps(), taskId, 'accept', decision),
+    reject: async (taskId, feedback) => {
+      await runGateDecision(workflowDeps(), taskId, 'reject', feedback)
       return store.getTask(taskId)
     },
     // Как в index.ts: `finishRunStage` движка — эффекты новой ноды (задача-проверка) делает он, а не тест.
-    finishStage: (runId, summary, nodeId) => {
+    finishStage: async (runId, summary, nodeId) => {
       finishCalls.push({ runId, ...(summary !== undefined ? { summary } : {}), ...(nodeId !== undefined ? { nodeId } : {}) })
-      return finishRunStage(workflowDeps(), runId, summary, nodeId)
+      return await finishRunStage(workflowDeps(), runId, summary, nodeId)
     },
     resolveRequest: (id, resolution) => store.resolveRequest(id, resolution),
     startCoordinator: () => 'pty_coord',
@@ -120,6 +121,7 @@ beforeEach(async () => {
   finishCalls = []
   taskTypes = []
   tmp = mkdtempSync(path.join(tmpdir(), 'orca-sock-stage-'))
+  execFileSync('git', ['init', '-q', '-b', 'master', tmp], { stdio: 'pipe' })
   sockPath = process.platform === 'win32' ? `\\\\.\\pipe\\orca-sock-stage-${process.pid}-${Date.now()}` : path.join(tmp, 'orca.sock')
   store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
   roles = DEFAULT_ROLES
@@ -390,7 +392,7 @@ describe('review accept/reject по проверке ветки глобальн
     const { run, gate } = await atGate()
     // Сдала done, решения нет: граф остаётся на проверке, человек получает workflow_blocked (без taskId).
     store.finishDispatch(store.getTask(gate.id)!.dispatchId!, 'проверил', [])
-    handleRunWorkflowEvents(workflowDeps(), events('worker_done'))
+    await handleRunWorkflowEvents(workflowDeps(), events('worker_done'))
     assert.equal(store.getRun(run.id)!.stage!.nodeId, 'review')
     const blocked = events('workflow_blocked').at(-1)!
     assert.equal(blocked.taskId, undefined)
@@ -407,7 +409,7 @@ describe('review accept/reject по проверке ветки глобальн
     assert.equal((await call('review.accept', { task: gate.id })).ok, true)
     assert.equal(store.columnKind(store.getTask(gate.id)!.status), 'in_progress')
     store.finishDispatch(store.getTask(gate.id)!.dispatchId!, 'проверил', [])
-    handleRunWorkflowEvents(workflowDeps(), events('worker_done'))
+    await handleRunWorkflowEvents(workflowDeps(), events('worker_done'))
     assert.equal(store.columnKind(store.getTask(gate.id)!.status), 'done')
     assert.equal(events('workflow_blocked').length, 0)
     assert.equal(store.getRun(run.id)!.stage!.nodeId, 'check')
