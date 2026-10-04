@@ -138,3 +138,20 @@ legacy CLI, writer duplicate, disconnect и ownership/restart проверены
 есть в `/private/tmp/orca-foundation-final-evidence-alf3fz_a` и
 `/private/tmp/orca-docs-refresh.qZEuri`; эти временные каталоги не являются единственным
 источником контекста и не нужны для сборки/продолжения.
+
+## Возобновление Web 4 октября 2026
+
+Desktop 2.0.0 собран в Draft, tag `v2.0.0` — master merge `1c726cc`; история
+вернулась в develop через PR #62, merge `57f6d1b`. Релизные проверки и ограничения
+ручной приёмки сохранены в [PR #61](https://github.com/NANDIorg/BigOrcaCocks/pull/61).
+
+Пользователь продолжил разработку и уточнил поставку: Web должен устанавливаться
+любым владельцем собственного сервера с небольшой первоначальной настройкой.
+Сервера пока нет; первым выбран обычный Linux-сервис с установщиком. Агенты работают
+под Unix-пользователем сервера. Docker остаётся дополнительным будущим способом.
+
+Создана `feature/web-self-hosted` от `57f6d1b` в отдельном worktree.
+[Предложение архитектуры Web](superpowers/specs/2026-10-04-orca-web-self-hosted-design.md)
+ожидает проверки пользователем. Рубежи W1–W6: host/auth → UI/projects → streams →
+files/preview → installer → update/acceptance. Первый implementation plan относится
+к W1; Web-код пока не реализован, повторять A–F не нужно.
