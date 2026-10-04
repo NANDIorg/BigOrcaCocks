@@ -50,6 +50,11 @@ Desktop session/assistant каналы подключены к common commands �
 окна освобождает только leases. Внутренний worker answer nudge остаётся owner effect,
 а ввод из UI проверяет principal/payload и writer до native write.
 
+Первый шаг async рубежа: project fetch/pull/checkout/initialCommit используют commonDir
+очередь вместо строки root. Canonical lookup асинхронен; реальный блокирующий commit
+hook не останавливает heartbeat/PTY/другой repo. Workflow Git effects и их token/
+restart reconciliation остаются следующим переносом, существующий executor пока sync.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

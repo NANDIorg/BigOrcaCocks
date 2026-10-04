@@ -67,6 +67,11 @@ Desktop assistantChat send/respond теперь вызывает общий comp
 PTY input/resize auto claim не выполняется для malformed payload, а отказ event
 пишется в logger. Отключение окна освобождает его writer, pending запрос остаётся.
 
+Очередь async Git проекта привязана к canonical commonDir, а не выбранному клиентом
+root; ожидание ответа человека в неё не входит. Долгий Git hook в одной операции
+не блокирует terminal output/event loop и мутации другого repo. Существующие policy
+и registration guards повторяются после ожидания очереди до mutation.
+
 ## Модель
 
 ```ts

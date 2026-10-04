@@ -367,8 +367,11 @@ ProjectGitCommands используют явный context и захватыва
 открытия TaskStore. Scope guard вызывается внутри Git очереди перед fetch, merge,
 checkout и шагами начального коммита; remove/readd, root replacement и отзыв policy
 не запускают позднюю mutation. Число живых агентов пересчитывается перед checkout,
-а не хранится от момента клика. Git queue пока прежняя по root; общий async
-commonDir/effect reconciliation — следующий рубеж B.
+а не хранится от момента клика. Async fetch/pull/checkout/initialCommit используют
+owner GitOperationQueue по canonical commonDir: root, linked worktree и symlink
+сериализуются вместе, независимые repo параллельны. Canonical probe — async execFile
+без shell, затем realpath; failed job освобождает очередь. Sync worker/workflow/review
+Git ещё переводится на async с EffectToken/reconciliation в рубеже B.
 
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи

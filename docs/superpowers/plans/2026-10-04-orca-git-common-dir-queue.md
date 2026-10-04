@@ -1,6 +1,6 @@
 # Очередь Git по canonical commonDir
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** root, linked worktree и symlink одного repo используют одну очередь мутаций; независимые repo исполняются параллельно.
 
@@ -32,10 +32,10 @@
 
 **Interfaces:** `canonicalGitCommonDir(root:string):Promise<string>` возвращает realpath Git commonDir. `createGitOperationQueue():GitOperationQueue`, `enqueue<T>(canonicalCommonDir:string, operation:()=>Promise<T>):Promise<T>` сериализует только одинаковые ключи, failure не отравляет очередь. `createGitOperations(messages, queue?:GitOperationQueue)` использует owner queue в serial после async canonical lookup; lookup failure → messages.error('git.notRepo',{path:root}). Existing methods/DTO/guard callbacks сохраняются.
 
-- [ ] **Step 1:** Real temp Git root + linked worktree + symlink (junction Windows), actual refs/index: equal canonical key; held queue mutation blocks project initialCommit alias/worktree, independent B succeeds; rejection allows next actual ref update. Actual pre-commit Node gate fixture proves heartbeat/session output while Git waits. Non-repo errors and queued stale registration/policy leave HEAD/index intact.
-- [ ] **Step 2:** `node --test packages/runtime/test/git-operation-queue.test.ts`; Expected FAIL missing exported queue/canonical resolver.
-- [ ] **Step 3:** Implement async canonical resolver, owner FIFO Promise tail map with cleanup on success/failure; inject queue into Git factory and replace rootQueues. Preserve current runGit formatting/stdin/timeouts and command guards. No sync-to-async workflow signature changes in this plan.
-- [ ] **Step 4:** `node --test packages/runtime/test/git-operation-queue.test.ts packages/runtime/test/project-run-agent-commands.test.ts packages/runtime/test/git.test.ts packages/runtime/test/import-boundaries.test.ts`; runtime/Desktop types and core docs. Expected PASS; add existing Desktop Git suite for old errors/checkout/initialCommit. No full verify repeat until next integrated async transfer requires it.
-- [ ] **Step 5:** Diff/staged diff, code+tests+docs commit; task-done affected suite. Dashboard B stays in progress, continue async backend/effect identity.
+- [x] **Step 1:** Real temp Git root + linked worktree + symlink (junction Windows), actual refs/index: equal canonical key; held queue mutation blocks project initialCommit alias/worktree, independent B succeeds; rejection allows next actual ref update. Actual pre-commit Node gate fixture proves heartbeat/session output while Git waits. Non-repo errors and queued stale registration/policy leave HEAD/index intact.
+- [x] **Step 2:** `node --test packages/runtime/test/git-operation-queue.test.ts`; Expected FAIL missing exported queue/canonical resolver.
+- [x] **Step 3:** Implement async canonical resolver, owner FIFO Promise tail map with cleanup on success/failure; inject queue into Git factory and replace rootQueues. Preserve current runGit formatting/stdin/timeouts and command guards. No sync-to-async workflow signature changes in this plan.
+- [x] **Step 4:** `node --test packages/runtime/test/git-operation-queue.test.ts packages/runtime/test/project-run-agent-commands.test.ts packages/runtime/test/git.test.ts packages/runtime/test/import-boundaries.test.ts`; runtime/Desktop types and core docs. Expected PASS; add existing Desktop Git suite for old errors/checkout/initialCommit. No full verify repeat until next integrated async transfer requires it.
+- [x] **Step 5:** Diff/staged diff, code+tests+docs commit; task-done affected suite. Dashboard B stays in progress, continue async backend/effect identity.
 
 Self-review: actual queue is consumed by existing project mutations, not an unused alternative. Canonical key is filesystem/Git identity, not display root. Pending Promise tails are dropped after last operation; no persistent lock, timer, global selection or worker wait introduced. Full B requires later async launch/review/workflow and EffectToken/reconciliation.

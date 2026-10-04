@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBranchUpstream, ProjectGitResult, ProjectLocalBranch } from '@orca-board/contracts'
+import { canonicalGitCommonDir, createGitOperationQueue, type GitOperationQueue } from './git-operation-queue.ts'
 
 /** Коды прежних Git-отказов; способ отображения и класс ошибки задаёт host. */
 export type GitErrorCode = 'git.branchBusy' | 'git.branchNotFound' | 'git.dirtyTree' | 'git.noCommits' | 'git.noUpstream' | 'git.notFastForward' | 'git.notRepo' | 'git.opFailed' | 'git.timeout' | 'git.workersActive'
@@ -44,7 +45,7 @@ export class MergeError extends Error {
 export class GitOpError extends Error {}
 
 /** Один экземпляр операций на owner; callbacks не привязывают runtime к глобальному языку Desktop. */
-export function createGitOperations(messages: GitMessages) {
+export function createGitOperations(messages: GitMessages, operationQueue: GitOperationQueue = createGitOperationQueue()) {
   // git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
   // сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
   function git(cwd: string, args: string[], timeoutMs?: number): string {
@@ -462,17 +463,12 @@ export function createGitOperations(messages: GitMessages) {
     return messages.error('git.opFailed', { command: shown.join(' '), error })
   }
 
-  /** Операции над одним корнем идут по очереди: двойной клик «fetch» или checkout во время pull не должны драться за index.lock. */
-  const rootQueues = new Map<string, Promise<unknown>>()
-
-  function serial<T>(root: string, fn: () => Promise<T>): Promise<T> {
-    const next = (rootQueues.get(root) ?? Promise.resolve()).catch(() => undefined).then(fn)
-    rootQueues.set(root, next)
-    const cleanup = (): void => {
-      if (rootQueues.get(root) === next) rootQueues.delete(root)
-    }
-    next.then(cleanup, cleanup)
-    return next
+  /** Очередь одна для общего repo, включая linked worktree и symlink; другие repo не ждут. */
+  async function serial<T>(root: string, fn: () => Promise<T>): Promise<T> {
+    let key: string
+    try { key = await canonicalGitCommonDir(root) }
+    catch { throw messages.error('git.notRepo', { path: root }) }
+    return operationQueue.enqueue(key, fn)
   }
 
   function assertRepo(root: string): void {

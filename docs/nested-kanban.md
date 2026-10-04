@@ -39,6 +39,11 @@ adapter, что CRUD глобальной задачи. OS получает то
 file guard; чужой frame не читает selection/store. PTY ввод Desktop использует
 common writer lease; закрытие окна не завершает координаторов и воркеров.
 
+Async Git проекта использует owner queue общего commonDir, включая linked worktree
+и symlink. Независимые репозитории не ждут друг друга, failure не отравляет следующий
+job. Sync ветвление/merge global task и worker ещё переводятся на ту же очередь;
+готовность всего async рубежа этим шагом не объявляется.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime
