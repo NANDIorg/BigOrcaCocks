@@ -9,12 +9,12 @@ import { profileFixture, operator } from './profile-command-test-host.ts'
 
 test('root/linked worktree/symlink resolve one canonical commonDir', async t => {
   const f = gitQueueFixture(t); const expected = realpathSync(join(f.root, '.git'))
-  assert.deepEqual(await Promise.all([f.root, f.linked, f.alias].map(runtime.canonicalGitCommonDir)), [expected, expected, expected])
+  assert.deepEqual(await Promise.all([f.root, f.linked, f.alias].map(root => runtime.canonicalGitCommonDir(root))), [expected, expected, expected])
   assert.notEqual(await runtime.canonicalGitCommonDir(f.other), expected)
 })
 test('one repo FIFO across aliases; independent repo mutation proceeds while first waits', async t => {
   const f = gitQueueFixture(t); const release = deferred(); const entered = deferred()
-  const [a, linked, alias, b] = await Promise.all([f.root, f.linked, f.alias, f.other].map(runtime.canonicalGitCommonDir))
+  const [a, linked, alias, b] = await Promise.all([f.root, f.linked, f.alias, f.other].map(root => runtime.canonicalGitCommonDir(root)))
   t.after(release.resolve)
   const first = f.queue.enqueue(a, async () => { entered.resolve(); await release.promise; await asyncGit(f.root, 'update-ref', 'refs/heads/first', 'HEAD') })
   await entered.promise

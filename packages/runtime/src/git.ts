@@ -1,9 +1,9 @@
-import { execFile, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { existsSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBranchUpstream, ProjectGitResult, ProjectLocalBranch } from '@orca-board/contracts'
 import { canonicalGitCommonDir, createGitOperationQueue, type GitOperationQueue } from './git-operation-queue.ts'
+import { createGitProcessService, GitProcessError, type GitProcessService } from './git-process.ts'
 
 /** Коды прежних Git-отказов; способ отображения и класс ошибки задаёт host. */
 export type GitErrorCode = 'git.branchBusy' | 'git.branchNotFound' | 'git.dirtyTree' | 'git.noCommits' | 'git.noUpstream' | 'git.notFastForward' | 'git.notRepo' | 'git.opFailed' | 'git.timeout' | 'git.workersActive'
@@ -45,7 +45,7 @@ export class MergeError extends Error {
 export class GitOpError extends Error {}
 
 /** Один экземпляр операций на owner; callbacks не привязывают runtime к глобальному языку Desktop. */
-export function createGitOperations(messages: GitMessages, operationQueue: GitOperationQueue = createGitOperationQueue()) {
+export function createGitOperations(messages: GitMessages, operationQueue: GitOperationQueue = createGitOperationQueue(), processes: GitProcessService = createGitProcessService()) {
   // git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
   // сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
   function git(cwd: string, args: string[], timeoutMs?: number): string {
@@ -401,8 +401,6 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
 
   // ---------- git корня проекта: ветки, fetch, pull, checkout (IPC `projects:branches` и др.) ----------
 
-  const execFileAsync = promisify(execFile)
-
   /** Сколько ждать сеть (`fetch`/`pull`): зависший remote не должен держать кнопку в UI бесконечно. */
   const NET_TIMEOUT_MS = 120_000
   /** Локальные операции (список веток, checkout) — секунды; таймаут только против зависшего git. */
@@ -411,35 +409,11 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
 
   /**
    * Асинхронно, а не `execFileSync`: `fetch` идёт до двух минут, синхронный вызов заморозил бы окно и терминалы.
-   * `input` — stdin команды (`hash-object --stdin`); без него stdin не закрывается, как было всегда.
+   * `input` — stdin команды (`hash-object --stdin`); service закрывает stdin и владеет деревом hooks.
    */
   async function runGit(cwd: string, args: string[], timeoutMs = LOCAL_TIMEOUT_MS, input?: string): Promise<{ stdout: string; stderr: string }> {
-    const options = {
-      cwd,
-      encoding: 'utf8' as const,
-      timeout: timeoutMs,
-      killSignal: 'SIGKILL' as const,
-      maxBuffer: 16 * 1024 * 1024,
-      // GIT_TERMINAL_PROMPT=0 — без запроса пароля в терминале, которого у main нет; NO_COLOR/GIT_PAGER — чистый вывод для UI.
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', NO_COLOR: '1', GIT_PAGER: 'cat' }
-    }
-    if (input === undefined) {
-      try {
-        const { stdout, stderr } = await execFileAsync('git', args, options)
-        return { stdout, stderr }
-      } catch (e) {
-        throw opFailed(args, e, timeoutMs)
-      }
-    }
-    return new Promise((resolvePromise, reject) => {
-      const child = execFile('git', args, options, (err, stdout, stderr) => {
-        if (err) reject(opFailed(args, Object.assign(err, { stderr }), timeoutMs))
-        else resolvePromise({ stdout, stderr })
-      })
-      // git может выйти, не дочитав stdin, — EPIPE не должен ронять main; итог сообщит колбэк.
-      child.stdin?.on('error', () => undefined)
-      child.stdin?.end(input)
-    })
+    try { return await processes.run(cwd, args, { timeoutMs, input }) }
+    catch (e) { throw opFailed(args, e, timeoutMs) }
   }
 
   const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g
@@ -451,13 +425,16 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
 
   /** `git.opFailed` с командой без `-c` и stderr git; таймаут — отдельным текстом. */
   function opFailed(args: string[], e: unknown, timeoutMs: number): Error {
+    if (e instanceof GitProcessError && e.cancelled) return e
     const err = e as { stderr?: string; stdout?: string; message?: string; killed?: boolean; code?: string | number }
     const shown: string[] = []
     for (let i = 0; i < args.length; i += 1) {
       if (args[i] === '-c') i += 1
       else shown.push(args[i])
     }
-    const error = err.killed
+    const error = e instanceof GitProcessError ? e.timedOut
+      ? { key: 'git.timeout' as const, params: { seconds: Math.round(timeoutMs / 1000) } }
+      : tail(e.stderr || e.stdout || e.message, 1000) || String(e.code ?? '?') : err.killed
       ? { key: 'git.timeout' as const, params: { seconds: Math.round(timeoutMs / 1000) } }
       : tail(err.stderr?.toString() || err.stdout?.toString() || err.message || '', 1000) || String(err.code ?? '?')
     return messages.error('git.opFailed', { command: shown.join(' '), error })
@@ -466,8 +443,11 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
   /** Очередь одна для общего repo, включая linked worktree и symlink; другие repo не ждут. */
   async function serial<T>(root: string, fn: () => Promise<T>): Promise<T> {
     let key: string
-    try { key = await canonicalGitCommonDir(root) }
-    catch { throw messages.error('git.notRepo', { path: root }) }
+    try { key = await canonicalGitCommonDir(root, processes) }
+    catch (error) {
+      if (error instanceof GitProcessError && error.cancelled) throw error
+      throw messages.error('git.notRepo', { path: root })
+    }
     return operationQueue.enqueue(key, fn)
   }
 
@@ -663,37 +643,18 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
    * Какие из `paths` (относительно `cwd`, папки — с `/` на конце: шаблон `node_modules/` действует только на папки)
    * git игнорирует. Git сам применяет вложенные `.gitignore`, `.git/info/exclude`, глобальные excludes и отрицания `!`;
    * отслеживаемые файлы игнорируемыми не считаются — как в `git status`. Пути идут через stdin, а не argv: в папке
-   * тысячи записей, а командная строка Windows ограничена 32 767 знаками. `runGit` stdin не умеет — отсюда свой `execFile`.
+   * тысячи записей, а командная строка Windows ограничена 32 767 знаками.
    * Код выхода 1 — «ничего не игнорируется», для `execFile` это ошибка, но ответ пустой. Прочее (128 — не репозиторий,
    * «dubious ownership», git не найден, таймаут) — `git.opFailed`: вызывающий решает, как жить без фильтра.
    */
-  function gitCheckIgnore(cwd: string, paths: string[]): Promise<Set<string>> {
-    if (paths.length === 0) return Promise.resolve(new Set())
+  async function gitCheckIgnore(cwd: string, paths: string[]): Promise<Set<string>> {
+    if (paths.length === 0) return new Set()
     const args = ['check-ignore', '-z', '--stdin']
-    return new Promise((resolvePromise, reject) => {
-      const child = execFile(
-        'git',
-        args,
-        {
-          cwd,
-          encoding: 'utf8',
-          timeout: CHECK_IGNORE_TIMEOUT_MS,
-          killSignal: 'SIGKILL',
-          maxBuffer: 64 * 1024 * 1024,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', NO_COLOR: '1', GIT_PAGER: 'cat' }
-        },
-        (err, stdout, stderr) => {
-          if (err && !(err.code === 1 && !err.killed)) {
-            reject(opFailed(args, Object.assign(err, { stderr }), CHECK_IGNORE_TIMEOUT_MS))
-            return
-          }
-          resolvePromise(new Set(stdout.split('\0').filter(Boolean)))
-        }
-      )
-      // git может выйти, не дочитав stdin (не репозиторий), — EPIPE не должен ронять main; итог сообщит колбэк.
-      child.stdin?.on('error', () => undefined)
-      child.stdin?.end(paths.join('\0') + '\0')
-    })
+    try {
+      const { stdout } = await processes.run(cwd, args, { timeoutMs: CHECK_IGNORE_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024,
+        input: paths.join('\0') + '\0', acceptedExitCodes: [1] })
+      return new Set(stdout.split('\0').filter(Boolean))
+    } catch (e) { throw opFailed(args, e, CHECK_IGNORE_TIMEOUT_MS) }
   }
 
   return {

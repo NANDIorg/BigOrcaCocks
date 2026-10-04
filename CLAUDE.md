@@ -41,8 +41,10 @@ orca-board; `skills/*.md` — инструкции самого продукта
 - **Не класть в payload событий длинный текст целиком.** Ответ урезается до `EVENT_ANSWER_LIMIT` (2000)
   с флагом `answerTruncated` (`eventAnswer()` в `packages/core/src/store.ts`). Полный текст отдаётся
   отдельной командой (`task answer`, `request get`, `question get`) — фикс 7b1fa05.
-- **Не вызывать `git` через shell.** Только `execFileSync`/`execFile('git', [...])` (`packages/runtime/src/git.ts`),
-  иначе ломаются Windows и экранирование.
+- **Не вызывать `git` через shell.** Аргументы передавай отдельно: `execFileSync`/`execFile('git', [...])`.
+  Общий async executor `packages/runtime/src/git-process.ts` использует `spawn('git', args, { shell: false })`
+  с owned process group: Node `execFile` не передаёт `detached` и не позволяет завершить всё дерево hooks.
+  Shell-строки ломают Windows и экранирование.
 - **Не хардкодить `:`, `/bin/zsh`, `~/.orca-board/orca.sock`.** Используй `path.delimiter`, `defaultShell()`
   (`src/main/pty.ts`), `defaultSocketPath()`. Всё платформозависимое — ветки `process.platform === 'win32'`
   в местах из таблицы «Кроссплатформенность» в `docs/architecture.md`. Новую ветку добавляй в эту таблицу.

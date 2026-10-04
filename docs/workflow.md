@@ -55,6 +55,11 @@ Desktop session/assistant каналы подключены к common commands �
 hook не останавливает heartbeat/PTY/другой repo. Workflow Git effects и их token/
 restart reconciliation остаются следующим переносом, существующий executor пока sync.
 
+Async project Git/check-ignore/commonDir используют общий GitProcessService с
+owned процессами, bounded stdout/stderr, закрытым stdin и AbortSignal/stop. Stop
+ждёт окончания дерева hooks и запрещает новые вызовы. Legacy workflow Git пока
+sync; перенос его на этот же service и проверку EffectToken продолжается в B.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

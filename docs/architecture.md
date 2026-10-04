@@ -369,9 +369,16 @@ checkout и шагами начального коммита; remove/readd, root
 не запускают позднюю mutation. Число живых агентов пересчитывается перед checkout,
 а не хранится от момента клика. Async fetch/pull/checkout/initialCommit используют
 owner GitOperationQueue по canonical commonDir: root, linked worktree и symlink
-сериализуются вместе, независимые repo параллельны. Canonical probe — async execFile
+сериализуются вместе, независимые repo параллельны. Canonical probe — async process API
 без shell, затем realpath; failed job освобождает очередь. Sync worker/workflow/review
 Git ещё переводится на async с EffectToken/reconciliation в рубеже B.
+
+`createGitProcessService` владеет async Git subprocess, включая commonDir probe и
+check-ignore. Аргументы передаются напрямую, stdin закрывается, stdout/stderr имеют
+лимит, таймаут/AbortSignal/stop завершают owned дерево hooks и ждут закрытия процессов.
+POSIX использует detached group, Windows — taskkill дерева собственного PID. Stop
+идемпотентен, новые вызовы отклоняются; отмена сохраняется отдельно от Git timeout.
+Composition может передать service третьим аргументом `createGitOperations`.
 
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи
@@ -3732,7 +3739,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | Системное меню | macOS: меню приложения, службы, скрытие, стандартные роли окон; значок Dock | настройки и выход в «Файл», «О приложении» в справке; значок окна | `applicationMenuTemplate()` — `src/main/app-menu.ts`; `src/main/index.ts` |
 | Пути картинок и файлов к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; имя файла — ASCII-слаг ≤ 40 (`MAX_PATH`, кодировка консоли); до 8 путей в стартовом промпте (system prompt координатора — в файле, тест с запасом ≥ 2 КБ в `attachments.test.ts`) | `saveReturnImages` — `src/main/attachments.ts` |
-| git | — | только `execFileSync('git', [...])` без shell, `git.exe` находится по PATH | `src/main/git.ts` |
+| Git process | async `spawn('git', args, {shell:false, detached:true})`; отмена/таймаут завершают собственную process group | `git.exe` по PATH без shell; taskkill `/PID /T /F` завершает owned дерево hooks | `packages/runtime/src/git-process.ts`; старые sync workflow calls пока в `git.ts` |
 | Каталог файлов (`files:*`, резолвер путей `docs:*`) | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 | Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `renderer/src/styles.css` |
@@ -3909,6 +3916,11 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 снимка. Тесты — `assistant-settings.test.ts`.
 
 ## Грабли разработки
+
+- **Node execFile не передаёт detached в spawn.** Таймаут Git родителя оставлял hook
+  и его ребёнка живыми; тест без проверки времени проходил по собственному deadline
+  фикстуры. Общий Git process service запускает свою группу через spawn без shell,
+  тест проверяет смерть обоих PID и завершение отмены раньше deadline hook.
 
 - **Лимит текста до CRLF-конвертации не защищает размер файла.** LF-текст меньше
   1 MiB мог превратиться в файл больше лимита и дать ошибку уже после замены.

@@ -1,6 +1,6 @@
 # Очередь Git по canonical commonDir
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** root, linked worktree и symlink одного repo используют одну очередь мутаций; независимые repo исполняются параллельно.
 

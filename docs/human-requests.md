@@ -72,6 +72,11 @@ root; ожидание ответа человека в неё не входит
 не блокирует terminal output/event loop и мутации другого repo. Существующие policy
 и registration guards повторяются после ожидания очереди до mutation.
 
+Общий GitProcessService ограничивает stdout/stderr, закрывает stdin и при остановке
+owner завершает принадлежащее ему дерево Git hooks. Отмена отличается от timeout;
+ни один process listener/таймер не удерживается после закрытия. Ожидание человека
+остаётся вне Git service/очереди. Async review effects и reconciliation ещё в B.
+
 ## Модель
 
 ```ts

@@ -44,6 +44,11 @@ Async Git проекта использует owner queue общего commonDir
 job. Sync ветвление/merge global task и worker ещё переводятся на ту же очередь;
 готовность всего async рубежа этим шагом не объявляется.
 
+Async Git subprocess теперь принадлежат общему GitProcessService: stop/отмена и
+таймаут завершают также hooks, а не только родителя. Успех внешнего effect при
+отмене не предполагается и не откатывается автоматически; EffectToken и restart
+reconciliation ветвления/merge остаются следующей частью B.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime
