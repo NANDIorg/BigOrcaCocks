@@ -71,6 +71,12 @@ subprocess не разрешает следующий шаг устаревше�
 уже произошёл. Legacy workflow callers ещё не переключены; EffectToken и restart
 reconciliation остаются следующим переносом B.
 
+EffectScope общий для async шагов: task/run identity, node/visit, dispatch и точный
+lane/forkVisit проверяются после await до перехода/store/process effect. Изменение
+обычного текста карточки scope не отменяет. Commit задаёт status source только
+на синхронную запись; явный stop отменяет подготовку даже до первого dispatch.
+Consumer integration и durable reconciliation ещё не завершены.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

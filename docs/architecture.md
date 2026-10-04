@@ -396,6 +396,14 @@ subprocess и перед следующим effect. Scoped port закрывае
 экспортирует `workflowGit` из прежнего singleton; переключение legacy consumers и
 EffectToken/reconciliation продолжаются в B.
 
+`createEffectScopeService` захватывает project/store/run/task identity и значения
+node/visit/lane/forkVisit/dispatch отдельно от изменяемых объектов core. Scope
+проверяет позицию перед/после await, а store/native commit выполняет синхронно с
+собственным status source. Явная отмена task/run и owner stop abort-ят scoped Git;
+смена соседнего lane не отменяет текущий. Token — только immutable описание, не
+полномочие. Git transaction/read используют тот же service/queue. Legacy consumer
+перенос и persistent reconciliation продолжаются следующим шагом B.
+
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи
 за один проход, не потребляет события. AgentCommands используют общие discovery и

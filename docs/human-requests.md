@@ -77,6 +77,11 @@ Git transaction с guard после await. Read-only preview не занимае
 Ответ человека и ожидание permission не входят в transaction; existing review
 callers переключаются следующим переносом вместе с EffectToken/reconciliation.
 
+EffectScope после async эффекта проверяет захваченную позицию и dispatch перед
+применением решения. Scope не держит глобальный status source через ожидание;
+параллельные human/workflow записи сохраняют своё авторство. Реальный Git effect
+мог завершиться до отмены: автоматического rollback или повтора здесь нет.
+
 Общий GitProcessService ограничивает stdout/stderr, закрывает stdin и при остановке
 owner завершает принадлежащее ему дерево Git hooks. Отмена отличается от timeout;
 ни один process listener/таймер не удерживается после закрытия. Ожидание человека
