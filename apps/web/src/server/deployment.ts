@@ -16,7 +16,7 @@ export function updateWorkerUnit(options: Parameters<typeof serviceUnit>[0] & { 
     .replace('Restart=on-failure\nRestartSec=3\n', '').replace('TimeoutStopSec=60', 'TimeoutStartSec=600\nTimeoutStopSec=60')
     .replace('\n[Install]\nWantedBy=multi-user.target\n', '')
 }
-/** Только три фиксированные команды; updater и приложение всегда работают под обычным User. */
+/** Только три фиксированные команды для обычного пользователя; root sudoers не устанавливает. */
 export function updateSudoers(user: string): string {
   if (!/^[a-z_][a-z0-9_-]*\$?$/.test(user)) throw new Error('Некорректный пользователь Linux')
   return `${user} ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block orca-web-update.service, /usr/bin/systemctl stop orca-web.service, /usr/bin/systemctl start orca-web.service\n`

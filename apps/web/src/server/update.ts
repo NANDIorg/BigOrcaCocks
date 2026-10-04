@@ -10,6 +10,7 @@ import { configFile, installationDirectory } from './setup.ts'
 import { loadWebConfig } from './config.ts'
 import { record, createPrivateJson, replacePrivateJson, readPrivateJson } from './private-json.ts'
 import { localHealth } from './health.ts'
+import { execPrivileged, warnRoot } from './privileges.ts'
 
 const repository = 'NANDIorg/BigOrcaCocks'
 export interface WebRelease { version: string; releaseNotes: string; releaseUrl: string }
@@ -65,7 +66,7 @@ export async function unpackRelease(archive: string, directory: string, version:
   const listing = execFileSync('tar', ['-tvzf', archive], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
   if (listing.trimEnd().split('\n').some(line => !['-', 'd'].includes(line[0]))) throw new Error('Web archive должен содержать только обычные файлы и каталоги')
   await mkdir(directory, { recursive: false, mode: 0o700 })
-  execFileSync('tar', ['-xzf', archive, '--strip-components=1', '-C', directory], { stdio: 'pipe' })
+  execFileSync('tar', ['-xzf', archive, '--no-same-owner', '--strip-components=1', '-C', directory], { stdio: 'pipe' })
   await validateInstalledRelease(directory, version)
 }
 async function replaceReleaseLink(base: string, name: 'current' | 'recovery', target: string): Promise<void> {
@@ -211,7 +212,7 @@ export async function installWebRelease(base: string, version: string, nonIntera
   const config = await loadWebConfig(configFile())
   const directory = join(base, 'releases', version)
   await validateInstalledRelease(directory, version)
-  const service = async (action: 'start' | 'stop') => { execFileSync('sudo', [...(nonInteractive ? ['-n'] : []), '/usr/bin/systemctl', action, 'orca-web.service'], { stdio: 'inherit' }) }
+  const service = async (action: 'start' | 'stop') => { execPrivileged('/usr/bin/systemctl', [action, 'orca-web.service'], nonInteractive) }
   return activateRelease({ base, directory, dataDir: config.dataDir, configDir: config.configDir, version,
     stop: () => service('stop'), start: () => service('start'), healthy: async expected => {
       for (let attempt = 0; attempt < 60; attempt++) {
@@ -224,11 +225,12 @@ export async function installWebRelease(base: string, version: string, nonIntera
 }
 export async function recoverWebRelease(base: string): Promise<boolean> {
   const config = await loadWebConfig(configFile())
-  const service = async (action: 'start' | 'stop') => { execFileSync('sudo', ['-n', '/usr/bin/systemctl', action, 'orca-web.service'], { stdio: 'inherit' }) }
+  const service = async (action: 'start' | 'stop') => { execPrivileged('/usr/bin/systemctl', [action, 'orca-web.service'], true) }
   return recoverRelease({ base, dataDir: config.dataDir, configDir: config.configDir, stop: () => service('stop'), start: () => service('start') })
 }
 export async function updateWeb(): Promise<void> {
-  if (process.platform !== 'linux' || process.arch !== 'x64' || process.getuid?.() === 0) throw new Error('Обновление Web рассчитано на обычного пользователя Linux x64')
+  if (process.platform !== 'linux' || process.arch !== 'x64') throw new Error('Обновление Web рассчитано на Linux x64')
+  warnRoot()
   const base = installationDirectory()
   const current: unknown = JSON.parse(await readFile(join(base, 'current', 'app', 'package.json'), 'utf8'))
   if (!record(current) || typeof current.version !== 'string') throw new Error('Некорректный installed manifest')
