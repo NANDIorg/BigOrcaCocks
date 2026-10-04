@@ -14,6 +14,7 @@ import { createInterface } from 'node:readline/promises'
 import { addWebAccount } from './accounts.ts'
 import { readPassword } from './password.ts'
 import { localHealth } from './health.ts'
+import { warnRoot } from './privileges.ts'
 
 const command = process.argv[2] ?? 'help'
 try {
@@ -23,7 +24,8 @@ try {
   else if (command === 'service' && process.argv[3] === 'install-app') await installAppService()
   else if (command === 'update') await updateWeb()
   else if (command === 'update-worker' || command === 'update-recover') {
-    if (process.platform !== 'linux' || process.getuid?.() === 0 || process.env.ORCA_WEB_MANAGED !== '1') throw new Error('Worker запускается настроенным сервисом Linux')
+    if (process.platform !== 'linux' || process.env.ORCA_WEB_MANAGED !== '1') throw new Error('Worker запускается настроенным сервисом Linux')
+    warnRoot()
     if (command === 'update-worker') await runBrowserUpdateWorker()
     else await recoverBrowserUpdate()
   }
@@ -35,7 +37,7 @@ try {
     const password = await readPassword('Пароль (не отображается): ')
     if (password !== await readPassword('Повторите пароль: ')) throw new Error('Пароли не совпадают')
     await addWebAccount({ configDir: config.configDir, login, password })
-    process.stdout.write('Аккаунт создан. Перезапустите сервис: sudo systemctl restart orca-web.service\n')
+    process.stdout.write(`Аккаунт создан. Перезапустите сервис: ${process.getuid?.() === 0 ? '' : 'sudo '}systemctl restart orca-web.service\n`)
   }
   else if (command === 'status') {
     const config = await loadWebConfig(configFile())

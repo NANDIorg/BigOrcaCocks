@@ -12,6 +12,18 @@ import { createProjectRootPolicy } from '../src/server/project-roots.ts'
 import { createWebRouter, type WebRouter } from '../src/server/http.ts'
 import type { OperatorHttpHandler } from '@orca-board/runtime'
 import type { UpdateState } from '@orca-board/client/desktop-settings'
+import { spawnSync } from 'node:child_process'
+
+test('root получает предупреждение и проходит к загрузке конфигурации Web', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'orca-root-start-')); t.after(() => rm(directory, { recursive: true, force: true }))
+  const entry = new URL('../src/server/start.ts', import.meta.url).href
+  const loader = new URL('../../../scripts/ts-resolve.mjs', import.meta.url).href
+  const code = `process.getuid = () => 0; const { runWebServer } = await import(${JSON.stringify(entry)}); try { await runWebServer(${JSON.stringify(join(directory, 'missing-directory', 'missing.json'))}) } catch (error) { process.stderr.write(error.code + '\\n'); process.exitCode = 2 }`
+  const result = spawnSync(process.execPath, ['--experimental-transform-types', '--no-warnings', '--import', loader, '--input-type=module', '-e', code], { encoding: 'utf8' })
+  assert.equal(result.status, 2, result.stderr)
+  assert.match(result.stderr, /ENOENT/, 'root должен пройти к чтению конфигурации')
+  assert.match(result.stderr, /Предупреждение:.*root/)
+})
 
 test('sessions: idle/absolute expiry, revocation и лимит не оставляют клиентов', () => {
   let now = 0; const revoked: string[] = []
