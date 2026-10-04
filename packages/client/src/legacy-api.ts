@@ -33,6 +33,7 @@ export interface OrcaApi {
     resolve(id: string, revision: number, resolution: EffectResolution): Promise<EffectRecord>
   }
   app: {
+    readonly environment?: 'desktop' | 'web'
     /** Режим рамки этого окна; нет в старом preload. Read-only, без IPC управления окном. */
     readonly windowChrome?: WindowChromeMode
     info(): Promise<{ socketPath: string; active: Project | null; projects: Project[] }>
@@ -356,6 +357,11 @@ export interface OrcaApi {
     onFocus(cb: (p: RequestFocus) => void): () => void
   }
   pty: {
+    /** Web writer lease; Desktop использует native input и может не предоставлять эти методы. */
+    claimWriter?(id: string): Promise<void>
+    releaseWriter?(id: string): Promise<void>
+    onWriterState?(id: string, cb: (writable: boolean) => void): () => void
+    onResync?(id: string, cb: (tail: string) => void): () => void
     spawn(opts: PtySpawnOptions): Promise<string>
     write(id: string, data: string): void
     resize(id: string, cols: number, rows: number): void

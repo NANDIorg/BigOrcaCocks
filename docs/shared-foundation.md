@@ -1,8 +1,9 @@
 # Общий фундамент Desktop, Web и CLI
 
-Состояние на 4 октября 2026: общий фундамент реализован. Пользовательский продукт
-сейчас — Desktop; самостоятельный Node host уже собирается и проверяется без Electron.
-Web для собственного сервера и терминальный интерфейс CLI — следующие отдельные задачи.
+Состояние на 5 октября 2026: общий фундамент и Web для своего Linux-сервера реализованы.
+Desktop и самостоятельный Node/Web host собираются и проверяются без зависимости backend от Electron.
+Поставка первого отдельного Web 2.0.0 готова; следующая приёмка — реальный сервер/HTTPS.
+Человеческий CLI остаётся следующей отдельной разработкой.
 Результаты проверки базы — [orca-foundation-progress.md](orca-foundation-progress.md),
 подробные алгоритмы и протоколы — [architecture.md](architecture.md).
 Точка остановки и порядок следующих проектов после 2.0.0 —
@@ -18,16 +19,18 @@ Web для собственного сервера и терминальный �
 | `packages/client` | Typed operator client, HTTP/IPC, retries, selection, snapshot/replay, binary и writer channels | Browser-safe, без React и Node backend |
 | `packages/ui` | React-компоненты, CSS, ru/en, assets, presentation helpers, общие theme/window tokens | Browser-safe; получает client/platform от host |
 | `apps/desktop` | Electron lifecycle, окна, меню, трей, уведомления, updater, IPC/preload, native actions | Electron host общего backend и UI |
+| `apps/web` | HTTP auth/CSRF, browser host, preview, Linux installer и systemd updater/recovery | Node24 + браузер |
 | `apps/headless` | Запуск того же backend, выбор профиля, native PTY и приватный operator endpoint | Самостоятельная установленная Node.js 24 программа |
 | `packages/cli` | Существующий агентский `orca-board`, прежние команды и HELP | JS без npm-зависимостей; Node из Desktop или Node host |
 
 ```mermaid
 flowchart TB
     D[Desktop: Electron host] --> R[Общий runtime]
-    H[Node host для будущих Web / CLI] --> R
+    H[Node host для Web / CLI] --> R
     R --> C[Core: домен, store, workflow]
     D --> U[Общий React UI]
-    W[Будущий Web host и UI adapter] --> U
+    W[Web host и browser adapter] --> U
+    W --> H
     U --> K[Общий operator client + contracts]
     T[Будущий терминальный CLI] --> K
     K -->|IPC / HTTP| R
@@ -39,12 +42,12 @@ flowchart TB
 и native ports. В runtime уже находится весь основной цикл project → задача →
 координатор/воркер → workflow → запрос человеку → review/merge.
 Git, файловая система и процессы агентов работают на машине владельца runtime.
-При подключении браузером к серверу они будут работать на сервере.
+При подключении браузером они работают на сервере.
 
 Есть совместимый UI API: Desktop передаёт старые методы preload через injected
 client/platform, CRUD групп уже использует typed operator client. Общие компоненты
-не обращаются напрямую к Electron, но для Web ещё нужен adapter остальных методов
-к общим operator commands и браузерные варианты выбора/открытия файлов.
+не обращаются напрямую к Electron. packages/client/src/ui.ts отображает остальные методы
+на operator commands; Web platform выбирает серверные папки и скачивает файлы.
 
 ## Что обеспечивает backend
 
@@ -102,17 +105,18 @@ Endpoint слушает loopback на выбранном порту. URL, bearer
 отдельный: агентам operator token не передаётся. `SIGINT` / `SIGTERM` запускают
 graceful stop. `startHeadless()` также доступен из установленного `index.mjs` для host.
 
-## Следующая работа: Web для собственного сервера
+## Web для собственного сервера и будущий CLI
 
-Общий backend не нужно переписывать повторно. Потребуются `apps/web`, браузерный
-entrypoint общего UI, adapter совместимого UI API к operator client, авторизация
-серверной сессии и подключение trusted principal. Для одного-двух пользователей
+Общий backend не нужно переписывать повторно. `apps/web` реализует браузерный
+entrypoint общего UI, общий typed UI adapter, авторизацию серверной сессии
+и подключение trusted principal. Для одного-двух пользователей
 достаточно одного server owner и одного профиля с клиентским выбором проектов.
 
 К Web относятся HTTPS/reverse proxy и домен, запуск после перезагрузки сервера,
 хранение credentials, reconnect/терминалы в браузере, upload/download вместо
 локального Finder/Explorer, выбор серверного каталога проекта и понятные права
-доступа. Эти адаптеры и развёртывание ещё не реализованы. Общедоступный сервис,
+доступа. Эти адаптеры и native Linux-поставка реализованы;
+реальное развёртывание ждёт выбора сервера. Общедоступный сервис,
 регистрация пользователей, tenant isolation и биллинг оставлены на будущее.
 
 Терминальный чат CLI позже подключится к тому же operator client. Его отображение,
@@ -121,16 +125,14 @@ CLI сохраняет свои команды и не заменяет этот
 
 ## Независимая разработка и выпуски
 
-Общие пакеты пока private, встраиваются в сборки продуктов. PR идут в `develop`;
-изменение common package само по себе не публикует все приложения. Продукт получает
-общую логику из состояния репозитория, выбранного для его собственной сборки.
+Общие private пакеты встраиваются в сборки из выбранного SHA. Feature PR идут в develop;
+изменение общего кода само по себе не публикует приложения. Каждый продукт включает его
+в следующий собственный выпуск. Последнее решение пользователя — независимые версии:
+Desktop vX.Y.Z/root+apps/desktop, Web web/vX.Y.Z/apps/web, будущий CLI cli/vX.Y.Z/packages/cli.
+Web/CLI не становятся GitHub Latest и не содержат Desktop update feed.
 
-Desktop сохраняет `vX.Y.Z`, текущие feed/Latest и marine codenames. Для CLI предусмотрены
-`cli/vX.Y.Z`, для Web — `web/vX.Y.Z` и отдельные release/hotfix ветки. Их версии
-не выравниваются с Desktop; protocol/schema проверяется независимо при handshake.
-Product guards и release fixtures готовы; реальные Web/CLI artifacts и publication
-workflows появятся вместе с продуктами. Порядок — [git-flow.md](git-flow.md) и
-[releasing.md](releasing.md).
-
-Исторические планы, QA-отчёты, расследования, макеты и release notes сохраняют свой
-срез. Для текущего устройства используй этот документ, README и архитектуру.
+Web реализован в apps/web: auth/preview/browser platform, общий headless/runtime и typed UI adapter.
+Linux artifact, installer, browser updater с отдельным worker/recovery готовы; [установка](web.md).
+release.yml сохраняет Desktop-поставку, web-release.yml собирает и проверяет отдельный Linux-пакет.
+Первый Web release не опубликован и не требует нового Desktop. Реальная server/DNS/systemd приёмка
+остаётся после выбора сервера. [Git Flow](git-flow.md) и [релизы](releasing.md) описывают порядок.

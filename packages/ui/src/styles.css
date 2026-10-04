@@ -46,7 +46,8 @@ button { font: inherit; cursor: pointer; }
 .rail .icon:disabled { opacity: .4; cursor: default; }
 .rail .icon.active { color: var(--accent); }
 .rail .grow { flex: 1; }
-.rail .app-logo {
+.app-logo {
+  display: block;
   width: 40px; height: 40px; flex-shrink: 0; color: var(--muted);
   background-color: currentColor;
   mask: linear-gradient(transparent, transparent) center / contain no-repeat;
@@ -3259,3 +3260,7 @@ html[data-motion='reduced'] .onboarding button:active:not(:disabled) { transform
 .chat-workflow-chip .icon-btn { flex-shrink: 0; }
 .chat-workflow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .chat-workflow-actions .btn-sm { max-width: 100%; white-space: normal; }
+
+.terminal-surface { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.terminal-canvas { flex: 1; min-height: 0; }
+.terminal-writer { min-height: 32px; display: flex; align-items: center; gap: 12px; padding: 4px 10px; color: var(--muted); background: var(--side); border-bottom: 1px solid var(--line); font-size: 11px; }

@@ -2,8 +2,8 @@
 
 Общий фундамент реализован на 04.10.2026. Краткая карта слоёв и запуск —
 [shared-foundation.md](shared-foundation.md), фактические проверки —
-[orca-foundation-progress.md](orca-foundation-progress.md). Web для своего сервера и
-терминальный интерфейс CLI ещё не реализованы. В разделах ниже `main/…` и `src/main/…`
+[orca-foundation-progress.md](orca-foundation-progress.md). Web для своего сервера реализован в `apps/web`;
+установка описана в [web.md](web.md). Человеческий терминальный CLI будет добавлен позже. В разделах ниже `main/…` и `src/main/…`
 обозначают Desktop adapters в `apps/desktop/src/main`; общие реализации находятся
 в `packages/runtime/src`, UI — в `packages/ui/src`. Это совместимые входы, а не отдельный backend.
 
@@ -25,12 +25,12 @@ Release packaging workflow также готовит Node root явно до `pn
 Installed headless artifact имеет собственный package/node_modules и проверяется
 в Linux CI вне workspace без DISPLAY; Native Git/PTY smoke не использует TS links.
 
-`product-release.mjs` задаёт manifests/tags/Latest policy. Desktop сохраняет `vX.Y.Z`,
-root/Desktop alignment и marine codenames. CLI/Web используют `cli/vX.Y.Z`, `web/vX.Y.Z`,
-`release/cli/X.Y.Z`, `release/web/X.Y.Z` и соответствующие hotfix branches. Guards
-проверяют версию выбранного manifest; nonDesktop release policy — make_latest=false
-и запрет Desktop update assets. Новые CLI/Web workflows добавляются с продуктами.
-Local ruleset configs включают их branches/tags; remote rulesets здесь не меняются.
+`product-release.mjs` и guards задают независимые версии/теги: Desktop root/apps/desktop
+и vX.Y.Z, Web apps/web и web/vX.Y.Z, CLI cli/vX.Y.Z. Desktop release.yml сохраняет
+прежние платформы, marine codenames и update feed. Отдельный web-release.yml собирает
+Linux archive с Node/native, проверяет installed package и создаёт Draft с latest=false.
+Web обновляется через browser UI/systemd worker либо серверную команду, с backup/rollback
+и pinned recovery при аварии worker. Remote rulesets не меняются; Desktop 2.0.0 не переупаковывается.
 
 
 ## Общий client и UI
@@ -50,7 +50,7 @@ API, optional/HMR checks сохранены. CRUD групп Desktop уже вы
 IPC `operator:hello/call/select/snapshot/events/close/upload/binary/writer` зарегистрированы
 только для verified main frame. Ledger проверяется до Desktop backup; snapshot/replay,
 upload tickets, binary guards и sequence writer общие с headless. Close drops client leases,
-не завершает owner/диалог/PTY. CLI React не требует. Нового Web приложения ещё нет.
+не завершает owner/диалог/PTY. CLI React не требует. Web подключает тот же React UI своим browser host.
 
 `session.renewWriter` — ephemeral heartbeat существующего writer token с ограниченным
 TTL: каждый retry проверяет живость/владельца и не восстанавливает released/expired
@@ -121,7 +121,7 @@ lastRunVersion/тост обновления и не сравнивают вер
 Linux installed smoke вне workspace проверил настоящий PTY/Git, прежний CLI,
 observer snapshot, повтор writer packet ровно один раз, disconnect и owner restart
 без DISPLAY/Electron. Финальные artifact/client/UI и независимые release fixtures
-проверены; нового Web UI и настоящих Web/CLI release artifacts здесь ещё нет.
+проверены; Web UI и установленная Linux-поставка добавлены отдельно; CLI-чата пока нет.
 
 ## Общий Node runtime: хранение, резервные копии и Git
 
@@ -219,8 +219,8 @@ codec читает и объединяет настройки. Runtime знае�
 совместимые входы в runtime. Классы Desktop создаются один раз, сохраняя instanceof
 для сокета. Core экспортирует модули с `.ts`, поэтому package entrypoints работают
 в обычном Node 24 без сборщика Electron. Сохранённый activeId пока служит legacy API
-Desktop. Общий operator session/client уже имеет независимый selection; будущий
-Web UI подключится к нему через свой adapter.
+Desktop. Общий operator session/client уже имеет независимый selection; Web UI
+подключается через общий typed UI adapter без изменения legacy Desktop selection.
 
 ### Общие команды доски
 
@@ -321,7 +321,7 @@ Desktop `main/coordinator-commands.ts` использует общий project a
 caller прежде единственного capture activeId, старые четыре IPC signatures/defaults
 и ptyId строки сохраняются. Ошибки boundary и host переводятся прежним ru/en путём.
 HTTP/IPC operator transports, lifecycle commands, revisions/dedup/replay реализованы.
-Самостоятельные Web/CLI приложения и серверная сессия Web добавляются отдельно.
+Серверная сессия Web реализована в apps/web; человеческое CLI-приложение добавляется позже.
 
 ### Общие команды и lifecycle воркеров
 
@@ -444,7 +444,7 @@ preview policy. `path-safety.ts` разрывает прежний цикл docs
 для network. `PreviewAddress` задаёт URL/CSP source/parser; scheme adapter сохраняет
 ручной разбор percent/dot paths и orca-preview совместимость. Factory проверяет
 positive integer limit; private root не попадает в public preview URL/DTO. Project
-preview без сети, сеть показа разрешена лишь на snapshot. HTTP hosting не реализован.
+preview без сети, сеть показа разрешена лишь на snapshot. HTTP hosting Web использует отдельный preview hostname без cookies панели.
 `FileCommands` теперь адресует явный project/client/actor: context/policy/path/source/
 options проверяются до lookup. `RegisteredProject` в project-scope отделяет registration
 identity от hash id/store; stats сохраняет прежние aliases. Capture task/worktree и
@@ -789,7 +789,7 @@ Package entrypoint обычным Node без Electron loader/DISPLAY прово
 done → human → accept → merge, повторно открывает JSON-доску и проверяет результат.
 Native PTY fixture Desktop выполняет тот же переход общим binding после detach и
 natural exit. Установленный Linux artifact также прошёл проверку с настоящими Git/PTY,
-disconnect, отказом второго owner и restart. Web UI и его развёртывание ещё предстоят.
+disconnect, отказом второго owner и restart. Web UI и native Linux-поставка реализованы; публичное развёртывание ждёт выбора сервера.
 
 ## Процессы
 
@@ -3886,6 +3886,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Git process | async `spawn('git', args, {shell:false, detached:true})`; отмена/таймаут завершают собственную process group | `git.exe` по PATH без shell; taskkill `/PID /T /F` завершает owned дерево hooks | `packages/runtime/src/git-process.ts`; workflow использует scoped `git-workflow.ts` |
 | Каталог файлов (`files:*`, резолвер путей `docs:*`) | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
+| Ссылки версий Web | атомарный rename новой ссылки поверх `current` / `recovery`; установленная поставка — Linux x64 | исходники и CI используют junction: удаление только самой старой ссылки, затем rename новой; при ошибке прежняя ссылка восстанавливается. Установка Web как Windows-сервис не поддерживается | `replaceReleaseLink()` — `apps/web/src/server/update.ts` |
 | Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `packages/ui/src/styles.css` |
 
 **Почему `defaultSocketPath()` продублирована в CLI.** CLI — голый JS (`orca-board.js`), который запускается
@@ -4060,6 +4061,12 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
 снимка. Тесты — `assistant-settings.test.ts`.
 
 ## Грабли разработки
+
+- **Windows rename не заменяет существующую directory junction.** Первая подготовка
+  recovery проходила, повторная давала EPERM; обновление и откат ломались на current.
+  Общая замена ссылок сохраняет атомарный Linux rename, а на Windows удаляет только
+  проверенную junction и восстанавливает её при ошибке. Проверки повторного pin,
+  успешного обновления, rollback и recovery после SIGKILL выполняются на всех ОС.
 
 - **Node execFile не передаёт detached в spawn.** Таймаут Git родителя оставлял hook
   и его ребёнка живыми; тест без проверки времени проходил по собственному deadline
@@ -4526,6 +4533,57 @@ IPC `recovery:list`, `recovery:inspect`, `recovery:resolve` → общий opera
 
 ### Общий operator protocol
 
-`contracts/operator-protocol` и runtime factories handshake/session/observer/ledger дают общую границу для Desktop, будущих Web и CLI. Product versions независимы; protocol/schema несовместимость и отсутствующие capabilities отказывают до effects. Host задаёт проверенный operator principal; JSON не задаёт actor/clientId. Выбор project/dialog локален соединению. Persistent `operator-mutations.json` хранит digest и результат запроса 24 часа (до 1024 записей/4 MiB); pending после restart имеет uncertain outcome, повторное действие автоматически не запускается. Незавершённые записи не вытесняются. Ручной abandon фиксирует отказ без запуска native эффекта.
+`contracts/operator-protocol` и runtime factories handshake/session/observer/ledger дают общую границу для Desktop, будущих Web и CLI. Desktop/Web/CLI имеют собственные product versions/tags; protocol/schema несовместимость и отсутствующие capabilities отказывают до effects. Host задаёт проверенный operator principal; JSON не задаёт actor/clientId. Выбор project/dialog локален соединению. Persistent `operator-mutations.json` хранит digest и результат запроса 24 часа (до 1024 записей/4 MiB); pending после restart имеет uncertain outcome, повторное действие автоматически не запускается. Незавершённые записи не вытесняются. Ручной abandon фиксирует отказ без запуска native эффекта.
 
-Observer history ограничен 512 событиями/2 MiB/24 часами; subscriber queue — 128 событиями/1 MiB. Snapshot устанавливает подписку до чтения; expired/foreign-owner cursor, overflow и oversized payload требуют нового snapshot. Observer не меняет core `consumedBy`. Ошибка одного subscriber не прерывает owner; reentrant publication сохраняет порядок. Disconnect закрывает только подписки и writer leases своего клиента. Composition, private loopback endpoint и browser-safe client реализованы; legacy agent envelope/HELP не меняются. Web-сайт и его серверная авторизация — отдельная следующая задача.
+Observer history ограничен 512 событиями/2 MiB/24 часами; subscriber queue — 128 событиями/1 MiB. Snapshot устанавливает подписку до чтения; expired/foreign-owner cursor, overflow и oversized payload требуют нового snapshot. Observer не меняет core `consumedBy`. Ошибка одного subscriber не прерывает owner; reentrant publication сохраняет порядок. Disconnect закрывает только подписки и writer leases своего клиента. Composition, private loopback endpoint и browser-safe client реализованы; legacy agent envelope/HELP не меняются. Web-сайт и серверная авторизация реализованы в apps/web; реальное развёртывание ждёт сервера.
+
+## Web host, HTTP и поставка
+
+`apps/web/src/server` отвечает за configuration/private accounts, scrypt/login limits,
+server sessions, CSRF/Origin/Host, canonical project roots, static browser и preview.
+Headless принимает trusted authorize/product/preview options и запускает ровно один
+общий owner; mkdir профиля выполняется до canonical lookup. Private local operator
+endpoint и dependency-free agent CLI остаются доступны только на сервере.
+
+`operator-http.ts` — общий HTTP handler private/Web ingress; Web устанавливает principal
+из session и проверяет root для add/detectProject до RPC. `operator-endpoint.ts` — private
+loopback listener поверх него. Long polling до 20 секунд использует bounded observer queue,
+expiry и snapshot barrier. Client сбрасывает terminal tail и перечитывает подписанные чаты
+при потере cursor/truncated event; selection project/dialog и язык принадлежат клиенту.
+
+`packages/client/src/ui.ts` отображает compatibility UI методы на typed operator commands:
+явный projectId, свежая profile/dialog revision, общая mutation identity/dedup. Resources
+предоставляют builtin prompts и terminal assistant Amp/Shell. workflowContext — чтение;
+остальные изменения используют guarded mutation. Writer lease явная, heartbeat bounded;
+detach/logout освобождают lease, не убивают задание. Binary API отделяет image preview,
+скачивание любого attachment, docs/download и showcase; JSON RPC не выдаёт их байты.
+
+Browser host монтирует общий UI после auth/handshake и проверки совпадения версии Web
+bundle/server, без загрузки Electron/backend. Platform adapter предлагает выбор серверного
+каталога и скачивание файлов вместо native open/reveal. Режимы local/proxy требуют разных
+hostname panel/preview; production cookie __Host-, Secure/HttpOnly/SameSite=Strict.
+Preview сохраняет token, sandbox/CSP/range/path guards и не получает cookies панели.
+
+`bundle-linux.mjs` собирает Node 24/native/resources/browser в архив обычных файлов без
+ссылок; `install-orca-web.sh` проверяет checksum и запускает terminal wizard. Systemd unit
+сохраняет config path и PATH bundled Node/агентов. `orca-web update` получает exclusive owner,
+делает profile/config backup, атомарно переключает current и откатывает при failed health.
+Файлы Git-проектов вне профиля не откатываются. Команды и ограничения — [web.md](web.md).
+
+### Обновления Web из браузера
+
+`apps/web/src/server/browser-updates.ts` хранит приватное состояние/задание вне профиля,
+сериализует проверки и queue, фиксирует версию и разделяет download/install. Routes
+`GET /updates`, `POST /updates/check|download|install` защищены теми же session/Host/Origin/CSRF
+и не принимают команды/пути. `orca-web-update.service` (oneshot, обычный User) читает
+подтверждённое задание и выполняет prepare/install, переживая остановку main unit.
+Сервис установки проверяет sudoers через visudo: только три фиксированных systemctl
+вызова, без произвольного sudo. Старый CLI update использует те же prepare/install/lock.
+Общие UI карточка/плашка и UpdateState поддерживают mode server; Web adapter получает
+состояние через bounded HTTP и polling. Source host проверяет отдельный Web feed, но устанавливать
+кнопкой не может. Backup/owner/checksum/rollback остаются в Web host; runtime не знает systemd.
+
+Релизные версии продуктов независимы: Desktop vX.Y.Z (root/desktop), Web web/vX.Y.Z
+(apps/web), CLI cli/vX.Y.Z. Web workflow не меняет Desktop Latest и проверяет installed
+Linux bundle до отдельного Draft. Updater выбирает максимальный стабильный Web tag
+из последних 100 публичных releases, игнорируя Desktop/CLI/draft/prerelease.

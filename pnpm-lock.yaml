@@ -82,6 +82,55 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  apps/web:
+    dependencies:
+      '@orca-board/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@orca-board/headless':
+        specifier: workspace:*
+        version: link:../headless
+      '@orca-board/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@orca-board/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      react:
+        specifier: ^19.0.0
+        version: 19.3.0
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.3.0(react@19.3.0)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.4
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.0
+        version: 4.7.0(vite@7.3.6(@types/node@22.20.4)(jiti@2.7.0))
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vite:
+        specifier: ^7.0.0
+        version: 7.3.6(@types/node@22.20.4)(jiti@2.7.0)
+
   packages/cli: {}
 
   packages/client:

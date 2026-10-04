@@ -1,3 +1,4 @@
+import { getUiApi } from './host'
 import type React from 'react'
 import { useMemo, useRef, useState } from 'react'
 import type { DocView } from '../shared/ipc'
@@ -199,9 +200,9 @@ export function DocActionsMenu({ actions, onAction }: { actions: DocActions; onA
   const items: PopupItem[] = [
     { id: 'copy', label: t('config.docs.view.copyPath'), icon: <DocIcon.copy /> },
     ...(actions.copyAbs ? [{ id: 'copyAbs', label: t('config.docs.view.copyAbsPath'), icon: <DocIcon.copy /> }] : []),
-    { id: 'reveal', label: t('config.docs.view.reveal'), icon: <DocIcon.reveal />, separatorBefore: true },
+    { id: 'reveal', label: (getUiApi().app.environment === 'web' ? t('shell.web.download') : t('config.docs.view.reveal')), icon: <DocIcon.reveal />, separatorBefore: true },
     actions.open
-      ? { id: 'open', label: t('config.docs.view.open'), icon: <DocIcon.external /> }
+      ? { id: 'open', label: (getUiApi().app.environment === 'web' ? t('shell.web.download') : t('config.docs.view.open')), icon: <DocIcon.external /> }
       : { id: 'open', label: t('config.docs.view.openNo'), icon: <DocIcon.external />, disabled: true }
   ]
   const toggle = (): void => {

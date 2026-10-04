@@ -43,7 +43,7 @@ export function GeneralSection({ settings, error, onChange, onRunOnboarding }: {
           </div>
         </div>
       </div>
-      <div className="about-box">
+      {getUiApi().app.environment !== 'web' && <div className="about-box">
         <div className="row-act">
           <div className="row-act-text">
             <b>{t('settings.general.background')}</b>
@@ -55,7 +55,7 @@ export function GeneralSection({ settings, error, onChange, onRunOnboarding }: {
             onChange={(on) => onChange({ keepInBackground: on })}
           />
         </div>
-      </div>
+      </div>}
       {canRerun && (
         <div className="about-box">
           <div className="row-act">

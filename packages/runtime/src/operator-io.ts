@@ -51,7 +51,9 @@ export async function readOperatorBinary(ports: { files: FileCommands; globalTas
   if (!protocolObject(raw) || Object.keys(raw).some(key => !['projectId', 'kind', 'id', 'imageId', 'path', 'source', 'dispatchId'].includes(key))) protocolError('protocol.invalidInput', 'Некорректный binary request')
   const ctx = { ...context, projectId: protocolText(raw.projectId, 'projectId', 8192) }
   if (raw.kind === 'image') { const image = ports.globalTask.image(ctx, protocolText(raw.id, 'id'), protocolText(raw.imageId, 'imageId')); return { mime: image.mime, bytes: image.data } }
+  if (raw.kind === 'attachment') { const file = ports.globalTask.attachment(ctx, protocolText(raw.id, 'id'), protocolText(raw.imageId, 'imageId')); return { mime: file.mime, bytes: file.data } }
   if (raw.kind === 'showcase') return ports.files.readShowcase(ctx, protocolText(raw.id, 'id'), protocolText(raw.path, 'path', 8192), raw.dispatchId === undefined ? undefined : protocolText(raw.dispatchId, 'dispatchId'))
+  if (raw.kind === 'download') return ports.files.downloadDoc(ctx, protocolText(raw.source, 'source'), protocolText(raw.path, 'path', 8192))
   if (raw.kind !== undefined && raw.kind !== 'doc') protocolError('protocol.invalidInput', 'Некорректный binary kind')
   return ports.files.docBytes(ctx, protocolText(raw.source, 'source'), protocolText(raw.path, 'path', 8192))
 }

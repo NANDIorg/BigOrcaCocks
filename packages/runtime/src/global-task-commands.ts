@@ -116,6 +116,10 @@ export function createGlobalTaskCommands(host: GlobalTaskCommandHost): GlobalTas
     image: (context, rawId, rawImageId) => execute(context, 'globalTasks.image', () => {
       const id = commandString(rawId, 'globalTaskId'); const imageId = commandString(rawImageId, 'imageId')
       return (p, ctx) => host.resources.loadTaskImage(existing(p, id), root, ctx.projectId, id, imageId)
+    }),
+    attachment: (context, rawId, rawImageId) => execute(context, 'globalTasks.attachment', () => {
+      const id = commandString(rawId, 'globalTaskId'); const imageId = commandString(rawImageId, 'imageId')
+      return (p, ctx) => host.resources.loadTaskAttachment(existing(p, id), root, ctx.projectId, id, imageId)
     })
   }
 }

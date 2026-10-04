@@ -6,6 +6,7 @@ import { Icon } from '../icons'
 import { UpdateCard } from '../UpdateCard'
 import { canCheck } from '../updateState'
 import { updatesProblem, type UpdatesController } from '../useUpdates'
+import { getUiApi } from '../host'
 
 /** Строка «подпись + пояснение + переключатель». */
 function SwitchRow({ title, hint, on, disabled, onChange }: {
@@ -42,14 +43,17 @@ export function UpdatesSection({ settings, updates, error, onChange }: {
   // Старый main не знает `updates` — показываем дефолты, выключенными.
   const s = settings?.updates ?? DEFAULT_UPDATE_SETTINGS
   const problem = updatesProblem(updates) ?? error
+  const web = getUiApi().app.environment === 'web'
   return (
     <>
-      <SectionHead title={t('settings.updates.title')} hint={t('settings.updates.hint')}>
+      <SectionHead title={t('settings.updates.title')} hint={t(web ? 'shell.web.updateHint' : 'settings.updates.hint')}>
         <button type="button" className="btn-sm updates-check" disabled={updates.checking || !canCheck(state)} onClick={updates.check}>
           <Icon.refresh />{t('settings.updates.check')}
         </button>
       </SectionHead>
       <UpdateCard updates={updates} />
+      {web && state?.mode !== 'server' && <p className="hint">{t('shell.web.updateUnmanaged')} <code>orca-web update</code></p>}
+      {!web && <>
       <div className="updates-preferences-label">{t(portable ? 'settings.updates.checkPreferences' : 'settings.updates.preferences')}</div>
       <div className="about-box notif-rows">
         {portable && <div className="updates-portable-note">
@@ -78,6 +82,7 @@ export function UpdatesSection({ settings, updates, error, onChange }: {
           onChange={(on) => onChange({ installWhenIdle: on })}
         />}
       </div>
+      </>}
       {problem && <div className="editor-error">{problem}</div>}
     </>
   )

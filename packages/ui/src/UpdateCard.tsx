@@ -15,11 +15,12 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
   const { state } = updates
   const [expandedVersion, setExpandedVersion] = useState<string | null>(null)
   const notesId = useId()
-  const release = cardRelease(state, getUiRelease())
+  const release = cardRelease(state, getUiRelease(), state?.mode === 'server' || state?.unsupportedReason === 'server-unmanaged' ? 'web' : 'desktop')
   const notes = release?.releaseNotes ?? ''
   const summary = useMemo(() => releaseSummary(notes), [notes])
   const status = cardStatus(state, updates.checking)
   const found = Boolean(state?.availableVersion)
+  const server = state?.mode === 'server'
   const manual = status === 'unsupported' && found && state?.mode === 'manual-download'
   const kind = manual ? 'available' : status
   const busy = kind === 'checking' || kind === 'downloading' || kind === 'installing' || kind === 'loading'
@@ -31,7 +32,7 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
   const primary = kind === 'checking' || kind === 'loading' ? undefined : view?.primary
   const releaseUrl = release?.releaseUrl
   const detail = kind === 'ready'
-    ? (pendingText(state?.installPending ?? null) ?? t('settings.updates.card.readyHint'))
+    ? (pendingText(state?.installPending ?? null) ?? t(server ? 'shell.web.updateReady' : 'settings.updates.card.readyHint'))
     : kind === 'error'
       ? (state?.error ?? t('settings.updates.status.errorNoText'))
       : kind === 'unsupported' || manual
@@ -39,7 +40,7 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
         : kind === 'idle'
           ? t(updates.lastCheckedAt ? 'settings.updates.card.upToDateHint' : 'settings.updates.card.idleHint')
           : kind === 'installing'
-            ? t('settings.updates.card.installingHint')
+            ? t(server ? 'shell.web.updateInstalling' : 'settings.updates.card.installingHint')
             : kind === 'checking'
               ? t('settings.updates.status.checking')
               : ''
@@ -68,7 +69,7 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
             aria-label={t('settings.updates.card.downloadLabel')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
             <div style={{ width: `${percent ?? 40}%` }} />
           </div>
-          <p>{t('settings.updates.card.downloadHint')}</p>
+          <p>{t(server ? 'shell.web.updateDownloading' : 'settings.updates.card.downloadHint')}</p>
         </div>
       )}
 
@@ -85,7 +86,7 @@ export function UpdateCard({ updates }: { updates: UpdatesController }): React.J
             ) : primary === 'download' ? (
               <button type="button" className="btn-sm primary" onClick={updates.download}><Icon.download />{t('shell.update.download')}</button>
             ) : primary === 'install' ? (
-              <button type="button" className="btn-sm primary" onClick={() => updates.install('now')}><Icon.refresh />{t('shell.update.restart')}</button>
+              <button type="button" className="btn-sm primary" onClick={() => updates.install('now')}><Icon.refresh />{t(server ? 'shell.web.updateInstall' : 'shell.update.restart')}</button>
             ) : primary === 'retry' ? (
               <button type="button" className="btn-sm primary" onClick={updates.check}><Icon.refresh />{t('shell.update.retry')}</button>
             ) : null}

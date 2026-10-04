@@ -1,0 +1,35 @@
+{
+  "name": "@orca-board/web",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs && vite build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.browser.json",
+    "test": "node --test test/*.test.ts",
+    "start": "node dist/control.mjs start",
+    "admin": "node dist/admin.mjs",
+    "setup": "node dist/control.mjs setup",
+    "bundle:linux": "node bundle-linux.mjs"
+  },
+  "dependencies": {
+    "@orca-board/headless": "workspace:*",
+    "@orca-board/runtime": "workspace:*",
+    "@orca-board/contracts": "workspace:*",
+    "@orca-board/client": "workspace:*",
+    "@orca-board/ui": "workspace:*",
+    "@orca-board/core": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@orca-board/client": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "esbuild": "0.28.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^7.0.0"
+  }
+}

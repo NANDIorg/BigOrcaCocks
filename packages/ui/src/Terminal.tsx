@@ -1,9 +1,9 @@
 import { getUiApi } from './host'
 import type React from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { t } from './i18n'
+import { t, useT } from './i18n'
 import { appearance } from './appearance'
 
 interface Props {
@@ -15,6 +15,11 @@ interface Props {
 
 /** xterm.js на один PTY. Скрытый терминал остаётся смонтированным, чтобы не терять историю. */
 export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Element {
+  const text = useT()
+  const remoteWriter = Boolean(getUiApi().pty.claimWriter)
+  const [writable, setWritable] = useState(!remoteWriter)
+  const [claiming, setClaiming] = useState(false)
+  const [error, setError] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const fitRef = useRef<{ term: XTerm; fit: FitAddon } | null>(null)
 
@@ -32,6 +37,8 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
       theme: terminalTheme(),
       scrollback: 5000
     })
+    term.options.disableStdin = remoteWriter
+    const offWriter = getUiApi().pty.onWriterState?.(ptyId, value => { setWritable(value); term.options.disableStdin = !value })
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
@@ -54,6 +61,7 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
     const offExit = getUiApi().pty.onExit(ptyId, (code) =>
       term.write(`\r\n\x1b[90m${t('shell.term.exitCode', { code })}\x1b[0m\r\n`)
     )
+    const offResync = getUiApi().pty.onResync?.(ptyId, tail => { term.reset(); term.write(`${tail.replace(/\r?\n/g, '\r\n')}\r\n\x1b[90m${t('shell.web.terminalResync')}\x1b[0m\r\n`) })
     const onInput = term.onData((d) => getUiApi().pty.write(ptyId, d))
     const ro = new ResizeObserver(doFit)
     ro.observe(el)
@@ -64,6 +72,8 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
       offData()
       offExit()
       offTheme()
+      offWriter?.()
+      offResync?.()
       term.dispose()
       fitRef.current = null
     }
@@ -72,6 +82,7 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
   }, [ptyId])
 
   useEffect(() => {
+    if (!visible && remoteWriter) void getUiApi().pty.releaseWriter?.(ptyId).catch(() => {})
     if (visible) {
       requestAnimationFrame(() => {
         const cur = fitRef.current
@@ -84,5 +95,9 @@ export function Terminal({ ptyId, visible, initialTail }: Props): React.JSX.Elem
     }
   }, [visible, ptyId])
 
-  return <div ref={ref} />
+  return <div className="terminal-surface">{remoteWriter && <div className="terminal-writer"><span role="status">{text(writable ? 'shell.web.terminalWritable' : 'shell.web.terminalReadOnly')}</span>{!writable && <button type="button" className="btn-sm" disabled={claiming} onClick={() => {
+    setClaiming(true); setError(''); void getUiApi().pty.claimWriter?.(ptyId).then(() => {
+      const cur = fitRef.current; if (cur) { cur.fit.fit(); getUiApi().pty.resize(ptyId, cur.term.cols, cur.term.rows); cur.term.focus() }
+    }, () => setError(text('shell.web.terminalBusy'))).finally(() => setClaiming(false))
+  }}>{text('shell.web.takeControl')}</button>}<span role="alert" className="error-text">{error}</span></div>}<div ref={ref} className="terminal-canvas" /></div>
 }
