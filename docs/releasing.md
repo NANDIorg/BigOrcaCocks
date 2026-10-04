@@ -19,7 +19,7 @@ Web-выпуск с latest=false. Desktop workflow/подписи/codenames/feed
 
 Web обновляется из браузера либо `orca-web update`: собственный stable feed, checksum, owner,
 backup/rollback и отдельный systemd worker/recovery. Полный порядок — [web.md](web.md).
-Существующий Desktop Draft 2.0.0 не изменяется; первый Web-выпуск — отдельное поручение.
+Опубликованный Desktop 2.0.0 не изменяется; Web-выпуск — отдельное поручение.
 Разработка этой ветки не разрешает публикацию, создание тега или смену версии.
 
 Это инструкция для разработки **orca-board**, а не для агентов продукта в чужих проектах.
