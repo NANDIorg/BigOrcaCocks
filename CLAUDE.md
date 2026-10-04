@@ -58,6 +58,9 @@ orca-board; `skills/*.md` — инструкции самого продукта
 - **Не менять версию** вне задачи на релиз. Релиз — коммит `chore: release vX.Y.Z`, версия меняется
   одновременно в `/package.json` и `apps/desktop/package.json`, через PR подготовки в `release/*`
   или `hotfix/*`. Существующие теги не передвигать. Полный порядок — в `docs/git-flow.md`.
+  Для будущего общего выпуска Desktop/Web согласован также `apps/web/package.json`;
+  совместный bump/guards/workflow подключаются в W6 до первого выпуска с Web,
+  как описано в `docs/superpowers/specs/2026-10-04-orca-web-self-hosted-design.md`.
 - **Не повторять и не переназначать морские кодовые имена Orca.** Источник —
   `packages/core/src/release-codenames.json`: каждой новой серии major/minor `X.Y` назначается
   уникальное английское название морского животного, patch наследует имя серии.

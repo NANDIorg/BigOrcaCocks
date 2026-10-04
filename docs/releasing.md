@@ -4,16 +4,23 @@
 
 Общий runtime/client/UI уже выделен; состояние продуктов и границы пакетов —
 [shared-foundation.md](shared-foundation.md). Сейчас существует Desktop Release workflow
-и установленный Node artifact для проверок; отдельные Web/терминальный CLI releases
-ещё не выпускаются. Сборка Node host не является публикацией Web-сайта.
+и установленный Node artifact для проверок; Web и терминальный CLI ещё не выпускаются.
+Сборка Node host не является публикацией Web-сайта.
 
-Эта существующая инструкция упаковки/подписи/marine codenames относится к Desktop.
-CLI/Web позже получают свои workflows; общая policy уже задаётся product-release.mjs:
-own manifest/version, cli/vX.Y.Z или web/vX.Y.Z, product-specific release/hotfix ветки,
-make_latest=false и запрет Desktop latest manifests/установщиков в их assets.
-Root/Desktop alignment для Desktop сохраняется; чужие версии при preparation/backmerge
-не изменяются. Product version не является protocol/schema version; совместимость
-проверяется handshake. Подготовка общего фундамента не разрешает публикацию/tag/bump.
+Эта существующая инструкция упаковки/подписи/marine codenames пока выполняется для Desktop.
+Уточнение пользователя 04.10.2026: Desktop/Web будут иметь один номер версии и общий
+GitHub Release с отдельными packages, общий `vX.Y.Z` и release/hotfix branch.
+Desktop feed сохраняет свой формат; Web update выбирает только Web archive и
+выполняется локально владельцем сервера с backup. Удобная Linux-установка описана в
+[спецификации Web](superpowers/specs/2026-10-04-orca-web-self-hosted-design.md).
+
+Переход product-release.mjs/guards/fixtures/release workflow к общему root/Desktop/Web
+bump входит в W6 до первого выпуска с Web. Сейчас они ещё содержат независимую Web
+policy; применять её к новому Web-выпуску нельзя. Пока Web не готов, существующий
+Desktop workflow остаётся рабочим и Draft 2.0.0 не изменяется. CLI сохраняет отдельный
+`cli/vX.Y.Z` и make_latest=false; shared/CLI manifests не получают общий bump.
+Product version не является protocol/schema version; совместимость проверяется
+handshake. Разработка Web не разрешает публикацию/tag/bump существующих продуктов.
 
 
 Это инструкция для разработки **orca-board**, а не для агентов продукта в чужих проектах.

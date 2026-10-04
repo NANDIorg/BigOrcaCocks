@@ -49,8 +49,10 @@ Web должен реализовать свой adapter, авторизацию
 После всей пользовательской задачи собери и открой локальный Desktop по [AGENTS.md](AGENTS.md);
 ручную проверку интерфейса выполняет пользователь.
 
-Desktop сохраняет существующий release workflow. Версии, ветки и теги CLI/Web
-отделены product-aware guards; их реальные поставки и workflows добавляются вместе
-с продуктами. Shared packages пока private и встраиваются в сборки приложений.
+Для Desktop/Web согласован общий выпуск: один номер версии, тег `vX.Y.Z` и GitHub
+Release с отдельными установщиками. Реализация Web и переход прежних release guards
+к этому выпуску описаны в [спецификации Web](docs/superpowers/specs/2026-10-04-orca-web-self-hosted-design.md).
+До готовности поставки Web выпускается только Desktop; CLI сохраняет отдельные
+версии/теги. Shared packages пока private и встраиваются в сборки приложений.
 Согласованный исходный проект — [спецификация](docs/superpowers/specs/2026-10-02-orca-shared-foundation-design.md),
 фактический результат и проверки — [журнал готовности](docs/orca-foundation-progress.md).

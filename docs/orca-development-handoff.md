@@ -48,7 +48,9 @@ PR #55 отдельно не сливался. Его план отражает 
 
 Существующий `packages/cli/bin/orca-board.js` — совместимый dependency-free клиент агентов.
 Он не является новым интерактивным CLI для человека. Desktop root/app version меняется
-вместе; версии private shared packages и будущих Web/CLI не выравниваются с 2.0.0.
+вместе; в подготовке 2.0.0 версии private shared packages и CLI не выравнивались.
+Последующее уточнение: новый Web manifest использует текущую root/Desktop version,
+а будущий первый выпуск с Web становится общим с Desktop, как описано ниже.
 
 ## На чём остановились и что осталось для Web
 
@@ -80,7 +82,8 @@ Backend не нужно переписывать заново. В общем UI 
    логи, backup/restore и graceful update/stop. Browser не получает operator credential-файл.
 7. **Приёмка и отдельная поставка Web.** Проверить два клиента, stale/duplicate/reconnect,
    PTY lifetime, вопросы/review/workflow, файлы/preview и несовместимую старую вкладку.
-   Подготовить Web artifact/workflow/version с `web/vX.Y.Z`, `make_latest=false`.
+   Подготовить Web artifact и job общего Desktop/Web выпуска `vX.Y.Z`; прежнюю
+   независимую Web policy заменить до первого выпуска с Web.
 
 Первая версия — внутренняя панель. Регистрация, tenant isolation, биллинг, публичный
 multiuser-сервис и масштабирование оставлены на будущее. Общий OS-пользователь не
@@ -151,7 +154,14 @@ Desktop 2.0.0 собран в Draft, tag `v2.0.0` — master merge `1c726cc`; и
 под Unix-пользователем сервера. Docker остаётся дополнительным будущим способом.
 
 Создана `feature/web-self-hosted` от `57f6d1b` в отдельном worktree.
-[Предложение архитектуры Web](superpowers/specs/2026-10-04-orca-web-self-hosted-design.md)
-ожидает проверки пользователем. Рубежи W1–W6: host/auth → UI/projects → streams →
-files/preview → installer → update/acceptance. Первый implementation plan относится
-к W1; Web-код пока не реализован, повторять A–F не нужно.
+[Архитектуру Web](superpowers/specs/2026-10-04-orca-web-self-hosted-design.md)
+пользователь утвердил и уточнил общий выпуск с Desktop: одна версия, tag `vX.Y.Z`
+и GitHub Release с отдельными установщиками. Web получает готовый Linux-пакет,
+мастер установки и серверную команду обновления с backup. Старую независимую Web
+release policy в scripts/guards/workflow нужно заменить в W6 до первого общего
+выпуска; новый release/tag сейчас не создаётся. CLI остаётся независимым.
+
+Рубежи W1–W6: host/auth → UI/projects → streams → files/preview → installer →
+update/acceptance. [Первый implementation plan W1](superpowers/plans/2026-10-04-orca-web-host-auth.md)
+подготовлен для проверки пользователем. Выполнять самому, отдельное итоговое ревью —
+сохранённый выбор пользователя. Web-код пока не реализован, повторять A–F не нужно.

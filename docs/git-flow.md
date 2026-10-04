@@ -1,27 +1,27 @@
 # Git Flow для двух разработчиков и агентов
 
-## Независимые продукты
+## Продукты и общий выпуск Desktop/Web
 
 Общий фундамент уже реализован: [карта пакетов](shared-foundation.md) и
 [результаты проверок](orca-foundation-progress.md). Shared packages пока private
 и встраиваются в продукт из выбранного для его сборки состояния репозитория.
-Изменение shared кода не выпускает автоматически Desktop/Web/CLI одновременно.
+Изменение shared кода само по себе не начинает выпуск.
 
-Общие feature PR по-прежнему идут в develop. Desktop сохраняет существующие версии
-root/apps/desktop, `release/X.Y.Z`, `hotfix/X.Y.Z`, теги `vX.Y.Z` и marine codenames.
-CLI использует manifest packages/cli/package.json, ветки release/cli/X.Y.Z и hotfix/cli/X.Y.Z,
-теги cli/vX.Y.Z. Web использует будущий apps/web/package.json, release/web/X.Y.Z,
-hotfix/web/X.Y.Z и web/vX.Y.Z. Существующий agent JS CLI не превращается в новый UI
-от изменения release guard; его HELP остаётся прежним.
+Общие feature PR по-прежнему идут в develop. По уточнению пользователя 04.10.2026
+Desktop и будущий Web выпускаются вместе: один номер root/Desktop/Web, ветки
+`release/X.Y.Z` / `hotfix/X.Y.Z`, тег `vX.Y.Z`, marine codename и GitHub Release.
+У каждого собственная сборка и способ установки обновления. Desktop latest manifests
+и feed сохраняются; Web packages имеют отдельные имена. CLI сохраняет manifest
+packages/cli/package.json, ветки release/cli/X.Y.Z / hotfix/cli/X.Y.Z, теги cli/vX.Y.Z
+и make_latest=false. Агентский JS CLI и его HELP остаются прежними.
 
-Подготовка меняет только выбранный продукт. Git-flow guard сверяет branch/tag с его
-manifest, остальные версии не выравниваются. Одна активная release preparation и
-concurrency относятся к продукту. Backmerge сохраняет версии других продуктов.
-CLI/Web publication обязательно использует make_latest=false и не содержит Desktop
-latest manifests/установщики; только Desktop владеет GitHub Latest/update feed.
-Source policy — scripts/product-release.mjs, release fixtures — scripts/product-release.test.mjs.
-Workflows CLI/Web добавляются с реальными поставками, сейчас публикаций нет.
-Local rulesets учитывают product prefixes; применять их на GitHub должен владелец
+Это целевая политика из [спецификации Web](superpowers/specs/2026-10-04-orca-web-self-hosted-design.md).
+Текущие scripts/product-release.mjs, fixtures и guards ещё допускают независимый
+`web/vX.Y.Z`; их переход вместе с workflow/совместным bump входит в W6 до первого
+выпуска с Web. До этого выпускается только Desktop; не создавай отдельный Web tag
+или release branch по старой политике. Существующий выпуск 2.0.0 не переупаковывается.
+Shared/CLI версии при общем preparation/backmerge не выравниваются с root/Desktop/Web.
+Local rulesets обновляются вместе с policy; применять их на GitHub должен владелец
 в отдельной операции. Проверки Node используют отдельный `.native` root, не rebuild
 Desktop node-pty. Полный verify сохраняется перед PR.
 

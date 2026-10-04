@@ -25,12 +25,18 @@ Release packaging workflow также готовит Node root явно до `pn
 Installed headless artifact имеет собственный package/node_modules и проверяется
 в Linux CI вне workspace без DISPLAY; Native Git/PTY smoke не использует TS links.
 
-`product-release.mjs` задаёт manifests/tags/Latest policy. Desktop сохраняет `vX.Y.Z`,
-root/Desktop alignment и marine codenames. CLI/Web используют `cli/vX.Y.Z`, `web/vX.Y.Z`,
-`release/cli/X.Y.Z`, `release/web/X.Y.Z` и соответствующие hotfix branches. Guards
-проверяют версию выбранного manifest; nonDesktop release policy — make_latest=false
-и запрет Desktop update assets. Новые CLI/Web workflows добавляются с продуктами.
-Local ruleset configs включают их branches/tags; remote rulesets здесь не меняются.
+`product-release.mjs` сейчас задаёт прежнюю manifests/tags/Latest policy с независимыми
+`cli/vX.Y.Z` и `web/vX.Y.Z`. Desktop сохраняет root/Desktop alignment, `vX.Y.Z`
+и marine codenames. Guards и local ruleset configs ещё отражают эту реализованную
+политику; remote rulesets здесь не меняются.
+
+04.10.2026 согласован общий выпуск Desktop/Web: один номер версии, `vX.Y.Z` и GitHub
+Release с отдельными Desktop/Web assets. Web устанавливается обычным Linux-сервисом
+через готовый пакет и мастер. [Спецификация Web](superpowers/specs/2026-10-04-orca-web-self-hosted-design.md)
+фиксирует W1–W6; переход guards/workflow к общему выпуску входит в W6 до первой
+публикации Web. Сейчас реализован только Desktop release workflow. Desktop updater
+сохраняет свой feed и не загружает Web archive; Web update выполняется на сервере.
+CLI остаётся независимым продуктом с `make_latest=false`.
 
 
 ## Общий client и UI
@@ -4526,6 +4532,6 @@ IPC `recovery:list`, `recovery:inspect`, `recovery:resolve` → общий opera
 
 ### Общий operator protocol
 
-`contracts/operator-protocol` и runtime factories handshake/session/observer/ledger дают общую границу для Desktop, будущих Web и CLI. Product versions независимы; protocol/schema несовместимость и отсутствующие capabilities отказывают до effects. Host задаёт проверенный operator principal; JSON не задаёт actor/clientId. Выбор project/dialog локален соединению. Persistent `operator-mutations.json` хранит digest и результат запроса 24 часа (до 1024 записей/4 MiB); pending после restart имеет uncertain outcome, повторное действие автоматически не запускается. Незавершённые записи не вытесняются. Ручной abandon фиксирует отказ без запуска native эффекта.
+`contracts/operator-protocol` и runtime factories handshake/session/observer/ledger дают общую границу для Desktop, будущих Web и CLI. Desktop/Web получают общий product version, CLI сохраняет отдельный; protocol/schema несовместимость и отсутствующие capabilities отказывают до effects. Host задаёт проверенный operator principal; JSON не задаёт actor/clientId. Выбор project/dialog локален соединению. Persistent `operator-mutations.json` хранит digest и результат запроса 24 часа (до 1024 записей/4 MiB); pending после restart имеет uncertain outcome, повторное действие автоматически не запускается. Незавершённые записи не вытесняются. Ручной abandon фиксирует отказ без запуска native эффекта.
 
 Observer history ограничен 512 событиями/2 MiB/24 часами; subscriber queue — 128 событиями/1 MiB. Snapshot устанавливает подписку до чтения; expired/foreign-owner cursor, overflow и oversized payload требуют нового snapshot. Observer не меняет core `consumedBy`. Ошибка одного subscriber не прерывает owner; reentrant publication сохраняет порядок. Disconnect закрывает только подписки и writer leases своего клиента. Composition, private loopback endpoint и browser-safe client реализованы; legacy agent envelope/HELP не меняются. Web-сайт и его серверная авторизация — отдельная следующая задача.
