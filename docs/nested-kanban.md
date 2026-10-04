@@ -49,6 +49,10 @@ Async Git subprocess теперь принадлежат общему GitProcess
 отмене не предполагается и не откатывается автоматически; EffectToken и restart
 reconciliation ветвления/merge остаются следующей частью B.
 
+Project branch/list/initialCommit/fetch/pull/checkout больше не вызывают sync Git для
+проверок HEAD до/после mutation. Отзыв policy или удаление registration во время
+проверки блокирует дальнейший effect; выбор проекта другого клиента не меняется.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime

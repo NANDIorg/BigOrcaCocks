@@ -60,6 +60,11 @@ owned процессами, bounded stdout/stderr, закрытым stdin и Abo
 ждёт окончания дерева hooks и запрещает новые вызовы. Legacy workflow Git пока
 sync; перенос его на этот же service и проверку EffectToken продолжается в B.
 
+Async project Git path теперь не содержит sync HEAD/branch checks: проверка repo,
+unborn/ветки, результата fetch/pull/checkout/initialCommit проходит общий process
+service. Перед следующей mutation guard повторяется после await; отозванная policy
+не маскируется Git domain error. Это ещё не завершает перенос workflow effects.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

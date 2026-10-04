@@ -6,7 +6,7 @@ import type { GitOperations } from './git.ts'
 
 export interface ProjectGitCommandHost extends ProjectCommandHost<Project, ProjectGitCommandName> {
   isCurrent(project: Project, context: ProjectCommandContext): boolean
-  git: Pick<GitOperations, 'projectBranchInfo' | 'projectBranches' | 'projectFetch' | 'projectPull' | 'checkoutProjectBranch' | 'createInitialCommit'>
+  git: Pick<GitOperations, 'projectBranchInfoAsync' | 'projectBranches' | 'projectFetch' | 'projectPull' | 'checkoutProjectBranch' | 'createInitialCommit'>
   liveAgents(projectId: string): number
 }
 
@@ -18,7 +18,7 @@ export function createProjectGitCommands(host: ProjectGitCommandHost): ProjectGi
     isCurrent: (project, context) => project.registration.root === project.root && host.isCurrent(project.registration, context)
   })
   return {
-    branch: context => execute(context, 'projectGit.branch', () => project => host.git.projectBranchInfo(project.root)),
+    branch: context => execute(context, 'projectGit.branch', () => project => host.git.projectBranchInfoAsync(project.root)),
     branches: context => execute(context, 'projectGit.branches', () => project => host.git.projectBranches(project.root)),
     fetch: context => execute(context, 'projectGit.fetch', () => (project, _context, scope) => host.git.projectFetch(project.root, () => scope.commit(() => undefined))),
     pull: context => execute(context, 'projectGit.pull', () => (project, _context, scope) => host.git.projectPull(project.root, () => scope.commit(() => undefined))),

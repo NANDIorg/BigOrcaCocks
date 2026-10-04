@@ -380,6 +380,12 @@ POSIX использует detached group, Windows — taskkill дерева с�
 идемпотентен, новые вызовы отклоняются; отмена сохраняется отдельно от Git timeout.
 Composition может передать service третьим аргументом `createGitOperations`.
 
+Весь путь ProjectGitCommands теперь использует async metadata: `projectBranchInfoAsync`
+и `hasCommitsAsync`, включая проверки до mutation и формирование результата после неё.
+Scope guard повторяется после ожидания и перед следующим Git effect; отмена process
+не превращается в «не репозиторий»/«нет upstream»/timeout. В Desktop старые sync exports
+сохранены для ещё не перенесённых workflow callers; отдельного Git owner не создаётся.
+
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи
 за один проход, не потребляет события. AgentCommands используют общие discovery и

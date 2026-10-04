@@ -14,5 +14,5 @@ export const {
   projectBranchInfo, reviewInfo, commitWorktree, mergeBranch, removeWorktreeKeepBranch,
   removeWorktree, taskWorktreePath, localBranchExists, isBranchNameAcceptedByGit, gitCreateBranch,
   gitCheckout, gitCommit, gitPush, setupCommand, projectBranches,
-  projectFetch, projectPull, checkoutProjectBranch, createInitialCommit, gitCheckIgnore
+  projectFetch, projectPull, checkoutProjectBranch, createInitialCommit, gitCheckIgnore, projectBranchInfoAsync, hasCommitsAsync
 } = operations

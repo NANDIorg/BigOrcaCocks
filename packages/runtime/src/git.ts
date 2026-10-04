@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync } from 'node:fs'
+import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBranchUpstream, ProjectGitResult, ProjectLocalBranch } from '@orca-board/contracts'
 import { canonicalGitCommonDir, createGitOperationQueue, type GitOperationQueue } from './git-operation-queue.ts'
@@ -407,6 +408,37 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
   const LOCAL_TIMEOUT_MS = 30_000
   const OUTPUT_LIMIT = 4000
 
+  /** HEAD exit 1 — unborn; сбой Git не выдаём за отсутствие коммитов. */
+  async function hasCommitsAsync(root: string): Promise<boolean> {
+    const result = await processes.run(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { acceptedExitCodes: [1] })
+    return result.code === 0
+  }
+
+  function preserveCancellation(error: unknown): void {
+    if (error instanceof GitProcessError && error.cancelled) throw error
+  }
+
+  /** Совместимый DTO без sync process calls; ошибка metadata не должна предлагать начальный commit. */
+  async function projectBranchInfoAsync(root: string): Promise<ProjectBranchInfo> {
+    try {
+      if ((await processes.run(root, ['rev-parse', '--is-inside-work-tree'])).stdout.trim() !== 'true') return { isGitRepo: false, branch: null, detached: false }
+    } catch (error) { preserveCancellation(error); return { isGitRepo: false, branch: null, detached: false } }
+    let branch: string | undefined
+    try {
+      const result = await processes.run(root, ['symbolic-ref', '--short', '-q', 'HEAD'], { acceptedExitCodes: [1] })
+      if (result.code === 0) branch = result.stdout.trim()
+    } catch (error) { preserveCancellation(error) }
+    if (branch !== undefined) {
+      let unborn = false
+      try { unborn = !await hasCommitsAsync(root) } catch (error) { preserveCancellation(error) }
+      return unborn ? { isGitRepo: true, branch, detached: false, unborn: true } : { isGitRepo: true, branch, detached: false }
+    }
+    try {
+      const sha = (await processes.run(root, ['rev-parse', '--short', 'HEAD'])).stdout.trim()
+      return { isGitRepo: true, branch: null, detached: true, sha }
+    } catch (error) { preserveCancellation(error); return { isGitRepo: true, branch: null, detached: true } }
+  }
+
   /**
    * Асинхронно, а не `execFileSync`: `fetch` идёт до двух минут, синхронный вызов заморозил бы окно и терминалы.
    * `input` — stdin команды (`hash-object --stdin`); service закрывает stdin и владеет деревом hooks.
@@ -451,8 +483,12 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
     return operationQueue.enqueue(key, fn)
   }
 
-  function assertRepo(root: string): void {
-    if (!projectBranchInfo(root).isGitRepo) throw messages.error('git.notRepo', { path: root })
+  async function checked<T>(promise: Promise<T>, guard: () => void): Promise<T> {
+    const result = await promise; guard(); return result
+  }
+
+  async function assertRepo(root: string, guard: () => void): Promise<void> {
+    if (!(await checked(projectBranchInfoAsync(root), guard)).isGitRepo) throw messages.error('git.notRepo', { path: root })
   }
 
   /** Ветка → путь worktree, где она checked out (по `git worktree list --porcelain`), включая корень. */
@@ -483,7 +519,7 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
 
   /** Ветки корня проекта без сети. Не репозиторий — `isGitRepo: false`, без исключения. */
   async function projectBranches(root: string): Promise<ProjectBranchList> {
-    const current = projectBranchInfo(root)
+    const current = await projectBranchInfoAsync(root)
     if (!current.isGitRepo) return { isGitRepo: false, current, local: [], remote: [], dirty: false }
     const [locals, remotes, worktrees, status] = await Promise.all([
       refNames(root, 'refs/heads/'),
@@ -500,17 +536,17 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
     return { isGitRepo: true, current, local, remote, ...(upstream ? { upstream } : {}), dirty: status.stdout.trim() !== '' }
   }
 
-  function gitResult(root: string, out: { stdout: string; stderr: string }): ProjectGitResult {
-    return { output: tail([out.stdout, out.stderr].filter((t) => t.trim()).join('\n'), OUTPUT_LIMIT), branch: projectBranchInfo(root) }
+  async function gitResult(root: string, out: { stdout: string; stderr: string }): Promise<ProjectGitResult> {
+    return { output: tail([out.stdout, out.stderr].filter((t) => t.trim()).join('\n'), OUTPUT_LIMIT), branch: await projectBranchInfoAsync(root) }
   }
 
   /** `git fetch --all --prune`: HEAD и рабочее дерево не трогает. */
   function projectFetch(root: string, guard: () => void = () => {}): Promise<ProjectGitResult> {
     return serial(root, async () => {
       guard()
-      assertRepo(root)
-      guard()
-      return gitResult(root, await runGit(root, ['fetch', '--all', '--prune'], NET_TIMEOUT_MS))
+      await assertRepo(root, guard)
+      const result = await checked(runGit(root, ['fetch', '--all', '--prune'], NET_TIMEOUT_MS), guard)
+      return checked(gitResult(root, result), guard)
     })
   }
 
@@ -522,24 +558,25 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
   function projectPull(root: string, guard: () => void = () => {}): Promise<ProjectGitResult> {
     return serial(root, async () => {
       guard()
-      assertRepo(root)
-      const { branch } = projectBranchInfo(root)
+      await assertRepo(root, guard)
+      const { branch } = await checked(projectBranchInfoAsync(root), guard)
       if (!branch) throw messages.error('git.noUpstream', { branch: 'HEAD' })
-      const upstream = await branchUpstream(root, branch).catch(() => undefined)
+      const upstream = await checked(branchUpstream(root, branch).catch(error => { preserveCancellation(error); return undefined }), guard)
       if (!upstream || upstream.gone) throw messages.error('git.noUpstream', { branch })
-      const remote = (await runGit(root, ['config', '--get', `branch.${branch}.remote`]).catch(() => ({ stdout: '' }))).stdout.trim()
-      guard()
-      const fetched = remote && remote !== '.' ? await runGit(root, ['fetch', remote], NET_TIMEOUT_MS) : { stdout: '', stderr: '' }
-      guard()
+      const remote = (await checked(runGit(root, ['config', '--get', `branch.${branch}.remote`]).catch(error => { preserveCancellation(error); return { stdout: '' } }), guard)).stdout.trim()
+      const fetched = remote && remote !== '.' ? await checked(runGit(root, ['fetch', remote], NET_TIMEOUT_MS), guard) : { stdout: '', stderr: '' }
+      let merged: { stdout: string; stderr: string }
       try {
-        const merged = await runGit(root, ['merge', '--ff-only', `${branch}@{upstream}`])
-        return gitResult(root, { stdout: [fetched.stdout, merged.stdout].join('\n'), stderr: fetched.stderr })
+        merged = await runGit(root, ['merge', '--ff-only', `${branch}@{upstream}`])
       } catch (e) {
+        preserveCancellation(e); guard()
         // Не fast-forward — если HEAD не предок upstream. Иначе причина другая (правки в дереве мешают): показываем ошибку git.
-        const ancestor = await runGit(root, ['merge-base', '--is-ancestor', 'HEAD', `${branch}@{upstream}`]).then(() => true, () => false)
+        const ancestor = await checked(runGit(root, ['merge-base', '--is-ancestor', 'HEAD', `${branch}@{upstream}`]).then(() => true, error => { preserveCancellation(error); return false }), guard)
         if (!ancestor) throw messages.error('git.notFastForward', { branch, upstream: upstream.name })
         throw e
       }
+      guard()
+      return checked(gitResult(root, { stdout: [fetched.stdout, merged.stdout].join('\n'), stderr: fetched.stderr }), guard)
     })
   }
 
@@ -551,19 +588,19 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
   function checkoutProjectBranch(root: string, branch: string, liveAgents: number | (() => number), guard: () => void = () => {}): Promise<ProjectBranchInfo> {
     return serial(root, async () => {
       guard()
-      assertRepo(root)
-      const current = projectBranchInfo(root)
+      await assertRepo(root, guard)
+      const current = await checked(projectBranchInfoAsync(root), guard)
       if (current.branch === branch) return current
-      const locals = await refNames(root, 'refs/heads/')
+      const locals = await checked(refNames(root, 'refs/heads/'), guard)
       let local: string | undefined
       let track: string | undefined
       if (locals.includes(branch)) {
         local = branch
       } else {
-        const remoteRefs = (await refNames(root, 'refs/remotes/')).filter((r) => !r.endsWith('/HEAD'))
+        const remoteRefs = (await checked(refNames(root, 'refs/remotes/'), guard)).filter((r) => !r.endsWith('/HEAD'))
         if (!remoteRefs.includes(branch)) throw messages.error('git.branchNotFound', { branch })
         // Имя remote может содержать «/» — берём самый длинный подходящий.
-        const remotes = (await runGit(root, ['remote'])).stdout.split('\n').filter(Boolean)
+        const remotes = (await checked(runGit(root, ['remote']), guard)).stdout.split('\n').filter(Boolean)
         const remote = remotes.filter((r) => branch.startsWith(`${r}/`)).sort((a, b) => b.length - a.length)[0]
         if (!remote) throw messages.error('git.branchNotFound', { branch })
         local = branch.slice(remote.length + 1)
@@ -574,19 +611,21 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
         if (count > 0) throw messages.error('git.workersActive', { count })
       }
       assertAgentsIdle()
-      const busyPath = (await checkedOutBranches(root)).get(local)
+      const busyPath = (await checked(checkedOutBranches(root), guard)).get(local)
       // Unborn HEAD тоже указан в worktree list: свой корень не является чужим занятым worktree.
       let ownRoot = busyPath === root
       if (busyPath !== undefined && !ownRoot) {
-        try { ownRoot = realpathSync(busyPath) === realpathSync(root) } catch { /* Недоступный чужой worktree остаётся занятым. */ }
+        try { const paths = await Promise.all([realpath(busyPath), realpath(root)]); ownRoot = paths[0] === paths[1] }
+        catch { /* Недоступный чужой worktree остаётся занятым. */ }
+        guard()
       }
       if (busyPath !== undefined && !ownRoot) throw messages.error('git.branchBusy', { branch: local, path: busyPath })
-      if ((await runGit(root, ['status', '--porcelain'])).stdout.trim() !== '') throw messages.error('git.dirtyTree')
+      if ((await checked(runGit(root, ['status', '--porcelain']), guard)).stdout.trim() !== '') throw messages.error('git.dirtyTree')
       // Завершающий `--` — имя ветки не должно читаться как путь файла; имя, начинающееся с «-», сюда не дойдёт: такой ветки нет.
       guard(); assertAgentsIdle()
-      if (track) await runGit(root, ['checkout', '-q', '--track', '-b', local, track, '--'])
-      else await runGit(root, ['checkout', '-q', local, '--'])
-      return projectBranchInfo(root)
+      if (track) await checked(runGit(root, ['checkout', '-q', '--track', '-b', local, track, '--']), guard)
+      else await checked(runGit(root, ['checkout', '-q', local, '--']), guard)
+      return checked(projectBranchInfoAsync(root), guard)
     })
   }
 
@@ -599,7 +638,7 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
    */
   async function identityArgs(root: string): Promise<string[]> {
     const get = (key: string): Promise<string> =>
-      runGit(root, ['config', '--get', key]).then((r) => r.stdout.trim(), () => '')
+      runGit(root, ['config', '--get', key]).then((r) => r.stdout.trim(), error => { preserveCancellation(error); return '' })
     const [name, email] = await Promise.all([get('user.name'), get('user.email')])
     return name && email ? [] : ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local']
   }
@@ -615,22 +654,18 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
   function createInitialCommit(root: string, mode: InitialCommitMode, guard: () => void = () => {}): Promise<ProjectBranchInfo> {
     return serial(root, async () => {
       guard()
-      assertRepo(root)
-      if (hasCommits(root)) return projectBranchInfo(root)
-      const identity = await identityArgs(root)
-      guard()
+      await assertRepo(root, guard)
+      if (await checked(hasCommitsAsync(root), guard)) return checked(projectBranchInfoAsync(root), guard)
+      const identity = await checked(identityArgs(root), guard)
       if (mode === 'snapshot') {
-        await runGit(root, ['add', '-A'], NET_TIMEOUT_MS)
-        guard()
-        await runGit(root, [...identity, 'commit', '-q', '--allow-empty', '-m', INITIAL_COMMIT_MESSAGE], NET_TIMEOUT_MS)
+        await checked(runGit(root, ['add', '-A'], NET_TIMEOUT_MS), guard)
+        await checked(runGit(root, [...identity, 'commit', '-q', '--allow-empty', '-m', INITIAL_COMMIT_MESSAGE], NET_TIMEOUT_MS), guard)
       } else {
-        const tree = (await runGit(root, ['hash-object', '-t', 'tree', '-w', '--stdin'], LOCAL_TIMEOUT_MS, '')).stdout.trim()
-        guard()
-        const commit = (await runGit(root, [...identity, 'commit-tree', tree, '-m', INITIAL_COMMIT_MESSAGE])).stdout.trim()
-        guard()
-        await runGit(root, ['update-ref', '-m', INITIAL_COMMIT_MESSAGE, 'HEAD', commit, ''])
+        const tree = (await checked(runGit(root, ['hash-object', '-t', 'tree', '-w', '--stdin'], LOCAL_TIMEOUT_MS, ''), guard)).stdout.trim()
+        const commit = (await checked(runGit(root, [...identity, 'commit-tree', tree, '-m', INITIAL_COMMIT_MESSAGE]), guard)).stdout.trim()
+        await checked(runGit(root, ['update-ref', '-m', INITIAL_COMMIT_MESSAGE, 'HEAD', commit, '']), guard)
       }
-      return projectBranchInfo(root)
+      return checked(projectBranchInfoAsync(root), guard)
     })
   }
 
@@ -661,7 +696,7 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
     currentBranch, hasCommits, assertHasCommits, headBase, addTaskWorktree, projectBranchInfo,
     reviewInfo, commitWorktree, mergeBranch, removeWorktreeKeepBranch, removeWorktree,
     taskWorktreePath, localBranchExists, isBranchNameAcceptedByGit, gitCreateBranch, gitCheckout, gitCommit, gitPush, setupCommand,
-    projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit, gitCheckIgnore
+    projectBranchInfoAsync, hasCommitsAsync, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit, gitCheckIgnore
   }
 }
 
