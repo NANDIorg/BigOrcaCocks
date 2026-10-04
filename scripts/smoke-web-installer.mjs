@@ -70,7 +70,7 @@ try {
   assert.equal((await stat(configFile)).uid, uid); assert.equal((await stat(accountFile)).mode & 0o777, 0o600)
   assert.equal((await stat(join(installedBase, 'current/app/control.mjs'))).uid, uid)
   assert.equal(existsSync(join(home, '.codex')), false)
-  assert.equal(execFileSync('runuser', ['-u', user, '--', 'env', '-i', `HOME=${home}`, 'PATH=/usr/bin:/bin', 'git', 'config', '--global', '--get', 'user.name'], { encoding: 'utf8' }).trim(), 'Orca Smoke')
+  assert.equal(execFileSync('runuser', ['-u', user, '--', 'env', '-i', `HOME=${home}`, 'PATH=/usr/bin:/bin', 'git', 'config', '--global', '--get', 'user.name'], { cwd: home, encoding: 'utf8' }).trim(), 'Orca Smoke')
   const existingUser = [...(customBase ? [] : [['Пользователь сервиса', '1'], ['Имя обычного пользователя', user]]), ['Для использования введите USE', 'USE']]
   await drive([...existingUser, ['Способ доступа', '1'], ['Папка с Git-проектами', ''], ['Настроить автозапуск', automatic], ...(provision ? [['Для перезапуска введите RESTART', 'RESTART']] : []), ['Применить настройки', 'y'], ['Какие CLI установить', '0']])
   assert.equal(await readFile(accountFile, 'utf8'), accounts)
