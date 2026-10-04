@@ -3,7 +3,7 @@ import { mt, OrcaError } from './i18n'
 
 export { MergeError, GitOpError, type ReviewInfo } from '@orca-board/runtime'
 
-// Общий Git сохраняет прежние OrcaError для IPC/socket и читает язык при показе review.
+// Общий async Git сохраняет прежние OrcaError; именованные exports делегируют одному scoped port.
 const operations = createGitOperations({
   error: (key, params) => new OrcaError(key, params),
   untrackedLabel: () => mt('review.untracked')

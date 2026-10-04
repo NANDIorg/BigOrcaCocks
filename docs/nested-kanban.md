@@ -41,6 +41,7 @@ common writer lease; закрытие окна не завершает коор�
 
 Git effects global/worker теперь асинхронны: общий GitProcessService и очередь canonical
 commonDir сериализуют root, linked worktree и symlink; независимые repo не ждут друг друга.
+Именованные compatibility exports вызывают этот же async port; второй sync Git body удалён.
 Compound branch/commit/review/merge/cleanup занимает очередь один раз. Stop/timeout
 завершает также hooks; failure не отравляет следующий job, закрытый port недоступен.
 

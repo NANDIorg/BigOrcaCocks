@@ -70,6 +70,7 @@ PTY input/resize auto claim не выполняется для malformed payload
 Review/request effects подключены к общему async runtime: commit/review/merge/cleanup
 занимают одну transaction canonical commonDir queue, preview не удерживает mutation
 queue. Долгий hook не блокирует PTY/другой repo. Ожидание человека остаётся вне Git queue.
+Именованные review/Git helpers тоже возвращают Promise через общий port, без sync-дубликата.
 GitProcessService закрывает stdin, ограничивает output, при stop/timeout завершает hooks.
 
 EffectScope проверяет captured project/store/task/run identity, node/visit/lane/dispatch

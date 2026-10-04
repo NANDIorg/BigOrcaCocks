@@ -44,13 +44,13 @@ function repository(commit = true): string {
   return root
 }
 
-it('Git runtime запускается обычным Node без Electron и видит unborn HEAD', () => {
+it('Git runtime запускается обычным Node без Electron и видит unborn HEAD', async () => {
   const root = repository(false)
   const ops = operations('headless')
-  assert.equal(ops.currentBranch(root), 'main')
-  assert.equal(ops.hasCommits(root), false)
-  assert.deepEqual(ops.projectBranchInfo(root), { isGitRepo: true, branch: 'main', detached: false, unborn: true })
-  assert.throws(() => ops.assertHasCommits(root), (e: unknown) => e instanceof HostError && e.host === 'headless' && e.key === 'git.noCommits' && e.params?.branch === 'main')
+  assert.equal((await ops.currentBranch(root)), 'main')
+  assert.equal((await ops.hasCommits(root)), false)
+  assert.deepEqual((await ops.projectBranchInfo(root)), { isGitRepo: true, branch: 'main', detached: false, unborn: true })
+  await assert.rejects(async () => (await ops.assertHasCommits(root)), (e: unknown) => e instanceof HostError && e.host === 'headless' && e.key === 'git.noCommits' && e.params?.branch === 'main')
 })
 
 it('empty initial commit сохраняет staged-файлы и рабочее дерево', async () => {
@@ -76,44 +76,44 @@ it('две реализации host errors не смешиваются при �
   await assert.rejects(a.projectFetch(dir), (e: unknown) => e instanceof HostError && e.host === 'a')
 })
 
-it('подпись untracked принадлежит host и читается при каждом review', () => {
+it('подпись untracked принадлежит host и читается при каждом review', async () => {
   const root = repository()
   let label = 'Files A:'
   const a = operations('a', () => label)
   const b = operations('b', () => 'Files B:')
   writeFileSync(join(root, 'new.txt'), 'new')
-  assert.match(a.reviewInfo(root, root, 'main').stat, /Files A:\nnew\.txt/)
-  assert.match(b.reviewInfo(root, root, 'main').stat, /Files B:\nnew\.txt/)
+  assert.match((await a.reviewInfo(root, root, 'main')).stat, /Files A:\nnew\.txt/)
+  assert.match((await b.reviewInfo(root, root, 'main')).stat, /Files B:\nnew\.txt/)
   label = 'Files A changed:'
-  assert.match(a.reviewInfo(root, root, 'main').stat, /Files A changed:\nnew\.txt/)
+  assert.match((await a.reviewInfo(root, root, 'main')).stat, /Files A changed:\nnew\.txt/)
 })
 
-it('worktree, commit, merge и remove сохраняют изменения задачи', () => {
+it('worktree, commit, merge и remove сохраняют изменения задачи', async () => {
   const root = repository()
   const wt = join(dir, 'worktree с пробелами')
   const ops = operations('headless')
-  ops.addTaskWorktree(root, wt, 'orca/task')
+  await ops.addTaskWorktree(root, wt, 'orca/task')
   writeFileSync(join(wt, 'answer.txt'), 'answer')
-  ops.commitWorktree(wt, 'task')
-  const review = ops.reviewInfo(root, wt, 'orca/task', 'main')
+  await ops.commitWorktree(wt, 'task')
+  const review = (await ops.reviewInfo(root, wt, 'orca/task', 'main'))
   assert.equal(review.dirty, false)
   assert.equal(review.commits.length, 1)
   assert.match(review.stat, /answer\.txt/)
-  ops.mergeBranch(root, 'orca/task', 'merge task')
+  await ops.mergeBranch(root, 'orca/task', 'merge task')
   assert.equal(readFileSync(join(root, 'answer.txt'), 'utf8'), 'answer')
-  ops.removeWorktree(root, wt, 'orca/task')
+  await ops.removeWorktree(root, wt, 'orca/task')
   assert.equal(existsSync(wt), false)
-  assert.equal(ops.localBranchExists(root, 'orca/task'), false)
+  assert.equal((await ops.localBranchExists(root, 'orca/task')), false)
 })
 
-it('MergeError при несуществующей ветке отличает отказ от конфликта', () => {
+it('MergeError при несуществующей ветке отличает отказ от конфликта', async () => {
   const root = repository()
-  assert.throws(() => operations('headless').mergeBranch(root, 'missing', 'merge'), (e: unknown) => e instanceof MergeError && !e.conflict)
+  await assert.rejects(async () => (await operations('headless').mergeBranch(root, 'missing', 'merge')), (e: unknown) => e instanceof MergeError && !e.conflict)
   assert.equal(existsSync(join(root, '.git', 'MERGE_HEAD')), false)
 })
 
-it('GitOpError сохраняется у workflow Git без worktree', () => {
-  assert.throws(() => operations('headless').gitCommit(join(dir, 'missing'), 'commit'), (e: unknown) => e instanceof GitOpError && /нет worktree/.test(e.message))
+it('GitOpError сохраняется у workflow Git без worktree', async () => {
+  await assert.rejects(async () => (await operations('headless').gitCommit(join(dir, 'missing'), 'commit')), (e: unknown) => e instanceof GitOpError && /нет worktree/.test(e.message))
 })
 
 it('checkout отказывает с host error и не переносит грязные файлы в другую ветку', async () => {
@@ -138,5 +138,5 @@ it('отказ commit hook приходит в host error с исходной п
   writeFileSync(join(dir, 'hooks', 'pre-commit'), '#!/bin/sh\necho "hook says no" >&2\nexit 1\n', { mode: 0o755 })
   writeFileSync(join(root, 'a.txt'), 'a')
   await assert.rejects(operations('headless').createInitialCommit(root, 'snapshot'), (e: unknown) => e instanceof HostError && e.key === 'git.opFailed' && e.message.includes('hook says no'))
-  assert.equal(operations('headless').hasCommits(root), false)
+  assert.equal((await operations('headless').hasCommits(root)), false)
 })

@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -6,357 +5,51 @@ import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBr
 import { canonicalGitCommonDir, createGitOperationQueue, type GitOperationQueue } from './git-operation-queue.ts'
 import { createGitProcessService, GitProcessError, type GitProcessService } from './git-process.ts'
 
-import { MergeError, GitOpError, type GitMessages, type ReviewInfo } from './git-errors.ts'
+import { GitOpError, type GitMessages } from './git-errors.ts'
 import { createGitWorkflowService } from './git-workflow.ts'
 export * from './git-errors.ts'
 
 /** Один экземпляр операций на owner; callbacks не привязывают runtime к глобальному языку Desktop. */
 export function createGitOperations(messages: GitMessages, operationQueue: GitOperationQueue = createGitOperationQueue(), processes: GitProcessService = createGitProcessService()) {
-  // git вызывается только массивом аргументов без shell: на Windows execFileSync находит git.exe через PATH,
-  // сами команды (worktree, merge, branch, status, diff) одинаковы на всех платформах.
-  function git(cwd: string, args: string[], timeoutMs?: number): string {
-    return execFileSync('git', args, {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      encoding: 'utf8',
-      env: gitEnv(),
-      ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGKILL' as const } : {})
-    }).trim()
+  const workflowGit = createGitWorkflowService(messages, operationQueue, processes)
+
+  /** Совместимые именованные методы; алгоритмы существуют только в scoped async port. */
+  const currentBranch = (root: string) => workflowGit.read(root, repo => repo.currentBranch())
+  const hasCommits = (root: string) => workflowGit.read(root, repo => repo.hasCommits())
+  const assertHasCommits = (root: string) => workflowGit.read(root, repo => repo.assertHasCommits())
+  const headBase = (root: string) => workflowGit.read(root, repo => repo.headBase())
+  const localBranchExists = (root: string, branch: string) => workflowGit.read(root, repo => repo.localBranchExists(branch))
+  const isBranchNameAcceptedByGit = (root: string, branch: string) => workflowGit.read(root, repo => repo.isBranchNameAcceptedByGit(branch))
+  const reviewInfo = (root: string, worktree: string, branch: string, base?: string) =>
+    workflowGit.read(root, repo => repo.reviewInfo(worktree, branch, base))
+  const addTaskWorktree = (root: string, worktree: string, branch: string, base?: string) =>
+    workflowGit.transaction(root, repo => repo.addTaskWorktree(worktree, branch, base))
+  const commitWorktree = (worktree: string, message: string) =>
+    workflowGit.transaction(worktree, repo => repo.commitWorktree(worktree, message))
+  const mergeBranch = (cwd: string, branch: string, message: string) =>
+    workflowGit.transaction(cwd, repo => repo.mergeBranch(cwd, branch, message))
+  const removeWorktreeKeepBranch = (root: string, worktree: string) =>
+    workflowGit.transaction(root, repo => repo.removeWorktreeKeepBranch(worktree))
+  const removeWorktree = (root: string, worktree: string, branch: string, foreign = false) =>
+    workflowGit.transaction(root, repo => repo.removeWorktree(worktree, branch, foreign))
+  const gitCreateBranch = (root: string, worktree: string, branch: string, base: string | undefined, own: boolean) =>
+    workflowGit.transaction(root, repo => repo.gitCreateBranch(worktree, branch, base, own))
+  const gitCheckout = (root: string, worktree: string, branch: string) =>
+    workflowGit.transaction(root, repo => repo.gitCheckout(worktree, branch))
+  async function gitCommit(worktree: string, message: string): Promise<void> {
+    // Без worktree нельзя определить commonDir; сохраняем прежний отказ до входа в очередь.
+    if (!existsSync(worktree)) throw new GitOpError('у задачи нет worktree — коммитить нечего')
+    await workflowGit.transaction(worktree, repo => repo.gitCommit(worktree, message))
   }
+  const gitPush = (root: string, worktree: string | undefined, remote: string, branch: string) =>
+    workflowGit.transaction(root, repo => repo.gitPush(worktree, remote, branch))
 
-  /**
-   * Окружение git в runtime: терминала нет, поэтому ни пароля (`GIT_TERMINAL_PROMPT=0`), ни редактора сообщения
-   * (`GIT_EDITOR=true` — merge/commit без `-m` не повиснут в ожидании vim).
-   */
-  function gitEnv(): NodeJS.ProcessEnv {
-    return { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' }
-  }
-
-  /**
-   * Сколько ждать git, который меняет репозиторий (merge, commit, worktree remove). git в main синхронный: хук,
-   * подпись коммита (gpg-agent ждёт пин-код) или чужая блокировка файлов иначе вешают приложение насовсем.
-   * Таймаут — обычная ошибка: мерж подзадачи встаёт с причиной (`Task.stageBlock`), «Принять» его повторит.
-   */
-  const MUTATE_TIMEOUT_MS = 120_000
-
-  /** Текст ошибки git из execFileSync: stdout+stderr или «не ответил за N с» по таймауту. */
-  function gitFailure(e: unknown, timeoutMs: number): string {
-    const err = e as { stdout?: string; stderr?: string; message?: string; code?: string }
-    if (err.code === 'ETIMEDOUT') return `git не ответил за ${Math.round(timeoutMs / 1000)} с`
-    return `${err.stdout?.toString() ?? ''}${err.stderr?.toString() ?? ''}`.trim() || err.message || 'неизвестная ошибка'
-  }
-
-  /**
-   * Текущая ветка корня; detached HEAD — `'HEAD'` (так его узнают `headBase` и вызывающие). `symbolic-ref`, а не
-   * `rev-parse --abbrev-ref HEAD`: последний в репозитории без коммитов (unborn HEAD) падает с кодом 128, а
-   * `symbolic-ref` отдаёт имя ветки. Код 1 — HEAD не на ветке; другой (128 — не репозиторий) пробрасывается.
-   */
-  function currentBranch(repoRoot: string): string {
-    try {
-      return git(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD'])
-    } catch (e) {
-      if ((e as { status?: number }).status === 1) return 'HEAD'
-      throw e
-    }
-  }
-
-  /** В репозитории есть хотя бы один коммит (HEAD не unborn). Не репозиторий — исключение git. */
-  function hasCommits(repoRoot: string): boolean {
-    try {
-      git(repoRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
-      return true
-    } catch (e) {
-      if ((e as { status?: number }).status === 1) return false
-      throw e
-    }
-  }
-
-  /**
-   * Orca ветвит работу от коммита: в репозитории без коммитов (свежий `git init`) `worktree add -b` без базы создаёт
-   * пустую ветку-сироту без файлов проекта, а с базой падает сырым «invalid reference». Отказываем понятной ошибкой.
-   */
-  function assertHasCommits(repoRoot: string): void {
-    if (!hasCommits(repoRoot)) throw messages.error('git.noCommits', { branch: currentBranch(repoRoot) })
-  }
-
-  /**
-   * Точка отсчёта новой ветки от HEAD корня — его текущая ветка (туда сольёт `merge`). Detached HEAD — хеш коммита:
-   * слово `HEAD` в worktree означало бы уже его собственный HEAD. Коммитов нет — сначала `assertHasCommits`.
-   */
-  function headBase(repoRoot: string): string {
-    const branch = currentBranch(repoRoot)
-    return branch === 'HEAD' ? git(repoRoot, ['rev-parse', 'HEAD']) : branch
-  }
-
-  /**
-   * Worktree задачи на ветке `branch`: ветка есть — worktree на неё; нет — новая ветка от `base` (ветка глобальной
-   * задачи), без `base` — от HEAD корня. Новая ветка требует коммит в репозитории: иначе получилась бы сирота.
-   */
-  function addTaskWorktree(repoRoot: string, worktree: string, branch: string, base?: string): void {
-    if (localBranchExists(repoRoot, branch)) {
-      git(repoRoot, ['worktree', 'add', worktree, branch])
-      return
-    }
-    assertHasCommits(repoRoot)
-    git(repoRoot, ['worktree', 'add', '-b', branch, worktree, ...(base ? [base] : [])])
-  }
-
-  /** Состояние HEAD корня проекта для UI; см. `ProjectBranchInfo` в contracts. */
-  function projectBranchInfo(repoRoot: string): ProjectBranchInfo {
-    try {
-      if (git(repoRoot, ['rev-parse', '--is-inside-work-tree']) !== 'true') return { isGitRepo: false, branch: null, detached: false }
-    } catch {
-      return { isGitRepo: false, branch: null, detached: false }
-    }
-    try {
-      // symbolic-ref, а не `rev-parse --abbrev-ref`: в репозитории без коммитов последний падает, а этот отдаёт имя ветки.
-      const branch = git(repoRoot, ['symbolic-ref', '--short', '-q', 'HEAD'])
-      // Сбой самой проверки коммитов (не код 1) — не повод для `unborn`: `projectBranchInfo` не бросает, а UI не должен
-      // предлагать начальный коммит по ошибке.
-      const unborn = (() => {
-        try {
-          return !hasCommits(repoRoot)
-        } catch {
-          return false
-        }
-      })()
-      return unborn ? { isGitRepo: true, branch, detached: false, unborn: true } : { isGitRepo: true, branch, detached: false }
-    } catch {
-      // код 1 у symbolic-ref — HEAD не на ветке (detached)
-      try {
-        return { isGitRepo: true, branch: null, detached: true, sha: git(repoRoot, ['rev-parse', '--short', 'HEAD']) }
-      } catch {
-        return { isGitRepo: true, branch: null, detached: true }
-      }
-    }
-  }
-
-  /**
-   * Что накопилось в ветке задачи относительно базовой ветки: ветки глобальной задачи (`reviewBase`) или, без неё,
-   * текущей ветки корня. Refs у всех worktree общие, поэтому diff считается из корня.
-   */
-  function reviewInfo(repoRoot: string, worktree: string, branch: string, base = currentBranch(repoRoot)): ReviewInfo {
-    const dirty = existsSync(worktree) && git(worktree, ['status', '--porcelain']) !== ''
-    let stat = ''
-    let commits: string[] = []
-    try {
-      stat = git(repoRoot, ['diff', '--stat', `${base}...${branch}`])
-      commits = git(repoRoot, ['log', '--oneline', `${base}..${branch}`]).split('\n').filter(Boolean)
-    } catch {
-      // ветки может ещё не быть
-    }
-    if (dirty) {
-      const wtStat = git(worktree, ['diff', '--stat'])
-      const untracked = git(worktree, ['ls-files', '--others', '--exclude-standard'])
-      stat = [stat, wtStat, untracked ? `${messages.untrackedLabel()}\n${untracked}` : ''].filter(Boolean).join('\n')
-    }
-    return { base, branch, stat, commits, dirty }
-  }
-
-  /** Незакоммиченное в worktree — коммитим от имени orca, чтобы не потерять при мерже. */
-  function commitWorktree(worktree: string, message: string): void {
-    if (git(worktree, ['status', '--porcelain']) === '') return
-    git(worktree, ['add', '-A'], MUTATE_TIMEOUT_MS)
-    try {
-      git(worktree, ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message], MUTATE_TIMEOUT_MS)
-    } catch (e) {
-      throw new Error(`коммит хвостов worktree не удался: ${gitFailure(e, MUTATE_TIMEOUT_MS)}`)
-    }
-  }
-
-  /**
-   * Слить ветку задачи в ветку, выбранную в каталоге `cwd`: worktree глобальной задачи или корень (`mergeTarget`).
-   * Не слилось — `MergeError` с текстом git и признаком конфликта; начатое слияние отменяется (`merge --abort`).
-   */
-  function mergeBranch(cwd: string, branch: string, message: string): void {
-    try {
-      git(cwd, ['merge', '--no-ff', '-m', message, branch], MUTATE_TIMEOUT_MS)
-    } catch (e) {
-      const text = gitFailure(e, MUTATE_TIMEOUT_MS)
-      // Конфликт — по незаслитым путям в индексе, а не по тексту: его язык зависит от локали git.
-      let conflict = false
-      try {
-        conflict = git(cwd, ['diff', '--name-only', '--diff-filter=U']) !== ''
-      } catch {
-        /* индекс недоступен — это не конфликт */
-      }
-      try {
-        git(cwd, ['merge', '--abort'], MUTATE_TIMEOUT_MS)
-      } catch {
-        /* нечего отменять */
-      }
-      throw new MergeError(`мерж не удался:\n${text}`, conflict)
-    }
-  }
-
-  /** Убрать только worktree, ветку оставить: работа не слита, но и не потеряна (воркфлоу закончился без мержа). */
-  function removeWorktreeKeepBranch(repoRoot: string, worktree: string): void {
-    if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree], MUTATE_TIMEOUT_MS)
-  }
-
-  /**
-   * Убрать worktree и ветку. `foreign` — ветку создал не orca (нода `git` переключила worktree на существующую,
-   * `Task.branchForeign`): её удалять нельзя, снимается только worktree.
-   */
-  function removeWorktree(repoRoot: string, worktree: string, branch: string, foreign = false): void {
-    if (foreign) {
-      removeWorktreeKeepBranch(repoRoot, worktree)
-      return
-    }
-    if (existsSync(worktree)) git(repoRoot, ['worktree', 'remove', '--force', worktree], MUTATE_TIMEOUT_MS)
-    // Папку убрали руками — запись worktree осталась, и `branch -D` отказал бы («ветка выгружена в …»).
-    else git(repoRoot, ['worktree', 'prune'], MUTATE_TIMEOUT_MS)
-    try {
-      git(repoRoot, ['branch', '-D', branch])
-    } catch {
-      /* уже удалена */
-    }
-  }
-
-  // ---------- git-операции ноды воркфлоу «Git» (docs/workflow.md → «Нода Git») ----------
-
-  /** Сколько ждать сеть (`push`): git выполняется синхронно в main, зависший remote не должен вешать приложение насовсем. */
-  const PUSH_TIMEOUT_MS = 120_000
-
-  /** Папка worktree задачи по умолчанию — та же, что создаёт `startWorker`: рядом с репозиторием. */
+  /** Папка worktree задачи рядом с репозиторием. */
   function taskWorktreePath(repoRoot: string, taskId: string): string {
     return join(repoRoot, '..', '.orca-worktrees', taskId)
   }
 
-  /**
-   * git с понятной ошибкой: `git <команда без -c>: <stderr>`. `GIT_TERMINAL_PROMPT=0` — без запроса пароля в
-   * терминале, которого у main нет (иначе `push` зависает на ожидании ввода).
-   */
-  function opGit(cwd: string, args: string[], timeoutMs?: number): string {
-    try {
-      return execFileSync('git', args, {
-        cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        encoding: 'utf8',
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-        ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGKILL' as const } : {})
-      }).trim()
-    } catch (e) {
-      const err = e as { stderr?: string; stdout?: string; message?: string; code?: string }
-      const shown: string[] = []
-      for (let i = 0; i < args.length; i += 1) {
-        if (args[i] === '-c') i += 1
-        else shown.push(args[i])
-      }
-      const reason = err.code === 'ETIMEDOUT'
-        ? `не ответил за ${Math.round((timeoutMs ?? 0) / 1000)} с`
-        : (err.stderr?.toString().trim() || err.stdout?.toString().trim() || err.message || 'неизвестная ошибка')
-      throw new GitOpError(`git ${shown.join(' ')}: ${reason}`)
-    }
-  }
-
-  /** Ветка существует локально. */
-  function localBranchExists(repoRoot: string, branch: string): boolean {
-    try {
-      execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: repoRoot, stdio: 'pipe' })
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  /** Имя допустимо для git по-настоящему (`git check-ref-format --branch`); упрощённую проверку core делает исполнитель до этого. */
-  function isBranchNameAcceptedByGit(repoRoot: string, name: string): boolean {
-    try {
-      execFileSync('git', ['check-ref-format', '--branch', name], { cwd: repoRoot, stdio: 'pipe' })
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  /** Ветка, на которой стоит worktree; `undefined` — detached HEAD. */
-  function worktreeBranch(worktree: string): string | undefined {
-    try {
-      return opGit(worktree, ['symbolic-ref', '--short', '-q', 'HEAD'])
-    } catch {
-      return undefined
-    }
-  }
-
-  /** `git switch`/`checkout` с грязным деревом может унести правки на другую ветку — поэтому требуем чистоту. */
-  function assertClean(worktree: string, action: string): void {
-    if (opGit(worktree, ['status', '--porcelain']) !== '') {
-      throw new GitOpError(`в worktree есть незакоммиченные изменения — ${action} не выполняется; добавьте перед ним операцию commit`)
-    }
-  }
-
-  /**
-   * Операция `create_branch`: новая ветка `branch` от `base`, worktree — на ней. Worktree ещё нет (нода стоит до первой
-   * «Работы») — создаётся сразу на новой ветке, `orca/<id>` не заводится; `base` по умолчанию — текущая ветка корня.
-   * Worktree уже есть — переключается на новую ветку; `base` по умолчанию — то место, где он стоит.
-   * `own` — `branch` уже записана в задаче (повторный заход в ноду после возврата, конец без мержа): существующая ветка
-   * не ошибка, worktree ставится на неё.
-   */
-  function gitCreateBranch(repoRoot: string, worktree: string, branch: string, base: string | undefined, own: boolean): void {
-    if (localBranchExists(repoRoot, branch)) {
-      if (!own) throw new GitOpError(`ветка «${branch}» уже существует`)
-      checkoutBranch(repoRoot, worktree, branch)
-      return
-    }
-    const verify = (start: string): void => {
-      try {
-        execFileSync('git', ['rev-parse', '--verify', '--quiet', `${start}^{commit}`], { cwd: repoRoot, stdio: 'pipe' })
-      } catch {
-        throw new GitOpError(`базовой ветки «${start}» нет — не от чего создавать «${branch}»`)
-      }
-    }
-    // --no-track: иначе ветка от remote-ветки унаследовала бы её upstream, и голый `git push` ушёл бы не туда.
-    if (existsSync(worktree)) {
-      // Worktree уже есть (нода посреди работы): без `base` ветвимся от того места, где он стоит, — коммиты задачи не теряются.
-      assertClean(worktree, 'создание ветки')
-      if (base) verify(base)
-      opGit(worktree, ['checkout', '-q', '--no-track', '-b', branch, ...(base ? [base] : [])])
-      return
-    }
-    if (!base && !hasCommits(repoRoot)) {
-      throw new GitOpError(`в репозитории нет ни одного коммита — не от чего создавать «${branch}»: создайте начальный коммит`)
-    }
-    const start = base ?? headBase(repoRoot)
-    verify(start)
-    opGit(repoRoot, ['worktree', 'add', '-q', '--no-track', '-b', branch, worktree, start])
-  }
-
-  /** Операция `checkout`: worktree — на существующую локальную ветку; worktree нет — создаётся на ней. */
-  function gitCheckout(repoRoot: string, worktree: string, branch: string): void {
-    if (!localBranchExists(repoRoot, branch)) throw new GitOpError(`ветки «${branch}» нет`)
-    checkoutBranch(repoRoot, worktree, branch)
-  }
-
-  function checkoutBranch(repoRoot: string, worktree: string, branch: string): void {
-    if (!existsSync(worktree)) {
-      opGit(repoRoot, ['worktree', 'add', '-q', worktree, branch])
-      return
-    }
-    if (worktreeBranch(worktree) === branch) return
-    assertClean(worktree, 'переключение ветки')
-    opGit(worktree, ['checkout', '-q', branch])
-  }
-
-  /** Операция `commit`: всё незакоммиченное — одним коммитом от `orca-board`; нечего коммитить — тоже успех. */
-  function gitCommit(worktree: string, message: string): void {
-    if (!existsSync(worktree)) throw new GitOpError('у задачи нет worktree — коммитить нечего')
-    if (opGit(worktree, ['status', '--porcelain']) === '') return
-    opGit(worktree, ['add', '-A'])
-    opGit(worktree, ['-c', 'user.name=orca-board', '-c', 'user.email=orca@local', 'commit', '-q', '-m', message])
-  }
-
-  /** Операция `push`: ветка задачи в `remote` с upstream, без force. */
-  function gitPush(repoRoot: string, worktree: string | undefined, remote: string, branch: string): void {
-    const cwd = worktree && existsSync(worktree) ? worktree : repoRoot
-    opGit(cwd, ['push', '-u', remote, branch], PUSH_TIMEOUT_MS)
-  }
-
-  /**
-   * Команда подготовки нового worktree по lock-файлу.
-   * Это строка для shell платформы (на Windows pnpm/npm/yarn — .cmd-шимы, нужен cmd.exe),
-   * запуском занимается worker.ts.
-   */
+  /** Команду подготовки по lock-файлу запускает launcher платформы. */
   function setupCommand(worktree: string): string | null {
     if (existsSync(join(worktree, 'pnpm-lock.yaml'))) return 'pnpm install --prefer-offline'
     if (existsSync(join(worktree, 'package-lock.json'))) return 'npm ci'
@@ -658,8 +351,8 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
   }
 
   return {
-    workflowGit: createGitWorkflowService(messages, operationQueue, processes),
-    currentBranch, hasCommits, assertHasCommits, headBase, addTaskWorktree, projectBranchInfo,
+    workflowGit,
+    currentBranch, hasCommits, assertHasCommits, headBase, addTaskWorktree, projectBranchInfo: projectBranchInfoAsync,
     reviewInfo, commitWorktree, mergeBranch, removeWorktreeKeepBranch, removeWorktree,
     taskWorktreePath, localBranchExists, isBranchNameAcceptedByGit, gitCreateBranch, gitCheckout, gitCommit, gitPush, setupCommand,
     projectBranchInfoAsync, hasCommitsAsync, projectBranches, projectFetch, projectPull, checkoutProjectBranch, createInitialCommit, gitCheckIgnore

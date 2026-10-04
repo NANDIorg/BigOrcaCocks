@@ -66,7 +66,7 @@ describe('createInitialCommit', () => {
     writeFileSync(path.join(repo, 'untracked.txt'), 'u\n')
     git(repo, 'add', 'staged.txt')
     const before = git(repo, 'status', '--porcelain')
-    assert.equal(projectBranchInfo(repo).unborn, true)
+    assert.equal((await projectBranchInfo(repo)).unborn, true)
     const info = await createInitialCommit(repo, 'empty')
     assert.deepEqual(info, { isGitRepo: true, branch: 'main', detached: false })
     assert.equal(git(repo, 'ls-tree', '-r', 'HEAD'), '')
@@ -122,7 +122,7 @@ describe('createInitialCommit', () => {
       createInitialCommit(repo, 'snapshot'),
       (e: unknown) => e instanceof OrcaError && e.key === 'git.opFailed' && e.message.includes('hook says no')
     )
-    assert.equal(projectBranchInfo(repo).unborn, true)
+    assert.equal((await projectBranchInfo(repo)).unborn, true)
   })
 
   it('после snapshot ensureRunBranch проходит, worktree содержит файлы', async () => {

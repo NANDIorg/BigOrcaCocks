@@ -51,7 +51,8 @@ Desktop session/assistant каналы подключены к common commands �
 а ввод из UI проверяет principal/payload и writer до native write.
 
 Git effects Task/Run workflow и веток прогона используют общий async GitProcessService
-и canonical commonDir queue. Составные commit/review/merge/cleanup занимают очередь один
+и canonical commonDir queue. Старые именованные Git helpers теперь Promise adapters
+к этому же port, их синхронные алгоритмы удалены. Составные commit/review/merge/cleanup занимают очередь один
 раз; независимые репозитории продолжают работать во время чужого hook. Stop/timeout
 завершают принадлежащее owner дерево процессов, отмена не маскируется domain ошибкой.
 

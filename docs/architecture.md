@@ -91,6 +91,8 @@ Git-операции также находятся в runtime: `createGitOperati
 и check-ignore. Ошибки и подпись untracked передаёт host через callbacks;
 `main/git.ts` сохраняет прежние OrcaError и именованные exports для Desktop.
 MergeError/GitOpError общие, поэтому существующие проверки `instanceof` работают.
+Именованные Git helpers возвращают Promise и делегируют одному scoped async port;
+вторая синхронная реализация branch/worktree/review/merge удалена. Path/setup helpers остаются чистыми.
 
 Git effects workflow, веток прогона и project mutations выполняются асинхронно через
 общий process service и очередь canonical commonDir. EffectScope проверяет исходную

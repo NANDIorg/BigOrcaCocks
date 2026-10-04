@@ -85,6 +85,6 @@ test('actual Git factory consumes owned process service and preserves stop cance
   const pending = operations.createInitialCommit(f.unborn, 'snapshot')
   const failed = assert.rejects(pending, e => e instanceof runtime.GitProcessError && e.cancelled && !e.timedOut)
   const pids = await hook.entered(); await service.stop(); await failed
-  await until(() => pids.every(pid => !pidAlive(pid))); assert.equal(operations.hasCommits(f.unborn), false)
+  await until(() => pids.every(pid => !pidAlive(pid))); assert.throws(() => git(f.unborn, 'rev-parse', '--verify', 'HEAD'))
   await assert.rejects(operations.projectFetch(f.root), e => e instanceof runtime.GitProcessError && e.cancelled)
 })

@@ -42,10 +42,10 @@ test('actual blocked Git hook preserves heartbeat/session output and independent
     onData: fn => { output = fn }, onExit: () => {}, write: data => output(data), resize: () => {}, kill: () => {} } } })
   t.after(sessions.killAll); const ptyId = sessions.spawnPty({ cols: 80, rows: 24, meta: { role: 'shell', label: 'heartbeat' } })
   await new Promise<void>(resolve => setTimeout(() => { sessions.writePty(ptyId, 'alive'); resolve() }, 10))
-  assert.equal(sessions.ptyTail(ptyId), 'alive'); assert.equal(operations.hasCommits(f.unborn), false)
+  assert.equal(sessions.ptyTail(ptyId), 'alive'); assert.equal((await operations.hasCommits(f.unborn)), false)
   await f.queue.enqueue(await runtime.canonicalGitCommonDir(f.other), () => asyncGit(f.other, 'update-ref', 'refs/heads/independent', 'HEAD'))
   assert.equal(git(f.other, 'rev-parse', 'independent'), git(f.other, 'rev-parse', 'HEAD'))
-  gate.release(); await pending; assert.equal(operations.hasCommits(f.unborn), true)
+  gate.release(); await pending; assert.equal((await operations.hasCommits(f.unborn)), true)
 })
 test('Git factory rejects invalid/missing repo with existing domain error before mutation', async t => {
   const f = gitQueueFixture(t); const plain = join(f.dir, 'plain'); mkdirSync(plain)
@@ -66,7 +66,7 @@ test('factory project mutations use owner queue; stale principal cannot commit a
     isCurrent: p => profile.manager.get(p.id) === p, git: operations, liveAgents: () => 0 })
   const pending = commands.initialCommit({ ...operator, projectId: project.id }, 'empty')
   await until(() => admitted.length > 0); assert.equal(admitted[0], realpathSync(join(f.unborn, '.git')))
-  assert.equal(operations.hasCommits(f.unborn), false); allowed = false; release.resolve(); await first
+  assert.equal((await operations.hasCommits(f.unborn)), false); allowed = false; release.resolve(); await first
   await assert.rejects(pending, e => e instanceof runtime.CommandError && e.code === 'command.forbidden')
-  assert.equal(operations.hasCommits(f.unborn), false); assert.equal(git(f.unborn, 'ls-files', '--stage'), '')
+  assert.equal((await operations.hasCommits(f.unborn)), false); assert.equal(git(f.unborn, 'ls-files', '--stage'), '')
 })

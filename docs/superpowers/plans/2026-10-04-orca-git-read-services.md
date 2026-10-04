@@ -32,11 +32,11 @@
 
 **Interfaces:** GitOperations сохраняет имена legacy helper методов с Promise результатами; workflowGit создаётся один раз на том же injected queue/process. read helpers делегируют read, mutation helpers transaction, pure taskWorktreePath/setupCommand остаются sync. projectBranchInfo делегирует projectBranchInfoAsync. Production preview branch допускает Promise уже сейчас.
 
-- [ ] **Step 1: RED.** Добавить actual factory compatibility test: mutation с held commit hook возвращает Promise, heartbeat/другой repo идут, следующий job того же commonDir ждёт. Type/guard test подтверждает cancel не превращается в false/empty DTO.
-- [ ] **Step 2: Run RED.** `node --test packages/runtime/test/git-compatibility.test.ts`; Expected FAIL legacy method blocks/returns sync.
-- [ ] **Step 3: Implement.** Удалить legacy execFileSync Git body; thin Promise aliases к scoped port, чистые FS/path helpers сохранить. Мигрировать затронутые fixtures/callers к await/rejects, literal проверки сохранить. Stopped owner regression проверяет независимым Git probe отсутствие HEAD.
-- [ ] **Step 4: GREEN/types.** `node --test packages/runtime/test/git-compatibility.test.ts packages/runtime/test/git.test.ts packages/runtime/test/git-process.test.ts packages/runtime/test/git-workflow.test.ts`; Desktop gitBranch/initialCommit tests и полный types PASS.
-- [ ] **Step 5: Docs/core/commit.** Четыре docs/dashboard описывают single async Git; core tests PASS. Inspect/stage exact diff; commit `refactor: удалить синхронный дубликат Git`; task-done Step4.
+- [x] **Step 1: RED.** Добавить actual factory compatibility test: mutation с held commit hook возвращает Promise, heartbeat/другой repo идут, следующий job того же commonDir ждёт. Type/guard test подтверждает cancel не превращается в false/empty DTO.
+- [x] **Step 2: Run RED.** `node --test packages/runtime/test/git-compatibility.test.ts`; Expected FAIL legacy method blocks/returns sync.
+- [x] **Step 3: Implement.** Удалить legacy execFileSync Git body; thin Promise aliases к scoped port, чистые FS/path helpers сохранить. Мигрировать затронутые fixtures/callers к await/rejects, literal проверки сохранить. Stopped owner regression проверяет независимым Git probe отсутствие HEAD.
+- [x] **Step 4: GREEN/types.** `node --test packages/runtime/test/git-compatibility.test.ts packages/runtime/test/git.test.ts packages/runtime/test/git-process.test.ts packages/runtime/test/git-workflow.test.ts`; Desktop gitBranch/initialCommit tests и полный types PASS.
+- [x] **Step 5: Docs/core/commit.** Четыре docs/dashboard описывают single async Git; core tests PASS. Inspect/stage exact diff; commit `refactor: удалить синхронный дубликат Git`; task-done Step4.
 
 ### Task 2: Async profile/docs Git reads
 
