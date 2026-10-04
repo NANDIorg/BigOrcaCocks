@@ -853,7 +853,7 @@ function registerIpc(): void {
   })
 }
 
-function initializeDesktop(): void {
+async function initializeDesktop(): Promise<void> {
   app.setAppUserModelId('orca-board')
   if (process.platform === 'darwin') app.dock?.setIcon(appIconPath)
   protocol.handle(PREVIEW_SCHEME, (request) => handlePreviewRequest(request, previewTokens))
@@ -944,7 +944,7 @@ function initializeDesktop(): void {
   projects.markRun(app.getVersion())
   if (process.env.ORCA_REPO) {
     try {
-      projects.add(process.env.ORCA_REPO)
+      await projects.add(process.env.ORCA_REPO)
     } catch (e) {
       console.error((e as Error).message)
     }
@@ -1123,10 +1123,10 @@ app.whenReady().then(async () => {
   if (!gotSingleInstanceLock || quitting) return
   await startProfileRuntime({
     dataDir: app.getPath('userData'),
-    start: () => {
+    start: async () => {
       if (quitting) return
       try {
-        initializeDesktop()
+        await initializeDesktop()
         desktopInitialized = true
       } catch (error) {
         // Частичный Desktop startup может уже открыть IPC/PTY: процесс выходит до освобождения guard.

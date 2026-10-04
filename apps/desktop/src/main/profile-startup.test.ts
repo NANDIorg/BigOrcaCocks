@@ -41,7 +41,7 @@ function desktop() {
   }
   const context = createContext(state)
   runInContext(javascript(registration.getText(source)), context)
-  const options = runInContext(javascript(`(${bootstrap.arguments[0].getText(source)})`), context) as { start(): void }
+  const options = runInContext(javascript(`(${bootstrap.arguments[0].getText(source)})`), context) as { start(): Promise<void> }
   return { state, failures, start: () => options.start(), activate: () => handler(), shows: () => shows }
 }
 
@@ -51,30 +51,30 @@ test('second-instance между Electron ready и приобретением pr
   assert.equal(host.shows(), 0)
 })
 
-test('second-instance во время initializer ждёт готовность; после startup фокусирует окно', () => {
+test('second-instance во время initializer ждёт готовность; после startup фокусирует окно', async () => {
   const host = desktop()
   const initialize = host.state.initializeDesktop
   host.state.initializeDesktop = () => { host.activate(); initialize() }
-  host.start()
+  await host.start()
   assert.equal(host.shows(), 0)
   host.activate()
   assert.equal(host.shows(), 1)
   assert.deepEqual(host.failures, [])
 })
 
-test('second-instance после запроса quit не создаёт окно даже у готового Desktop', () => {
+test('second-instance после запроса quit не создаёт окно даже у готового Desktop', async () => {
   const host = desktop()
-  host.start()
+  await host.start()
   host.state.quitting = true
   host.activate()
   assert.equal(host.shows(), 0)
 })
 
-test('ошибка initializer оставляет activation закрытой и передаёт исходную причину', () => {
+test('ошибка initializer оставляет activation закрытой и передаёт исходную причину', async () => {
   const host = desktop()
   const error = new Error('failed initialization')
   host.state.initializeDesktop = () => { throw error }
-  assert.throws(host.start, value => value === error)
+  await assert.rejects(host.start, value => value === error)
   assert.deepEqual(host.failures, [error])
   assert.doesNotThrow(host.activate)
   assert.equal(host.shows(), 0)

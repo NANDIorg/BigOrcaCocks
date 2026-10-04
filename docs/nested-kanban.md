@@ -58,8 +58,9 @@ Global remove ожидает nonforce уборку после durable deletion �
 
 Project branch/list/initialCommit/fetch/pull/checkout используют async HEAD metadata;
 отзыв policy или удаление registration запрещает следующий effect. Авторство store phases
-захватывается до await, выбор проекта другого клиента не меняется. Persistent reconciliation
-и оставшиеся sync Git reads profile/files продолжаются в B. Native effect после отмены
+захватывается до await, выбор проекта другого клиента не меняется. Добавление проекта и docs/preview
+Git reads тоже async; guard запрещает позднее сохранение registration после отзыва policy.
+Persistent reconciliation продолжается в B. Native effect после отмены
 может остаться без metadata; автоматический rollback не выполняется.
 
 ## Модель: глобальная задача = прогон (`Run`)

@@ -1,9 +1,8 @@
 import { isInside } from './path-safety.ts'
-import { execFile, execFileSync } from 'node:child_process'
+import { createGitProcessService, GitProcessError, type GitProcessService } from './git-process.ts'
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs'
 import { lstat, readdir, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { promisify } from 'node:util'
 import type { TaskStore } from '@orca-board/core'
 import { DOCS_LIST_LIMIT } from '@orca-board/contracts'
 import type { DocFile, DocGroup } from '@orca-board/contracts'
@@ -31,21 +30,23 @@ export const PROJECT_SOURCE = 'project'
 /** Сколько `lstat` одновременно: больше не ускоряет (упор в диск), а очередь libuv растёт. */
 export const DOCS_STAT_CONCURRENCY = 64
 
-export function createDocServices(deps: { messages: FileMessages & { text(key: 'docs.project'): string } }) {
+export function createDocServices(deps: { messages: FileMessages & { text(key: 'docs.project'): string }; processes?: GitProcessService }) {
   const OrcaError = deps.messages.Error
   const mt = deps.messages.text
+  const processes = deps.processes ?? createGitProcessService()
+  const preserveCancellation = (error: unknown) => { if (error instanceof GitProcessError && error.cancelled) throw error }
 
   const MD = /\.md$/i
   /** Pathspec git: `*` в нём совпадает и с `/`, так что это .md на любой глубине, без учёта регистра. */
   const MD_SPEC = ':(icase)*.md'
 
-  function git(cwd: string, args: string[]): string {
-    return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  async function git(cwd: string, args: string[]): Promise<string> {
+    return (await processes.run(cwd, args, { maxBuffer: 64 * 1024 * 1024 })).stdout
   }
 
   /** Пути из `git <cmd> -z ...`: разделитель NUL, имена с пробелами и кириллицей приходят как есть. */
-  function gitPaths(cwd: string, [cmd, ...args]: string[]): string[] {
-    return git(cwd, [cmd, '-z', ...args]).split('\0').filter(Boolean)
+  async function gitPaths(cwd: string, [cmd, ...args]: string[]): Promise<string[]> {
+    return (await git(cwd, [cmd, '-z', ...args])).split('\0').filter(Boolean)
   }
 
   /**
@@ -95,7 +96,6 @@ export function createDocServices(deps: { messages: FileMessages & { text(key: '
    */
   const byMtime = (a: DocFile, b: DocFile): number => b.mtime - a.mtime || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
 
-  const execFileAsync = promisify(execFile)
   /** Сколько ждать `git ls-files`: локальная операция, таймаут — только против зависшего git. */
   const LIST_TIMEOUT_MS = 30_000
 
@@ -117,13 +117,9 @@ export function createDocServices(deps: { messages: FileMessages & { text(key: '
    * в `--others` — путь с `/` в конце.
    */
   async function gitWorkingFiles(root: string): Promise<Map<string, boolean>> {
-    const { stdout } = await execFileAsync('git', ['ls-files', '-z', '-t', '--cached', '--others', '--exclude-standard'], {
-      cwd: root,
-      encoding: 'utf8',
-      timeout: LIST_TIMEOUT_MS,
-      killSignal: 'SIGKILL',
-      maxBuffer: 512 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+    const { stdout } = await processes.run(root, ['ls-files', '-z', '-t', '--cached', '--others', '--exclude-standard'], {
+      timeoutMs: LIST_TIMEOUT_MS,
+      maxBuffer: 512 * 1024 * 1024
     })
     // путь → неотслеживаемый; Map ещё и убирает повторы (конфликт слияния — по записи на стадию).
     const out = new Map<string, boolean>()
@@ -236,7 +232,8 @@ export function createDocServices(deps: { messages: FileMessages & { text(key: '
     let paths: Map<string, boolean>
     try {
       paths = await gitWorkingFiles(root)
-    } catch {
+    } catch (error) {
+      preserveCancellation(error)
       paths = await walkFiles(root, limit)
     }
     const truncated = paths.size > limit
@@ -249,18 +246,20 @@ export function createDocServices(deps: { messages: FileMessages & { text(key: '
    * .md, добавленные или изменённые в worktree задачи относительно базовой ветки: коммиты ветки
    * (`base...HEAD`), незакоммиченные правки и неотслеживаемые файлы. Удалённые не попадают.
    */
-  function listWorktreeDocs(worktree: string, base: string): DocFile[] {
-    const untracked = new Set(gitPaths(worktree, ['ls-files', '--others', '--exclude-standard', '--', MD_SPEC]))
+  async function listWorktreeDocs(worktree: string, base: string): Promise<DocFile[]> {
+    const untracked = new Set(await gitPaths(worktree, ['ls-files', '--others', '--exclude-standard', '--', MD_SPEC]))
     let committed: string[] = []
     try {
-      committed = gitPaths(worktree, ['diff', '--name-only', '--relative', '--diff-filter=d', `${base}...HEAD`, '--', MD_SPEC])
-    } catch {
+      committed = await gitPaths(worktree, ['diff', '--name-only', '--relative', '--diff-filter=d', `${base}...HEAD`, '--', MD_SPEC])
+    } catch (error) {
+      preserveCancellation(error)
       // базовой ветки нет (переименовали) — показываем только незакоммиченное
     }
     let dirty: string[] = []
     try {
-      dirty = gitPaths(worktree, ['diff', '--name-only', '--relative', '--diff-filter=d', 'HEAD', '--', MD_SPEC])
-    } catch {
+      dirty = await gitPaths(worktree, ['diff', '--name-only', '--relative', '--diff-filter=d', 'HEAD', '--', MD_SPEC])
+    } catch (error) {
+      preserveCancellation(error)
       // unborn HEAD (в репозитории нет коммитов) — сравнивать не с чем, новые файлы видны как неотслеживаемые
     }
     const all = new Set([...committed, ...dirty, ...untracked])
@@ -314,9 +313,10 @@ export function createDocServices(deps: { messages: FileMessages & { text(key: '
     }]
     for (const t of tasks) {
       try {
-        const files = listWorktreeDocs(t.worktree, base)
+        const files = await listWorktreeDocs(t.worktree, base)
         if (files.length > 0) groups.push({ source: t.id, title: t.title, branch: t.branch, files })
-      } catch {
+      } catch (error) {
+        preserveCancellation(error)
         /* worktree удалён или сломан */
       }
     }

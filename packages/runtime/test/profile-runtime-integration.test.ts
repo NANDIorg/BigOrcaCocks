@@ -85,7 +85,7 @@ test('disconnect не останавливает owner; crash/restart сохра
   const messages = { Error: HostError, text: (key: ProjectMessageKey) => key }
   const { ProjectManager } = createProjectServices({ messages, settings: createRuntimeSettings(messages) })
   const manager = new ProjectManager(dir)
-  const project = manager.add(repo)
+  const project = (await manager.add(repo))
   const run = manager.store(project.id).createRun('сохранённая задача')
   manager.markRun('1.1.3')
   const dialogs = createDialogRepository(join(dir, 'dialogs.json'))

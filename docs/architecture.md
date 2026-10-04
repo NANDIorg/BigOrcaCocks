@@ -181,7 +181,7 @@ gateFor клиент не задаёт. Subtask привязывается к п
 и для legacy socket: живой координатор и core cascade/dispatch guards предшествуют
 очистке вложений/showcase, закрытых живых PTY и Git worktree. Грязный worktree не
 удаляется принудительно, ветка остаётся. Ошибки cleanup сохраняют прежние semantics;
-это пока синхронная операция без transaction/reconciliation.
+операция ожидает queued cleanup после durable удаления. Persistent reconciliation ещё впереди.
 
 Запуск координатора, accept/return, worker start/stop и review/requests входят в
 общий API ниже. API профиля/конфигурации проекта описан далее; файлы и остальные
@@ -275,8 +275,8 @@ Desktop `main/review-request-commands.ts` сохраняет шесть IPC chan
 void у accept и пустой requests list без проекта. Caller проверяется до единственного
 capture selection; legacy resolution.images вырезаются без изменения входного DTO.
 Socket callbacks используют те же trusted operations и helper ответа на вопрос,
-с прежним envelope/HELP и локализованными ошибками IPC. Пока операции синхронные;
-async effects, remote transports и restart reconciliation относятся к следующим рубежам.
+с прежним envelope/HELP и локализованными ошибками IPC. Effect methods асинхронны;
+remote transports и restart reconciliation относятся к следующим рубежам.
 
 ### Общие команды профиля и конфигурации проектов
 
@@ -287,6 +287,8 @@ async effects, remote transports и restart reconciliation относятся к
 отделены от изменяемого manager. Существующие guards/JSON/persistence используются повторно.
 Public list не содержит active; public add вызывает `ProjectManager.add(..., false)`
 и не меняет legacy activeId. Default add прежних trusted callers сохраняется.
+Root probe выполняется общим async GitProcessService; add возвращает Promise, повторяет
+policy guard до синхронной записи и не создаёт дубликаты при двух одновременно завершённых probes.
 
 `ProjectConfigCommands` с `createProjectConfigCommands` требуют явный project context
 для enabledAgents, columns, доступных типов/default и группы. Невалидные/пустые id,
@@ -324,8 +326,8 @@ task/gate/run и периоды прежние. Найденный Codex session
 одного пути даёт тот же hash id и не должен оживлять старый запрос.
 `createAsyncProjectCommandExecutor` повторно проверяет host policy/identity перед
 синхронным commit и выдачей detached результата; устаревший проект — `command.stale`.
-Источник human/cli/app охватывает только commit, не чтение через await. Это первая
-async граница; EffectToken для workflow и очередь Git ещё не реализованы.
+Источник human/cli/app охватывает только commit, не чтение через await. Workflow effects
+отдельно проверяют EffectToken и используют общую canonical commonDir queue.
 `statsProjectDeps` собирает default/run role titles (включая snapshot удалённого типа)
 и отделяет columns; Desktop передаёт только живость процессов. Desktop adapter
 `main/rules-stats-commands.ts` подключает прежние rules:list/save и
@@ -372,8 +374,8 @@ checkout и шагами начального коммита; remove/readd, root
 а не хранится от момента клика. Async fetch/pull/checkout/initialCommit используют
 owner GitOperationQueue по canonical commonDir: root, linked worktree и symlink
 сериализуются вместе, независимые repo параллельны. Canonical probe — async process API
-без shell, затем realpath; failed job освобождает очередь. Sync worker/workflow/review
-Git ещё переводится на async с EffectToken/reconciliation в рубеже B.
+без shell, затем realpath; failed job освобождает очередь. Worker/workflow/review
+используют тот же async Git с EffectToken; persistent reconciliation ещё впереди.
 
 `createGitProcessService` владеет async Git subprocess, включая commonDir probe и
 check-ignore. Аргументы передаются напрямую, stdin закрывается, stdout/stderr имеют
@@ -412,7 +414,8 @@ Entry commit marker остаётся best-effort только при native Git-
 позиции папка без ссылок удаляется при отказе; referenced feedback/stageInput сохраняются. Удаление global
 после durable core phase отменяет run и ожидает queued nonforce cleanup; повторно созданный
 run не убирается. Уже случившийся native effect при отмене не откатывается. Persistent
-reconciliation и оставшиеся sync Git reads profile/files — следующая часть B.
+reconciliation — следующая часть B. Profile root probe и docs Git reads тоже async:
+factories принимают owned process service, cancellation не превращается в fallback или пустую группу.
 
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи

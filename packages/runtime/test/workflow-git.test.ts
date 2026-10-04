@@ -327,10 +327,10 @@ describe('нода «Git»: commit и push в середине графа', () =
     const t = await startTask(pushGraph('origin'))
     assert.equal(git(t.worktree!, 'status', '--porcelain'), '')
     const before = git(t.worktree!, 'rev-list', '--count', 'HEAD')
-    gitCommit(t.worktree!, 'noop')
+    await gitCommit(t.worktree!, 'noop')
     assert.equal(git(t.worktree!, 'rev-list', '--count', 'HEAD'), before, 'пустой коммит не создан')
     writeFileSync(path.join(t.worktree!, 'b.ts'), 'b\n')
-    gitCommit(t.worktree!, 'feat: b')
+    await gitCommit(t.worktree!, 'feat: b')
     assert.equal(git(t.worktree!, 'log', '--format=%an %s', '-1'), 'orca-board feat: b')
   })
 
@@ -410,35 +410,35 @@ describe('нода «Git»: смена ветки посреди работы и
 })
 
 describe('git.ts: функции ноды', () => {
-  it('create_branch на существующем worktree: чистый — переключает; грязный — отказ с подсказкой про commit', () => {
+  it('create_branch на существующем worktree: чистый — переключает; грязный — отказ с подсказкой про commit', async () => {
     const wt = path.join(tmp, 'wt')
     git(repo, 'worktree', 'add', '-q', '-b', 'orca/t', wt)
-    gitCreateBranch(repo, wt, 'feature/a', undefined, false)
+    await gitCreateBranch(repo, wt, 'feature/a', undefined, false)
     assert.equal(headOf(wt), 'feature/a')
     writeFileSync(path.join(wt, 'dirty.ts'), 'x\n')
-    assert.throws(() => gitCreateBranch(repo, wt, 'feature/b', undefined, false), /незакоммиченные изменения.*commit/)
+    await assert.rejects(gitCreateBranch(repo, wt, 'feature/b', undefined, false), /незакоммиченные изменения.*commit/)
     assert.equal(headOf(wt), 'feature/a')
     assert.equal(branchExists('feature/b'), false)
   })
 
-  it('своя ветка без worktree (конец без мержа) — worktree ставится на неё; чужая существующая — отказ', () => {
+  it('своя ветка без worktree (конец без мержа) — worktree ставится на неё; чужая существующая — отказ', async () => {
     git(repo, 'branch', 'feature/kept')
     const wt = path.join(tmp, 'wt2')
-    assert.throws(() => gitCreateBranch(repo, wt, 'feature/kept', undefined, false), /уже существует/)
-    gitCreateBranch(repo, wt, 'feature/kept', undefined, true)
+    await assert.rejects(gitCreateBranch(repo, wt, 'feature/kept', undefined, false), /уже существует/)
+    await gitCreateBranch(repo, wt, 'feature/kept', undefined, true)
     assert.equal(headOf(wt), 'feature/kept')
   })
 
-  it('нет базовой ветки → понятная ошибка; checkout несуществующей — тоже', () => {
-    assert.throws(() => gitCreateBranch(repo, path.join(tmp, 'wt3'), 'feature/z', 'no-such-base', false), /базовой ветки «no-such-base» нет/)
-    assert.throws(() => gitCheckout(repo, path.join(tmp, 'wt4'), 'no-such'), /ветки «no-such» нет/)
+  it('нет базовой ветки → понятная ошибка; checkout несуществующей — тоже', async () => {
+    await assert.rejects(gitCreateBranch(repo, path.join(tmp, 'wt3'), 'feature/z', 'no-such-base', false), /базовой ветки «no-such-base» нет/)
+    await assert.rejects(gitCheckout(repo, path.join(tmp, 'wt4'), 'no-such'), /ветки «no-such» нет/)
   })
 
-  it('не git-репозиторий → ошибка git, а не исключение другого рода', () => {
+  it('не git-репозиторий → ошибка git, а не исключение другого рода', async () => {
     const plain = path.join(tmp, 'plain')
     execFileSync('mkdir', [plain])
-    assert.throws(() => gitCommit(path.join(plain, 'nope'), 'm'), /у задачи нет worktree/)
-    assert.throws(() => gitCreateBranch(plain, path.join(tmp, 'wt5'), 'f/x', undefined, false), /git|нет/)
+    await assert.rejects(gitCommit(path.join(plain, 'nope'), 'm'), /у задачи нет worktree/)
+    await assert.rejects(gitCreateBranch(plain, path.join(tmp, 'wt5'), 'f/x', undefined, false), /git|нет/)
   })
 
   it('граф с нодой git — граф старого движка по подзадачам: валидация ругается только на формат версии 1 (проверка тестового графа)', () => {

@@ -10,10 +10,10 @@ import { fixture as providerFixture, services, until } from './conversation-fixt
 
 const code = (value: string) => (e: unknown) => e instanceof runtime.CommandError && e.code === value
 const two: ClientCommandContext = { clientId: 'two', actor: { kind: 'operator', id: 'second' } }
-function fixture(t: { after(fn: () => void): void }, mode = 'claude') {
+async function fixture(t: { after(fn: () => void): void }, mode = 'claude') {
   assert.equal(typeof runtime.createDialogCommands, 'function')
   assert.equal(typeof runtime.createAssistantCommands, 'function')
-  const f = profileFixture()
+  const f = (await profileFixture())
   const file = join(f.dir, 'dialogs.json'); const repository = runtime.createDialogRepository(file)
   const providers: ReturnType<typeof providerFixture>[] = []
   const create = (settings: AssistantSettings, onUpdate: (update: ConversationUpdate) => void, projectId?: string) => {
@@ -33,8 +33,8 @@ function fixture(t: { after(fn: () => void): void }, mode = 'claude') {
   return { ...f, file, registry, repository, commands, providers, create, authorize, lookups: () => lookups, deny: () => { allow = false } }
 }
 
-test('dialog context/options/text guards precede project lookup and actual CLI startup', t => {
-  const f = fixture(t)
+test('dialog context/options/text guards precede project lookup and actual CLI startup', async t => {
+  const f = (await fixture(t))
   assert.throws(() => f.commands.create({ ...operator, actor: { kind: 'agent', id: 'forged' } }), code('command.forbidden'))
   assert.throws(() => f.commands.create(operator, { projectId: '' }), code('command.invalidInput'))
   assert.throws(() => f.commands.create(operator, { settings: { agent: 'unknown' } } as unknown as { settings: AssistantSettings }), code('command.invalidInput'))
@@ -42,7 +42,7 @@ test('dialog context/options/text guards precede project lookup and actual CLI s
   assert.equal(f.lookups(), 0); assert.equal(f.providers.length, 0)
 })
 test('two dialogs retain actual CLI project env, transcript and provider binding independently', async t => {
-  const f = fixture(t)
+  const f = (await fixture(t))
   const a = f.commands.create(operator, { projectId: f.a.id }); const b = f.commands.create(two, { projectId: f.b.id })
   await f.commands.send(operator, a, 'one'); await until(() => f.registry.snapshot(a).dialog.conversation.status === 'done')
   await f.commands.send(two, b, 'two'); await until(() => f.registry.snapshot(b).dialog.conversation.status === 'done')
@@ -58,14 +58,14 @@ test('two dialogs retain actual CLI project env, transcript and provider binding
   assert.equal(f.manager.active()?.id, f.a.id)
 })
 test('unknown project never starts CLI; unknown dialog remains a domain cause', async t => {
-  const f = fixture(t)
+  const f = (await fixture(t))
   assert.throws(() => f.commands.create(operator, { projectId: 'foreign' }), code('command.projectNotFound'))
   assert.throws(() => f.commands.list(operator, 'foreign'), code('command.projectNotFound'))
   assert.equal(f.providers.length, 0)
   await assert.rejects(f.commands.send(operator, 'missing', 'hello'), error => error instanceof runtime.CommandError && error.cause instanceof Error && error.cause.message === 'unknown-dialog')
 })
 test('malformed answers leave real permission pending; accepted answer cannot be applied twice', async t => {
-  const f = fixture(t); const id = f.commands.create(operator)
+  const f = (await fixture(t)); const id = f.commands.create(operator)
   await f.commands.send(operator, id, 'permission'); await until(() => f.registry.snapshot(id).dialog.conversation.status === 'waiting')
   const request = f.commands.snapshot(operator, id).dialog.conversation.interactions[0]
   const before = readFileSync(f.file, 'utf8')
@@ -81,7 +81,7 @@ test('malformed answers leave real permission pending; accepted answer cannot be
   assert.equal(f.providers[0].wire().filter(value => value.type === 'control_response').length, 1)
 })
 test('stop/history snapshot cannot replay previous permission or execute stored tool calls', async t => {
-  const f = fixture(t); const id = f.commands.create(operator)
+  const f = (await fixture(t)); const id = f.commands.create(operator)
   await f.commands.send(operator, id, 'permission'); await until(() => f.registry.snapshot(id).dialog.conversation.status === 'waiting')
   f.commands.stop(operator, id)
   const restored = new runtime.DialogRegistry({ repository: f.repository, create: f.create,
@@ -93,7 +93,7 @@ test('stop/history snapshot cannot replay previous permission or execute stored 
   assert.equal(f.providers.length, 1); restored.dispose()
 })
 test('revoked client during actual ACK wait rejects result without touching another dialog', async t => {
-  const f = fixture(t, 'codex-hold-ack'); const a = f.commands.create(operator, { projectId: f.a.id, settings: { agent: 'codex' } })
+  const f = (await fixture(t, 'codex-hold-ack')); const a = f.commands.create(operator, { projectId: f.a.id, settings: { agent: 'codex' } })
   const b = f.commands.create(two, { projectId: f.b.id })
   await until(() => f.registry.snapshot(b).dialog.conversation.status === 'done')
   const before = f.repository.get(b)
@@ -104,7 +104,7 @@ test('revoked client during actual ACK wait rejects result without touching anot
   assert.deepEqual(f.repository.get(b), before)
 })
 test('legacy AssistantCommands preserve native terminal fallback and selected identity', async t => {
-  const f = fixture(t); const sessions = runtime.createSessionRegistry({ spawn: () => ({ onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} }) })
+  const f = (await fixture(t)); const sessions = runtime.createSessionRegistry({ spawn: () => ({ onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} }) })
   let settings: AssistantSettings = { agent: 'shell' }
   const session = new runtime.AssistantSession({ settings: () => settings, assertUsable: () => {}, create: f.create,
     errors: { unknownPty: () => new Error('unknown-pty'), emptyText: () => new Error('empty-text') },
@@ -121,7 +121,7 @@ test('legacy AssistantCommands preserve native terminal fallback and selected id
 })
 
 test('removed project registration during actual ACK wait makes result stale', async t => {
-  const f = fixture(t, 'codex-hold-ack')
+  const f = (await fixture(t, 'codex-hold-ack'))
   const id = f.commands.create(operator, { projectId: f.a.id, settings: { agent: 'codex' } })
   const pending = f.commands.send(operator, id, 'hello', 'hidden-context')
   await until(() => f.providers[0].wire().some(value => value.method === 'turn/start'))

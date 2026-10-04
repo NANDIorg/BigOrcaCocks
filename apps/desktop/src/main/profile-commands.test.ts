@@ -22,13 +22,13 @@ const channels = ['app:getSettings', 'app:setSettings', 'onboarding:getState', '
   'taskTypes:list', 'taskTypes:patch', 'taskTypes:rename', 'workflowAssistant:save', 'taskTypes:save', 'taskTypes:delete',
   'taskTypes:duplicate', 'taskTypes:setDefault', 'taskTypes:export', 'nodeTemplates:list', 'nodeTemplates:save', 'nodeTemplates:delete']
 
-function fixture() {
+async function fixture() {
   assert.equal(typeof adapter.registerDesktopProfileCommands, 'function', 'Desktop подключает общий profile/config API')
   const dir = mkdtempSync(join(tmpdir(), 'orca-desktop-profile-commands-'))
   close.push(() => rmSync(dir, { recursive: true, force: true }))
   const pm = new ProjectManager(join(dir, 'profile'))
   const repo = (name: string) => { const root = join(dir, name); mkdirSync(root); execFileSync('git', ['init', '-q', root], { stdio: 'pipe' }); return realpathSync(root) }
-  const a = pm.add(repo('A')); const b = pm.add(repo('B')); pm.setActive(a.id)
+  const a = (await pm.add(repo('A'))); const b = (await pm.add(repo('B'))); pm.setActive(a.id)
   let lookups = 0; let selections = 0; let folders = 0; let files = 0; let settingsEffects = 0
   let folder: string | null = null; let file: string | null = null; let selection: Project | null = a
   const authorize = (ctx: ClientCommandContext) => ctx.clientId === 'desktop:1' && ctx.actor.kind === 'operator' && ctx.actor.id === 'local-user'
@@ -50,27 +50,27 @@ function fixture() {
     foreign: (channel: string) => callbacks.get(channel)!({ client: null }) }
 }
 test('caller всех 31 каналов проверяется до selection/manager/native dialogs', async () => {
-  const f = fixture()
+  const f = (await fixture())
   for (const channel of channels) await assert.rejects(async () => f.foreign(channel), e => e instanceof OrcaError && e.key === 'command.forbidden')
   assert.equal(f.lookups(), 0); assert.equal(f.selections(), 0); assert.equal(f.folders(), 0); assert.equal(f.files(), 0)
 })
-test('профиль/onboarding/list доступны без выбранного проекта, legacy list содержит active=null', () => {
-  const f = fixture(); f.select(null)
+test('профиль/onboarding/list доступны без выбранного проекта, legacy list содержит active=null', async () => {
+  const f = (await fixture()); f.select(null)
   assert.equal((f.call('app:getSettings') as AppSettings).keepInBackground, true)
   assert.equal((f.call('onboarding:complete', null) as { status: string }).status, 'completed')
   const result = f.call('projects:list') as { active: Project | null; projects: Project[] }
   assert.equal(result.active, null); assert.equal(result.projects.length, 2)
   result.projects[0].name = 'Forged'; assert.equal(f.pm.get(f.a.id)?.name, 'A')
 })
-test('Desktop settings fields и refresh вызываются после успешной записи', () => {
-  const f = fixture(); const result = f.call('app:setSettings', { keepInBackground: false, updates: { autoDownload: false }, language: 'en' }) as AppSettings
+test('Desktop settings fields и refresh вызываются после успешной записи', async () => {
+  const f = (await fixture()); const result = f.call('app:setSettings', { keepInBackground: false, updates: { autoDownload: false }, language: 'en' }) as AppSettings
   assert.equal(result.keepInBackground, false); assert.equal(result.updates.autoDownload, false); assert.equal(result.language, 'en'); assert.equal(f.effects(), 1)
   f.call('app:setSettings', null); assert.equal(f.effects(), 2)
   assert.throws(() => f.call('app:setSettings', { assistant: { agent: 'invalid' } }), e => e instanceof OrcaError && e.key === 'assistant.unknownAgent')
   assert.equal(f.effects(), 2); assert.equal(f.pm.settings().language, 'en')
 })
-test('explicit project ids не используют legacy active при configuration/group', () => {
-  const f = fixture(); f.call('projects:setEnabledAgents', f.b.id, ['codex'])
+test('explicit project ids не используют legacy active при configuration/group', async () => {
+  const f = (await fixture()); f.call('projects:setEnabledAgents', f.b.id, ['codex'])
   const columns = structuredClone(DEFAULT_COLUMNS); columns[0].title = 'New'
   f.call('projects:setColumns', f.b.id, columns)
   const group = f.call('projects:createGroup', 'Group') as { id: string }
@@ -81,7 +81,7 @@ test('explicit project ids не используют legacy active при config
   assert.equal(f.selections(), 0)
 })
 test('native folder cancel не меняет библиотеку; explicit path не открывает dialog, add выбирает его в Desktop', async () => {
-  const f = fixture(); const before = f.pm.list()
+  const f = (await fixture()); const before = f.pm.list()
   assert.equal(await f.call('projects:add'), null); assert.equal(await f.call('projects:detectTaskType'), null)
   assert.deepEqual(f.pm.list(), before); assert.equal(f.folders(), 2)
   const root = f.repo('C'); const project = await f.call('projects:add', undefined, root) as Project
@@ -90,7 +90,7 @@ test('native folder cancel не меняет библиотеку; explicit path
   f.chooseFolder(root); assert.equal((await f.call('projects:detectTaskType') as { path: string }).path, root)
 })
 test('native export cancel и successful write сохраняют old DTO и host metadata', async () => {
-  const f = fixture(); assert.equal(await f.call('taskTypes:export', 'general'), null)
+  const f = (await fixture()); assert.equal(await f.call('taskTypes:export', 'general'), null)
   const file = join(f.dir, 'export.json'); f.chooseFile(file)
   assert.deepEqual(await f.call('taskTypes:export', 'general'), { path: file })
   const exported = JSON.parse(readFileSync(file, 'utf8')) as { appVersion: string }; assert.equal(exported.appVersion, '1.1.3')
@@ -99,13 +99,13 @@ test('native export cancel и successful write сохраняют old DTO и hos
   assert.equal(f.files(), 2)
 })
 test('ошибка native export write сохраняет прежний type.exportFailed с путём', async () => {
-  const f = fixture(); const block = join(f.dir, 'blocked'); writeFileSync(block, 'block')
+  const f = (await fixture()); const block = join(f.dir, 'blocked'); writeFileSync(block, 'block')
   const file = join(block, 'export.json'); f.chooseFile(file)
   await assert.rejects(async () => f.call('taskTypes:export', 'general'), e => e instanceof OrcaError && e.key === 'type.exportFailed' && e.params?.path === file)
   assert.equal(existsSync(file), false)
 })
-test('types/templates CRUD и guards идут через общий manager, old return DTO сохраняется', () => {
-  const f = fixture(); const type = f.call('taskTypes:save', { title: 'New', settings: {} }) as { id: string }
+test('types/templates CRUD и guards идут через общий manager, old return DTO сохраняется', async () => {
+  const f = (await fixture()); const type = f.call('taskTypes:save', { title: 'New', settings: {} }) as { id: string }
   f.call('taskTypes:rename', type.id, 'Renamed', 'Desc'); f.call('taskTypes:patch', type.id, { agentRules: 'Rules' })
   const copy = f.call('taskTypes:duplicate', type.id) as { id: string }; assert.notEqual(copy.id, type.id)
   assert.equal((f.call('taskTypes:setDefault', type.id) as TaskTypesState).defaultTaskTypeId, type.id)
@@ -113,8 +113,8 @@ test('types/templates CRUD и guards идут через общий manager, old
   const template = f.call('nodeTemplates:save', { title: 'Merge', node: { type: 'merge' } }) as { id: string }
   assert.equal((f.call('nodeTemplates:list') as unknown[]).length, 1); assert.deepEqual(f.call('nodeTemplates:delete', template.id), [])
 })
-for (const language of ['ru', 'en'] as const) test(`workflow baseline conflict сохраняет локализацию ${language} и прежний граф`, () => {
-  const f = fixture(); setMainLocale(language); const baseline = f.pm.workflowGet('general').workflow
+for (const language of ['ru', 'en'] as const) test(`workflow baseline conflict сохраняет локализацию ${language} и прежний граф`, async () => {
+  const f = (await fixture()); setMainLocale(language); const baseline = f.pm.workflowGet('general').workflow
   const next = structuredClone(baseline); next.nodes[0].title = 'Changed'; f.pm.patchTaskType('general', { workflow: next })
   assert.throws(() => f.call('workflowAssistant:save', 'general', baseline, null), e => {
     assert.ok(e instanceof OrcaError); assert.equal(e.key, 'workflow.conflict')

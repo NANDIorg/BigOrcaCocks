@@ -37,11 +37,11 @@ function repo(name = 'repo'): string {
 const graph = () => ({ version: 2, nodes: [{ id: 's', type: 'start' }, { id: 'w', type: 'work', roleIds: ['developer'] }, { id: 'e', type: 'end' }],
   edges: [{ id: 'sw', from: 's', outcome: 'next', to: 'w' }, { id: 'we', from: 'w', outcome: 'next', to: 'e' }] })
 
-it('общий менеджер сохраняет проект и доску между запусками обычного Node', () => {
+it('общий менеджер сохраняет проект и доску между запусками обычного Node', async () => {
   const { ProjectManager } = services()
   const data = join(dir, 'profile')
   const manager = new ProjectManager(data)
-  const project = manager.add(repo())
+  const project = (await manager.add(repo()))
   const run = manager.store(project.id).createRun('Общая доска')
   const restored = new ProjectManager(data)
   assert.equal(restored.get(project.id)?.root, project.root)
@@ -49,13 +49,13 @@ it('общий менеджер сохраняет проект и доску м
   assert.equal(restored.active()?.id, project.id)
 })
 
-it('профили с одним репозиторием не смешивают настройки и доски', () => {
+it('профили с одним репозиторием не смешивают настройки и доски', async () => {
   const { ProjectManager } = services()
   const first = new ProjectManager(join(dir, 'first'))
   const second = new ProjectManager(join(dir, 'second'))
   const root = repo()
-  const project = first.add(root)
-  second.add(root)
+  const project = (await first.add(root))
+  await second.add(root)
   first.setSettings({ language: 'en' })
   first.store(project.id).createRun('Только первая доска')
   assert.equal(second.settings().language, undefined)
@@ -71,12 +71,12 @@ it('ошибки проектов и подготовки графа насле�
   assert.equal(manager.taskTypes().some(t => t.title === 'Невалидный'), false)
 })
 
-it('удаление проекта очищает его вложения и снимки, сохраняя соседний проект', () => {
+it('удаление проекта очищает его вложения и снимки, сохраняя соседний проект', async () => {
   const { ProjectManager } = services()
   const data = join(dir, 'profile')
   const manager = new ProjectManager(data)
-  const first = manager.add(repo('first'))
-  const second = manager.add(repo('second'))
+  const first = (await manager.add(repo('first')))
+  const second = (await manager.add(repo('second')))
   for (const root of ['run-images', 'showcase']) {
     for (const project of [first, second]) {
       const folder = join(data, root, project.id, 'run')
@@ -147,10 +147,10 @@ it('ошибка записи библиотеки откатывает граф
   assert.equal(saved, 0)
 })
 
-it('ленивая загрузка доски публикует store-open один раз, повторные изменения публикуют новые события', () => {
+it('ленивая загрузка доски публикует store-open один раз, повторные изменения публикуют новые события', async () => {
   const { ProjectManager } = services()
   const manager = new ProjectManager(join(dir, 'profile'))
-  const project = manager.add(repo())
+  const project = (await manager.add(repo()))
   const opened: string[] = []
   const off = manager.onStoreOpened(id => { opened.push(id) })
   const events: string[] = []
@@ -166,7 +166,7 @@ it('ленивая загрузка доски публикует store-open о�
   assert.equal(new Set(events).size, events.length)
   assert.deepEqual(opened, [project.id])
   off()
-  const second = manager.add(repo('second'))
+  const second = (await manager.add(repo('second')))
   manager.store(second.id)
   assert.deepEqual(opened, [project.id])
 })

@@ -93,10 +93,10 @@ beforeEach(() => {
 afterEach(() => rmSync(tmp, { recursive: true, force: true }))
 
 /** Приложение над каталогом данных `tmp/user`: повторный вызов — «перезапуск» (тот же projects.json и доска, новые объекты). */
-function startApp(implPath?: WfSubflow, workflow?: Workflow): App {
+async function startApp(implPath?: WfSubflow, workflow?: Workflow): Promise<App> {
   const pm = new ProjectManager(path.join(tmp, 'user'))
   if (pid === undefined || !pm.get(pid)) {
-    pid = pm.add(repo).id
+    pid = (await pm.add(repo)).id
     typeId = pm.saveTaskType({ title: 'Фича', settings: { roles: ROLES, workflow: workflow ?? featureWorkflow(implPath) } }).id
   }
   const store = pm.store(pid)
@@ -208,7 +208,7 @@ function reviewedPath(): WfSubflow {
 
 describe('воркфлоу глобальной задачи: сквозной сценарий', () => {
   it('анализ → человек → реализация (2 подзадачи) → ревью reject → реализация → ревью accept → человек → merge → end', async () => {
-    const app = startApp()
+    const app = (await startApp())
     // Старый прогон (без Run.workflowScope) живёт рядом и идёт прежним движком по подзадачам.
     const legacyRun = app.store.createRun('старая цель')
     assert.equal(legacyRun.workflowScope, undefined)
@@ -341,7 +341,7 @@ describe('воркфлоу глобальной задачи: сквозной �
   })
 
   it('перезапуск приложения на approval и мёртвый координатор: граф продолжается по сохранённой позиции', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await startRun(app, 'Фича')
     const plan = await spawn(app, runId, 'План')
     await deliverFile(app, plan, 'analysis.md')
@@ -349,7 +349,7 @@ describe('воркфлоу глобальной задачи: сквозной �
     const requestId = approvalOf(app, runId)!.id
 
     // Приложение закрыли и открыли снова: новые ProjectManager и store, терминалов нет.
-    const again = startApp()
+    const again = (await startApp())
     assert.equal(stageId(again, runId), 'choice')
     assert.equal(approvalOf(again, runId)?.id, requestId, 'approval пережил перезапуск')
     assert.equal(again.alive.size, 0)
@@ -363,7 +363,7 @@ describe('воркфлоу глобальной задачи: сквозной �
   })
 
   it('перезапуск приложения: подзадачи на gate и human пути — Run.stage и Task.stage восстанавливаются вместе и путь продолжается', async () => {
-    const app = startApp(reviewedPath())
+    const app = (await startApp(reviewedPath()))
     const runId = await startRun(app, 'Фича')
     const plan = await spawn(app, runId, 'План')
     await deliverFile(app, plan, 'analysis.md')
@@ -383,7 +383,7 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.equal(request.nodeId, 'ok')
     const gateB = app.store.listTasks().find((t) => t.gateFor?.taskId === b.id)!
 
-    const again = startApp()
+    const again = (await startApp())
     assert.equal(stageId(again, runId), 'impl', 'позиция прогона пережила перезапуск')
     assert.equal(task(again, a.id).stage?.nodeId, 'ok', 'позиция подзадачи на пути — тоже')
     assert.equal(task(again, b.id).stage?.nodeId, 'rev')
@@ -448,7 +448,7 @@ describe('воркфлоу глобальной задачи: развилка �
   const decisionRequest = (app: App, runId: string) => app.store.pendingRequests(runId).find((r) => r.kind === 'decision')
 
   it('агент выбирает «Да» → Дизайн → Реализация → merge → end; решение в истории и в stage_started', async () => {
-    const app = startApp(undefined, forkWorkflow())
+    const app = (await startApp(undefined, forkWorkflow()))
     const { runId, decider } = await toFork(app)
     assert.deepEqual(app.launches.at(-1), { taskId: decider.id, roleId: 'reviewer', agent: DEFAULT_ROLES.find((r) => r.id === 'reviewer')!.agent })
     assert.equal(events(app, 'stage_started').length, 1, 'координатор ждёт, пока агент решает')
@@ -480,13 +480,13 @@ describe('воркфлоу глобальной задачи: развилка �
   })
 
   it('escalate → перезапуск приложения → человек выбирает «Нет» в Инбоксе → Реализация, мёртвый координатор поднимается', async () => {
-    const app = startApp(undefined, forkWorkflow())
+    const app = (await startApp(undefined, forkWorkflow()))
     const { runId, decider } = await toFork(app)
     await assert.rejects(async () => await runGateDecision(app.deps, decider.id, 'accept'), /используй decision choose/)
     const { requestId } = escalateDecision(app.deps, decider.id, 'не знаю, есть ли макет')
 
     // Приложение закрыли и открыли: ни задача, ни запрос не дублируются, агент заново не стартует.
-    const again = startApp(undefined, forkWorkflow())
+    const again = (await startApp(undefined, forkWorkflow()))
     await startRunWorkflow(again.deps, runId)
     assert.equal(stageId(again, runId), 'need_design')
     assert.equal(again.store.listTasks().filter((t) => t.gateFor?.nodeId === 'need_design').length, 1)

@@ -17,7 +17,7 @@ export const profileGraph = () => ({ version: 2 as const, nodes: [{ id: 's', typ
   { id: 'w', type: 'work' as const, roleIds: ['developer'], x: 0, y: 0 }, { id: 'e', type: 'end' as const, x: 0, y: 0 }],
   edges: [{ id: 'sw', from: 's', outcome: 'next' as const, to: 'w' }, { id: 'we', from: 'w', outcome: 'next' as const, to: 'e' }] })
 
-export function profileFixture() {
+export async function profileFixture() {
   assert.equal(typeof runtime.createProfileCommands, 'function', 'Общий API профиля экспортирован без Desktop')
   assert.equal(typeof runtime.createProjectConfigCommands, 'function', 'Конфигурация проекта адресуется явно')
   assert.equal(typeof runtime.createWorkflowAssistantServices, 'function', 'Workflow helper общий')
@@ -31,7 +31,7 @@ export function profileFixture() {
     execFileSync('git', ['init', '-q', root], { stdio: 'pipe' })
     return realpathSync(root)
   }
-  const a = manager.add(repo('A')); const b = manager.add(repo('B')); manager.setActive(a.id)
+  const a = (await manager.add(repo('A'))); const b = (await manager.add(repo('B'))); manager.setActive(a.id)
   let lookups = 0; let allow = true; let metaReads = 0
   const authorize = (context: ClientCommandContext) => allow && context.actor.kind === 'operator'
   const host = { manager: () => { lookups++; return manager }, authorize,

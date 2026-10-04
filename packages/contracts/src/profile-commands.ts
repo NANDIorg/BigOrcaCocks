@@ -7,7 +7,7 @@ import type { TaskTypeInput, TaskTypePatch, TaskTypesState, NodeTemplateInput, T
 /** Библиотека и настройки не зависят от выбранного проекта конкретного клиента. */
 export interface ProfileCommands<S extends RuntimeSettings = RuntimeSettings, P extends RuntimeSettingsPatch = RuntimeSettingsPatch> {
   listProjects(context: ClientCommandContext): { projects: Project[]; groups: ProjectGroup[] }
-  addProject(context: ClientCommandContext, root: string, typeId?: string): Project
+  addProject(context: ClientCommandContext, root: string, typeId?: string): Promise<Project>
   removeProject(context: ClientCommandContext, projectId: string): void
   detectTaskType(context: ClientCommandContext, root: string): TaskTypeDetection
   inProgressCounts(context: ClientCommandContext): Record<string, number>

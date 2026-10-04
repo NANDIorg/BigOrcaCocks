@@ -51,7 +51,11 @@ export function registerDesktopProfileCommands<Event>(handle: DesktopCommandHand
     const ctx = context(event)
     const root = typeof path === 'string' && path ? path : await host.chooseFolder()
     if (!root) return null
-    return invoke(() => { const saved = c.addProject(ctx, root, typeof typeId === 'string' && typeId ? typeId : undefined); host.setActive(saved.id); return saved })
+    return invoke(async () => {
+      const saved = await c.addProject(ctx, root, typeof typeId === 'string' && typeId ? typeId : undefined)
+      context(event)
+      host.setActive(saved.id); return saved
+    })
   })
   handle('projects:detectTaskType', async (event, path?: string) => {
     const ctx = context(event); const root = typeof path === 'string' && path ? path : await host.chooseFolder()

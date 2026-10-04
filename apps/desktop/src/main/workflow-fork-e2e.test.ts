@@ -155,10 +155,10 @@ afterEach(async () => {
 })
 
 /** Приложение над каталогом данных `tmp/user`: повторный вызов — «перезапуск» (тот же projects.json и доска, новые объекты). */
-function startApp(workflow: Workflow = forkWorkflow(), roles: Role[] = ROLES): App {
+async function startApp(workflow: Workflow = forkWorkflow(), roles: Role[] = ROLES): Promise<App> {
   const pm = new ProjectManager(path.join(tmp, 'user'))
   if (pid === undefined || !pm.get(pid)) {
-    pid = pm.add(repo).id
+    pid = (await pm.add(repo)).id
     typeId = pm.saveTaskType({ title: 'Фича', settings: { roles, workflow } }).id
   }
   const projectId = pid
@@ -468,7 +468,7 @@ describe('разветвление fork/join: граф сценариев', () =
 
 describe('(1) регрессия: прогон без fork', () => {
   it('линейный граф: состояние и события — без ключей разветвления, payload ровно прежний', async () => {
-    const app = startApp(linearWorkflow())
+    const app = (await startApp(linearWorkflow()))
     const runId = await startRun(app)
     const shown = await cli<ShowReply>('workflow.show', { run: runId })
     assert.equal(shown.scope, 'run')
@@ -520,7 +520,7 @@ describe('(1) регрессия: прогон без fork', () => {
 
 describe('(2) fork → два пути → слияние → gate → human → end', () => {
   it('порядок событий, task create --stage, stage finish --stage, stage_tasks_done на путь, общая ветка в слиянии', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await startRun(app)
     assert.equal(stageId(app, runId), 'analysis')
     assert.equal(events(app, 'stage_started').length, 1)
@@ -672,7 +672,7 @@ describe('(2) fork → два пути → слияние → gate → human →
 
 describe('(3) reject внутри пути возвращает только его', () => {
   it('reject проверки пути: stage_started с замечаниями только ему; соседний путь, его подзадачи и события не тронуты', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     const api = await work(app, runId, 'be', 'api.ts')
     const ui = await work(app, runId, 'fe', 'ui.html')
@@ -722,7 +722,7 @@ describe('(3) reject внутри пути возвращает только е�
   })
 
   it('reject человека в пути: соседний путь уже в слиянии — его позиция, время прихода и события не меняются', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     await cli('stage.finish', { run: runId, stage: 'be', summary: 'API готово' })
@@ -757,7 +757,7 @@ describe('(3) reject внутри пути возвращает только е�
 
 describe('(4) два human в путях', () => {
   it('решение одного не двигает другой; «Подтвердить»/«Вернуть» с карточки при двух ждущих — отказ с кодом, при одном — работает', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     await cli('stage.finish', { run: runId, stage: 'be', summary: 'API готово' })
@@ -816,7 +816,7 @@ describe('(4) два human в путях', () => {
 
 describe('(5) заблокированный путь', () => {
   it('проверка пути не запустилась → workflow_blocked с lane; соседний путь идёт; повтор запускает её без дублей', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     const before = mark(app)
@@ -865,7 +865,7 @@ describe('(5) заблокированный путь', () => {
   })
 
   it('проверка пути сдала done без решения → workflow_blocked этого пути; решение «Принять» после блока проходит, соседний путь не затронут', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     await cli('stage.finish', { run: runId, stage: 'be', summary: 'API готово' })
@@ -907,7 +907,7 @@ describe('(5) заблокированный путь', () => {
     const v = validateWorkflow(wf, { roles: ROLES })
     assert.deepEqual(v.errors, [])
     assert.ok(v.warnings.some((w) => w.code === 'forkPushInBranch'), 'push внутри пути — предупреждение, не ошибка')
-    const app = startApp(wf)
+    const app = (await startApp(wf))
     const runId = await startRun(app)
     assert.deepEqual(lanesAt(app, runId), { backend: 'be', frontend: 'fe' })
     await work(app, runId, 'fe', 'ui.html')
@@ -944,7 +944,7 @@ describe('(6) рестарт приложения посреди разветв�
   const lanesSnapshot = (app: App, runId: string): string => JSON.stringify(run(app, runId).lanes)
 
   it('пути на проверке и у человека: рестарт и повторы эффектов не дублируют задачи, запросы и события; решения после рестарта идут по путям', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     await cli('stage.finish', { run: runId, stage: 'be', summary: 'API готово' })
@@ -958,7 +958,7 @@ describe('(6) рестарт приложения посреди разветв�
     const eventsBefore = app.store.listEvents().length
 
     // Приложение закрыли и открыли снова: новые ProjectManager и store, терминалов нет.
-    const again = startApp()
+    const again = (await startApp())
     assert.equal(lanesSnapshot(again, runId), snapshot, 'позиции путей пережили рестарт байт в байт')
     assert.equal(stageId(again, runId), 'split')
     assert.equal(again.alive.size, 0)
@@ -986,7 +986,7 @@ describe('(6) рестарт приложения посреди разветв�
   })
 
   it('оба пути на «Работе», координатор мёртв: один запуск на оба этапа, цель несёт блок на каждый, подзадачи и метки сохранены', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     const api = await work(app, runId, 'be', 'api.ts')
     const ui = await spawn(app, runId, 'UI', { stage: 'fe' })
@@ -994,7 +994,7 @@ describe('(6) рестарт приложения посреди разветв�
     assert.notEqual(run(app, runId).lanes!.find((l) => l.branchId === 'backend')!.stageTasksDoneAt, undefined, 'подзадачи «Бэкенда» закрыты — метка есть')
     const started = events(app, 'stage_started').length
 
-    const again = startApp()
+    const again = (await startApp())
     assert.equal(lanesSnapshot(again, runId), snapshot, 'метки stageTasksDoneAt и заходы пережили рестарт')
     await startRunWorkflow(again.deps, runId)
     assert.deepEqual(again.coordinatorStarts, [runId], 'один запуск на оба открытых этапа')
@@ -1018,7 +1018,7 @@ describe('(6) рестарт приложения посреди разветв�
   })
 
   it('проверка пути не успела запуститься до рестарта: повтор запускает именно её, задача и approval соседа не дублируются', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     app.workersDown = true
@@ -1030,7 +1030,7 @@ describe('(6) рестарт приложения посреди разветв�
     const request = approvalAt(app, runId, 'humFe')
     assert.equal(app.launches.some((l) => l.taskId === gate.id), false)
 
-    const again = startApp()
+    const again = (await startApp())
     await startRunWorkflow(again.deps, runId)
     assert.deepEqual(again.launches, [{ taskId: gate.id, roleId: 'reviewer' }], 'запущена только недостартовавшая проверка')
     assert.equal(again.store.listTasks().filter((t) => t.gateFor?.nodeId === 'revApi').length, 1)
@@ -1042,7 +1042,7 @@ describe('(6) рестарт приложения посреди разветв�
 
 describe('(7) смерть координатора: страховка по путям', () => {
   it('закрытые подзадачи обоих путей: settleIdleStages закрывает каждый путь без сводки и делает эффекты его следующей ноды', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     await work(app, runId, 'fe', 'ui.html')
@@ -1068,7 +1068,7 @@ describe('(7) смерть координатора: страховка по п�
   })
 
   it('закрыты подзадачи только одного пути: закрывается он, второй путь остаётся на «Работе»', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     const ui = await spawn(app, runId, 'UI', { stage: 'fe' })
@@ -1090,7 +1090,7 @@ describe('(7) смерть координатора: страховка по п�
 
 describe('(8) оба пути правят один файл', () => {
   it('конфликт слияния подзадачи — нода conflict на задаче; соседний путь идёт; после решения join срабатывает', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     // Обе подзадачи отведены от ветки прогона до первого слияния и правят один файл.
     const a = await spawn(app, runId, 'API', { stage: 'be' })
@@ -1143,7 +1143,7 @@ describe('(8) оба пути правят один файл', () => {
 
 describe('(9) reject после слияния', () => {
   it('reject проверки ветки и человека → повторный проход через fork: новое поколение путей, замечания обоим, задачи прошлого захода не в счёте', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await throughLanes(app, runId, { be: 'api1.ts', fe: 'ui1.html' }, 'заход 1')
     const gateAll1 = gateOf(app, runId, 'revAll')
@@ -1244,7 +1244,7 @@ describe('(10) decision и ask внутри путей', () => {
   it('вопрос человеку в одном пути и решение агента в другом идут параллельно; эскалация решения — человеку по ноде; ответы и решения — в stage_started своего пути', async () => {
     const wf = askDecisionWorkflow()
     assert.deepEqual(validateWorkflow(wf, { roles: ROLES }).errors, [])
-    const app = startApp(wf)
+    const app = (await startApp(wf))
     const runId = await startRun(app)
 
     // Вход в разветвление прямо из старта: «Бэкенд» на «Работе» — stage_started; «Фронтенд» на вопросе — задача-вопрос запущена.
@@ -1350,7 +1350,7 @@ async function orca(args: string[], runId?: string): Promise<{ code: number; out
 
 describe('(2б) реальный CLI orca-board: --stage и lanes', () => {
   it('task create --stage, stage finish --stage и workflow show доходят до сокета; $ORCA_RUN_ID подставляется, --stage без значения отвергает CLI', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
 
     const shown = await orca(['workflow', 'show'], runId)
@@ -1395,7 +1395,7 @@ describe('(2б) реальный CLI orca-board: --stage и lanes', () => {
 
 describe('(11) старый снимок без lanes', () => {
   it('снимок линейного прогона (как писала сборка до разветвления) загружается и идёт дальше; правка типа под fork идущий прогон не трогает, новый — разветвляется', async () => {
-    const app = startApp(linearWorkflow())
+    const app = (await startApp(linearWorkflow()))
     const runId = await startRun(app)
     await work(app, runId, undefined, 'a.md')
     await cli('stage.finish', { run: runId, summary: 'разобрал' })
@@ -1409,7 +1409,7 @@ describe('(11) старый снимок без lanes', () => {
 
     // Тип перепишут под разветвление, приложение перезапустят: идущий прогон живёт на своём снимке графа.
     app.pm.saveTaskType({ id: typeId, title: 'Фича', settings: { roles: ROLES, workflow: forkWorkflow() } })
-    const again = startApp()
+    const again = (await startApp())
     assert.equal(run(again, runId).lanes, undefined)
     assert.equal(run(again, runId).workflow!.nodes.some((n) => n.type === 'fork'), false, 'снимок графа прогона — линейный')
     assert.equal(stageId(again, runId), 'review')
@@ -1487,7 +1487,7 @@ describe('(12) сохранение типа с fork через ProjectManager',
   ]
 
   it('граф с fork сохраняется, переживает перезапуск, доходит до нового прогона и types list', async () => {
-    const app = startApp(linearWorkflow())
+    const app = (await startApp(linearWorkflow()))
     const saved = app.pm.saveTaskType({ title: 'С разветвлением', settings: { roles: ROLES, workflow: forkWorkflow() } })
     assert.deepEqual(forkNode(app.pm.taskTypeWorkflow(saved.id).workflow).branches, BRANCHES)
     const file = JSON.parse(readFileSync(path.join(tmp, 'user', 'projects.json'), 'utf8')) as { taskTypes: Array<{ id: string; settings: { workflow?: Workflow } }> }
@@ -1508,8 +1508,8 @@ describe('(12) сохранение типа с fork через ProjectManager',
     assert.equal(listed.stages.find((x) => x.id === 'merge_paths')!.type, 'join')
   })
 
-  it('невалидные «скобки» и пути не сохраняются: тип не создаётся, граф существующего типа остаётся прежним', () => {
-    const app = startApp(forkWorkflow())
+  it('невалидные «скобки» и пути не сохраняются: тип не создаётся, граф существующего типа остаётся прежним', async () => {
+    const app = (await startApp(forkWorkflow()))
     const { pm } = app
     const before = pm.taskTypes().length
     const good = pm.taskTypeWorkflow(typeId!).workflow
@@ -1524,8 +1524,8 @@ describe('(12) сохранение типа с fork через ProjectManager',
     assert.deepEqual(new ProjectManager(path.join(tmp, 'user')).taskTypeWorkflow(typeId!).workflow, good, 'и на диске тоже')
   })
 
-  it('предупреждения не мешают: пустой путь (fork сразу в слияние) сохраняется', () => {
-    const app = startApp(linearWorkflow())
+  it('предупреждения не мешают: пустой путь (fork сразу в слияние) сохраняется', async () => {
+    const app = (await startApp(linearWorkflow()))
     const wf = mutated((x) => {
       for (const id of ['be', 'revApi', 'humBe']) dropNode(x, id)
       x.edges.push(edge('split', 'backend', 'merge_paths'))
@@ -1570,7 +1570,7 @@ describe('(13) последовательные разветвления, пус
     const v = validateWorkflow(wf, { roles: ROLES })
     assert.deepEqual(v.errors, [])
     assert.ok(v.warnings.some((w) => w.code === 'forkEmptyBranch'), 'пустой путь — предупреждение, не ошибка')
-    const app = startApp(wf)
+    const app = (await startApp(wf))
     const runId = await startRun(app)
     assert.deepEqual(lanesAt(app, runId), { a: 'wa', b: 'wb' })
     assert.deepEqual(events(app, 'stage_started').map((e) => e.payload.lane), ['split1:a', 'split1:b'])
@@ -1608,7 +1608,7 @@ describe('(13) последовательные разветвления, пус
   })
 
   it('подзадача, добавленная после stage_tasks_done, снимает метку и событие только своего пути', async () => {
-    const app = startApp()
+    const app = (await startApp())
     const runId = await toLanes(app)
     await work(app, runId, 'be', 'api.ts')
     await work(app, runId, 'fe', 'ui.html')

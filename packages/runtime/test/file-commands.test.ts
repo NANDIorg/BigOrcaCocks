@@ -11,10 +11,10 @@ function deferred() {
   let resolve = () => {}; const promise = new Promise<void>(done => { resolve = done })
   return { promise, resolve }
 }
-function fixture(paused = false) {
+async function fixture(paused = false) {
   assert.equal(typeof runtime.createFileCommands, 'function')
   assert.equal(typeof runtime.registeredProject, 'function')
-  const f = profileFixture(); const services = fileServices(); const entered = deferred(); const gate = deferred()
+  const f = (await profileFixture()); const services = fileServices(); const entered = deferred(); const gate = deferred()
   const files = { ...services.projectFiles, resolveProjectPath: async (...args: Parameters<typeof services.projectFiles.resolveProjectPath>) => {
     if (paused) { entered.resolve(); await gate.promise }
     return services.projectFiles.resolveProjectPath(...args)
@@ -57,7 +57,7 @@ const code = (value: string) => (error: unknown) => error instanceof runtime.Com
 const domain = (key: string) => (error: unknown) => error instanceof runtime.CommandError && error.cause instanceof OrcaError && error.cause.key === key
 
 test('file API: context/policy/input проверены до project lookup и native/grant effects', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     await assert.rejects(f.commands.listDocs(null as never), code('command.invalidContext'))
     await assert.rejects(f.commands.viewDoc({ ...f.context(), actor: { kind: 'agent', id: 'agent' } }, '', '../x'), code('command.forbidden'))
@@ -71,7 +71,7 @@ test('file API: context/policy/input проверены до project lookup и n
   } finally { f.close() }
 })
 test('file API: явный проект двух клиентов, DTO и байты отделены, active selection прежняя', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     const a = await f.commands.readDoc(f.context(f.a.id, 'one'), 'project', 'README.md')
     const b = await f.commands.readDoc(f.context(f.b.id, 'two'), 'project', 'README.md')
@@ -88,7 +88,7 @@ test('file API: явный проект двух клиентов, DTO и бай
   } finally { f.close() }
 })
 test('native commands отдают void, private path только trusted host, executable не открывается', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     assert.equal(await f.commands.openDoc(f.context(), 'project', 'README.md'), undefined)
     assert.equal(await f.commands.revealDoc(f.context(), 'project', 'run.sh'), undefined)
@@ -101,7 +101,7 @@ test('native commands отдают void, private path только trusted host,
   } finally { f.close() }
 })
 test('doc sources принадлежат указанному store; preview project всегда без сети', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     const { task, wt } = f.taskSource()
     assert.equal(await f.commands.readDoc(f.context(), task.id, 'README.md'), 'task source')
@@ -114,7 +114,7 @@ test('doc sources принадлежат указанному store; preview pro
   } finally { f.close() }
 })
 test('showcase: task/dispatch принадлежность, snapshot network, old/null dispatch и native paths', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     const { task, store, dispatch, wt } = f.taskSource()
     const bytes = await f.commands.readShowcase(f.context(), task.id, 'image.png', null)
@@ -137,19 +137,19 @@ test('showcase: task/dispatch принадлежность, snapshot network, ol
   } finally { f.close() }
 })
 for (const kind of ['remove', 'readd', 'policy'] as const) test(`late file ${kind}: no grant/native effect`, async () => {
-  const f = fixture(true)
+  const f = (await fixture(true))
   try {
     const pending = f.commands.docPreview(f.context(), 'project', 'index.html')
     await f.entered.promise
     if (kind === 'policy') f.deny()
-    else { f.manager.remove(f.b.id); if (kind === 'readd') assert.equal(f.manager.add(f.b.root).id, f.b.id) }
+    else { f.manager.remove(f.b.id); if (kind === 'readd') assert.equal((await f.manager.add(f.b.root)).id, f.b.id) }
     f.gate.resolve()
     await assert.rejects(pending, code(kind === 'policy' ? 'command.forbidden' : 'command.stale'))
     assert.equal(f.tokens.size, 0); assert.deepEqual(f.effects, [])
   } finally { f.close() }
 })
 test('task source changes during real async read: late native open rejected', async () => {
-  const f = fixture(true)
+  const f = (await fixture(true))
   try {
     const { task, store } = f.taskSource()
     const pending = f.commands.openDoc(f.context(), task.id, 'README.md')
@@ -160,7 +160,7 @@ test('task source changes during real async read: late native open rejected', as
   } finally { f.close() }
 })
 test('dispatch replaced before native async result: old snapshot result rejected', async () => {
-  const f = fixture(); const { task, store, dispatch } = f.taskSource()
+  const f = (await fixture()); const { task, store, dispatch } = f.taskSource()
   try {
     const entered = deferred(); const gate = deferred()
     // native port выполняет настоящее событие после проверки пути; меняем dispatch до результата.
@@ -179,7 +179,7 @@ test('dispatch replaced before native async result: old snapshot result rejected
 
 
 test('showcaseBase: замена dispatch до выдачи результата отклоняет поздний URL', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     const { store, task, dispatch } = f.taskSource()
     const pending = f.commands.showcaseBase(f.context(), dispatch.id)
@@ -188,8 +188,8 @@ test('showcaseBase: замена dispatch до выдачи результата
   } finally { f.close() }
 })
 
-test('single doc source проверяет только указанную задачу/store и её доступный worktree', () => {
-  const f = fixture()
+test('single doc source проверяет только указанную задачу/store и её доступный worktree', async () => {
+  const f = (await fixture())
   try {
     assert.equal(typeof f.services.docs.docTask, 'function')
     const { task, store, wt } = f.taskSource()

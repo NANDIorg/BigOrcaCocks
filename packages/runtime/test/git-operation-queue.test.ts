@@ -53,8 +53,8 @@ test('Git factory rejects invalid/missing repo with existing domain error before
   for (const root of [plain, join(f.dir, 'missing')]) await assert.rejects(operations.createInitialCommit(root, 'empty'), { message: 'git.notRepo' })
 })
 test('factory project mutations use owner queue; stale principal cannot commit after waiting', async t => {
-  const f = gitQueueFixture(t); const profile = profileFixture(); t.after(profile.close)
-  const project = profile.manager.add(f.unborn); const release = deferred(); const entered = deferred(); const admitted: string[] = []
+  const f = gitQueueFixture(t); const profile = (await profileFixture()); t.after(profile.close)
+  const project = (await profile.manager.add(f.unborn)); const release = deferred(); const entered = deferred(); const admitted: string[] = []
   t.after(release.resolve)
   const key = await runtime.canonicalGitCommonDir(f.unborn)
   const first = f.queue.enqueue(key, async () => { entered.resolve(); await release.promise }); await entered.promise

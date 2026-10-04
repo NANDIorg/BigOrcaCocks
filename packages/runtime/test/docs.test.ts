@@ -230,7 +230,7 @@ describe('listWorktreeDocs', () => {
     git(repo, 'add', '-A')
     git(repo, 'commit', '-qm', 'master')
 
-    const docs = listWorktreeDocs(wt, 'master')
+    const docs = (await listWorktreeDocs(wt, 'master'))
     assert.deepEqual(docs.map((d) => d.path).sort(), ['README.md', 'docs/committed.md', 'fresh.md'])
     assert.equal(docs.find((d) => d.path === 'fresh.md')?.untracked, true)
     assert.equal(docs.find((d) => d.path === 'docs/committed.md')?.untracked, false)
@@ -252,7 +252,7 @@ describe('репозиторий без коммитов', () => {
     write(empty, 'staged.md')
     git(empty, 'add', 'staged.md')
 
-    assert.deepEqual(listWorktreeDocs(empty, 'main').map((d) => d.path), ['notes.md'])
+    assert.deepEqual((await listWorktreeDocs(empty, 'main')).map((d) => d.path), ['notes.md'])
     const groups = await listDocGroups(empty, 'main', [{ id: 't1', title: 'Задача', worktree: empty, branch: 'main' }])
     assert.deepEqual(groups.map((g) => g.source), ['project', 't1'])
     assert.ok(groups[0].files.some((f) => f.path === 'notes.md'))

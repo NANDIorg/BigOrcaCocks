@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { createGitProcessService, GitProcessError, type GitProcessService } from './git-process.ts'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   TaskStore, assertStoreFormat, isAgentKind, DEFAULT_ROLES, withDefaultDescriptions, DEFAULT_COLUMNS, SYSTEM_COLUMN_KINDS, COLUMN_COLORS,
@@ -131,8 +131,10 @@ export function runnableWorkflow(wf: Workflow | undefined): Workflow | undefined
 export function createProjectServices<S extends RuntimeSettings, P extends RuntimeSettingsPatch>(host: {
   messages: ProjectMessages
   settings: ProjectSettingsCodec<S, P>
+  processes?: GitProcessService
 }) {
   const messages = host.messages
+  const processes = host.processes ?? createGitProcessService()
 
   const ONBOARDING_STATUSES: readonly StoredOnboarding['status'][] = ['pending', 'completed', 'skipped']
 
@@ -395,13 +397,17 @@ export function createProjectServices<S extends RuntimeSettings, P extends Runti
      * умолчанию `typeId` (нет — тип библиотеки по умолчанию); копии настроек типа нет — связь живая.
      * Уже добавленный репозиторий возвращается как есть.
      */
-    add(path: string, typeId?: string, select = true): Project {
+    async add(path: string, typeId?: string, select = true, guard: () => void = () => {}): Promise<Project> {
+      guard()
       let root: string
       try {
-        root = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: path, stdio: 'pipe' }).toString().trim()
-      } catch {
+        root = (await processes.run(path, ['rev-parse', '--show-toplevel'])).stdout.trim()
+      } catch (error) {
+        guard()
+        if (error instanceof GitProcessError && error.cancelled) throw error
         throw new messages.Error('projects.notGit', { path })
       }
+      guard()
       const existing = this.data.projects.find((p) => p.root === root)
       if (existing) {
         if (select) this.data.activeId = existing.id

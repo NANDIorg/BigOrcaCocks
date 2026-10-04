@@ -6,10 +6,10 @@ import { profileFixture, operator } from './profile-command-test-host.ts'
 
 const two: ClientCommandContext = { clientId: 'two', actor: { kind: 'operator', id: 'person-two' } }
 const code = (value: string) => (e: unknown) => e instanceof runtime.CommandError && e.code === value
-function fixture(t: { after(fn: () => void): void }) {
+async function fixture(t: { after(fn: () => void): void }) {
   assert.equal(typeof runtime.createSessionCommands, 'function')
   assert.equal(typeof runtime.createSessionWriterLeases, 'function')
-  const f = profileFixture(); t.after(f.close)
+  const f = (await profileFixture()); t.after(f.close)
   let now = 1000; let lookups = 0; let allow = true
   const ports: Array<{ exit(): void; killed: boolean; size: number[] }> = []
   const starts: Array<{ command: string; cwd?: string; env: Record<string, string> }> = []
@@ -28,8 +28,8 @@ function fixture(t: { after(fn: () => void): void }) {
   return { ...f, commands, sessions, leases, starts, ports, clock: (at: number) => { now = at }, deny: () => { allow = false }, lookups: () => lookups }
 }
 
-test('session context/payload guards run before project lookup or real registry spawn', t => {
-  const f = fixture(t)
+test('session context/payload guards run before project lookup or real registry spawn', async t => {
+  const f = (await fixture(t))
   assert.throws(() => f.commands.spawn({ ...operator, actor: { kind: 'agent', id: 'forged' } }, { cols: 80, rows: 24 }), code('command.forbidden'))
   for (const raw of [{ cols: NaN, rows: 24 }, { cols: 80, rows: 0 }, { cols: 80, rows: 24, env: { X: 7 } },
     { cols: 80, rows: 24, env: { 'BAD=KEY': 'bad' } }, { cols: 80, rows: 24, projectId: '' }, { cols: 80, rows: 24, meta: { role: 'worker' } }]) {
@@ -37,8 +37,8 @@ test('session context/payload guards run before project lookup or real registry 
   }
   assert.equal(f.lookups(), 0); assert.equal(f.sessions.listTerminals().length, 0); assert.equal(f.starts.length, 0)
 })
-test('global and two explicit project shells use host env/root/meta without selecting a board', t => {
-  const f = fixture(t)
+test('global and two explicit project shells use host env/root/meta without selecting a board', async t => {
+  const f = (await fixture(t))
   const global = f.commands.spawn(operator, { cols: 80, rows: 24, command: 'fixture-shell', label: 'global' })
   const a = f.commands.spawn(operator, { cols: 80, rows: 24, projectId: f.a.id, label: 'A' })
   const b = f.commands.spawn(two, { cols: 100, rows: 30, projectId: f.b.id, label: 'B', env: { EXTRA: 'set' } })
@@ -51,8 +51,8 @@ test('global and two explicit project shells use host env/root/meta without sele
   assert.equal(f.manager.active()?.id, f.a.id); assert.equal(f.manager.loadedStores().length, 0)
   assert.throws(() => f.commands.spawn(operator, { cols: 80, rows: 24, projectId: 'foreign' }), code('command.projectNotFound'))
 })
-test('one writer: foreign claim/token/input never changes terminal tail', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 })
+test('one writer: foreign claim/token/input never changes terminal tail', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 })
   const lease = f.commands.claimWriter(operator, id)
   assert.throws(() => f.commands.claimWriter(two, id), code('command.conflict'))
   assert.throws(() => f.commands.write(two, id, 'foreign', lease.id), code('command.conflict'))
@@ -61,15 +61,15 @@ test('one writer: foreign claim/token/input never changes terminal tail', t => {
   f.commands.write(operator, id, 'accepted', lease.id); assert.equal(f.sessions.ptyTail(id), 'accepted')
   lease.clientId = 'changed'; assert.equal(f.commands.writer(operator, id)?.clientId, operator.clientId)
 })
-test('resize validates dimensions and current writer before native resize', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const lease = f.commands.claimWriter(operator, id)
+test('resize validates dimensions and current writer before native resize', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const lease = f.commands.claimWriter(operator, id)
   assert.throws(() => f.commands.resize(two, id, 100, 30, lease.id), code('command.conflict'))
   assert.throws(() => f.commands.resize(operator, id, 100, 0, lease.id), code('command.invalidInput'))
   assert.deepEqual(f.ports[0].size, [80, 24])
   f.commands.resize(operator, id, 100, 30, lease.id); assert.deepEqual(f.ports[0].size, [100, 30])
 })
-test('expiry enables another writer; late previous input/resize cannot affect the PTY', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
+test('expiry enables another writer; late previous input/resize cannot affect the PTY', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
   assert.equal(first.expiresAt, 31000)
   f.clock(31000); const second = f.commands.claimWriter(two, id); assert.notEqual(second.id, first.id)
   assert.throws(() => f.commands.write(operator, id, 'late', first.id), code('command.conflict'))
@@ -77,35 +77,35 @@ test('expiry enables another writer; late previous input/resize cannot affect th
   f.commands.write(two, id, 'new owner', second.id); assert.equal(f.sessions.ptyTail(id), 'new owner')
   assert.deepEqual(f.ports[0].size, [80, 24]); assert.equal(f.ports[0].killed, false)
 })
-test('release then explicit claim transfers control without stopping a process', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
+test('release then explicit claim transfers control without stopping a process', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
   f.commands.releaseWriter(operator, id, first.id); assert.equal(f.commands.writer(two, id), null)
   const second = f.commands.claimWriter(two, id); f.commands.write(two, id, 'transferred', second.id)
   assert.equal(f.sessions.ptyTail(id), 'transferred'); assert.equal(f.sessions.isAlive(id), true)
 })
-test('renew keeps identity, expires after renewed TTL and does not renew a foreign token', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
+test('renew keeps identity, expires after renewed TTL and does not renew a foreign token', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
   f.clock(20000); const renewed = f.commands.renewWriter(operator, id, first.id)
   assert.equal(renewed.id, first.id); assert.equal(renewed.expiresAt, 50000)
   assert.throws(() => f.commands.renewWriter(two, id, first.id), code('command.conflict'))
   f.clock(49999); assert.throws(() => f.commands.claimWriter(two, id), code('command.conflict'))
   f.clock(50000); assert.equal(f.commands.claimWriter(two, id).clientId, two.clientId)
 })
-test('disconnect drops only client leases; same sessions/output survive for observers/new writer', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
+test('disconnect drops only client leases; same sessions/output survive for observers/new writer', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const first = f.commands.claimWriter(operator, id)
   f.commands.write(operator, id, 'before', first.id); f.leases.dropClient(operator.clientId)
   assert.equal(f.sessions.isAlive(id), true); assert.equal(f.commands.list(two)[0].tail, 'before')
   const next = f.commands.claimWriter(two, id); f.commands.write(two, id, 'after', next.id)
   assert.equal(f.sessions.ptyTail(id), 'beforeafter'); assert.equal(f.ports[0].killed, false)
 })
-test('actual registry exit/explicit kill invalidate writer; kill does not require taking writer from another client', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); f.commands.claimWriter(operator, id)
+test('actual registry exit/explicit kill invalidate writer; kill does not require taking writer from another client', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); f.commands.claimWriter(operator, id)
   f.ports[0].exit(); assert.throws(() => f.commands.claimWriter(two, id), code('command.rejected'))
   const other = f.commands.spawn(two, { cols: 80, rows: 24 }); f.commands.claimWriter(two, other)
   f.commands.kill(operator, other); assert.equal(f.sessions.isAlive(other), false); assert.equal(f.ports[1].killed, true)
 })
-test('bounded input rejects over64KiB before changing activity/output; valid lease alone is insufficient after policy revocation', t => {
-  const f = fixture(t); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const lease = f.commands.claimWriter(operator, id)
+test('bounded input rejects over64KiB before changing activity/output; valid lease alone is insufficient after policy revocation', async t => {
+  const f = (await fixture(t)); const id = f.commands.spawn(operator, { cols: 80, rows: 24 }); const lease = f.commands.claimWriter(operator, id)
   const before = f.sessions.lastActivityAt(id)
   assert.throws(() => f.commands.write(operator, id, 'я'.repeat(32769), lease.id), code('command.invalidInput'))
   assert.equal(f.sessions.lastActivityAt(id), before); assert.equal(f.sessions.ptyTail(id), '')

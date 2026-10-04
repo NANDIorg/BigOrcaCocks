@@ -12,11 +12,11 @@ const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd
 class HostError extends Error { readonly key: string; constructor(key: string) { super(key); this.key = key } }
 const domain = (key: string) => (error: unknown) => error instanceof runtime.CommandError && error.cause instanceof HostError && error.cause.key === key
 const code = (key: string) => (error: unknown) => error instanceof runtime.CommandError && error.code === key
-function fixture() {
+async function fixture() {
   assert.equal(typeof runtime.createProjectGitCommands, 'function')
   assert.equal(typeof runtime.createRunCommands, 'function')
   assert.equal(typeof runtime.createAgentCommands, 'function')
-  const f = profileFixture(); cleanup.push(f.close)
+  const f = (await profileFixture()); cleanup.push(f.close)
   for (const p of [f.a, f.b]) {
     git(p.root, 'symbolic-ref', 'HEAD', 'refs/heads/main')
     git(p.root, 'config', 'user.name', 'test'); git(p.root, 'config', 'user.email', 'test@local')
@@ -41,7 +41,7 @@ function fixture() {
 }
 
 test('application guards reject forged context and payload before lookup/effect', async () => {
-  const f = fixture(); const ctx = f.context(f.a.id)
+  const f = (await fixture()); const ctx = f.context(f.a.id)
   await assert.rejects(f.gitCommands.branch({ ...ctx, actor: { kind: 'agent', id: 'forged' } }), code('command.forbidden'))
   await assert.rejects(f.gitCommands.checkout(ctx, ''), code('command.invalidInput'))
   await assert.rejects(f.gitCommands.initialCommit(ctx, 'invalid' as 'empty'), code('command.invalidInput'))
@@ -52,7 +52,7 @@ test('application guards reject forged context and payload before lookup/effect'
   assert.equal(f.lookups(), 0); assert.equal(f.manager.loadedStores().length, 0)
 })
 test('read-only Git does not open boards; explicit A/B, detached DTO and selection', async () => {
-  const f = fixture(); const a = f.context(f.a.id); const b = { ...f.context(f.b.id), clientId: 'two' }
+  const f = (await fixture()); const a = f.context(f.a.id); const b = { ...f.context(f.b.id), clientId: 'two' }
   assert.equal((await f.gitCommands.branch(a)).unborn, true)
   assert.equal((await f.gitCommands.branch(b)).branch, 'main')
   const branches = await f.gitCommands.branches(a); assert.deepEqual(branches.local, [])
@@ -62,7 +62,7 @@ test('read-only Git does not open boards; explicit A/B, detached DTO and selecti
   await assert.rejects(f.gitCommands.branch(f.context('missing')), code('command.projectNotFound'))
 })
 test('empty init preserves actual staged/index and files; snapshot explicit; checkout real HEAD', async () => {
-  const f = fixture(); writeFileSync(join(f.a.root, 'staged.txt'), 'keep'); git(f.a.root, 'add', 'staged.txt')
+  const f = (await fixture()); writeFileSync(join(f.a.root, 'staged.txt'), 'keep'); git(f.a.root, 'add', 'staged.txt')
   const index = git(f.a.root, 'ls-files', '--stage')
   await f.gitCommands.initialCommit(f.context(f.a.id), 'empty')
   assert.equal(git(f.a.root, 'ls-files', '--stage'), index); assert.equal(git(f.a.root, 'ls-tree', 'HEAD'), '')
@@ -75,7 +75,7 @@ test('empty init preserves actual staged/index and files; snapshot explicit; che
   assert.equal(git(f.b.root, 'branch', '--show-current'), 'next')
 })
 test('local bare fetch/pull goes through common API with real refs and bounded result', async () => {
-  const f = fixture(); await f.gitCommands.initialCommit(f.context(f.a.id), 'empty')
+  const f = (await fixture()); await f.gitCommands.initialCommit(f.context(f.a.id), 'empty')
   const remote = join(f.dir, 'remote.git'); git(f.dir, 'init', '--bare', '-q', remote)
   git(f.a.root, 'remote', 'add', 'origin', remote); git(f.a.root, 'push', '-qu', 'origin', 'main')
   git(f.b.root, 'remote', 'add', 'origin', remote)
@@ -85,22 +85,23 @@ test('local bare fetch/pull goes through common API with real refs and bounded r
   await f.gitCommands.pull(f.context(f.b.id)); assert.equal(readFileSync(join(f.b.root, 'new.txt'), 'utf8'), 'new')
 })
 test('queued mutation removed/readded project is stale before any real commit', async () => {
-  const f = fixture(); const pending = f.gitCommands.initialCommit(f.context(f.a.id), 'empty')
-  f.manager.remove(f.a.id); f.manager.add(f.a.root, undefined, false)
-  await assert.rejects(pending, code('command.stale')); assert.equal(f.operations.hasCommits(f.a.root), false)
+  const f = (await fixture()); const pending = f.gitCommands.initialCommit(f.context(f.a.id), 'empty')
+  const rejected = assert.rejects(pending, code('command.stale'))
+  f.manager.remove(f.a.id); await f.manager.add(f.a.root, undefined, false)
+  await rejected; assert.equal(await f.operations.hasCommits(f.a.root), false)
 })
 test('queued mutation revoked principal cannot start real commit', async () => {
-  const f = fixture(); const pending = f.gitCommands.initialCommit(f.context(f.a.id), 'empty'); f.deny()
-  await assert.rejects(pending, code('command.forbidden')); assert.equal(f.operations.hasCommits(f.a.root), false)
+  const f = (await fixture()); const pending = f.gitCommands.initialCommit(f.context(f.a.id), 'empty'); f.deny()
+  await assert.rejects(pending, code('command.forbidden')); assert.equal(await f.operations.hasCommits(f.a.root), false)
 })
 test('live worker appears after refs await: final checkout rechecks count and HEAD stays', async () => {
-  const f = fixture(); await f.gitCommands.initialCommit(f.context(f.a.id), 'empty'); git(f.a.root, 'branch', 'next')
+  const f = (await fixture()); await f.gitCommands.initialCommit(f.context(f.a.id), 'empty'); git(f.a.root, 'branch', 'next')
   f.changeLive()
   await assert.rejects(f.gitCommands.checkout(f.context(f.a.id), 'next'), domain('git.workersActive'))
   assert.equal(git(f.a.root, 'branch', '--show-current'), 'main')
 })
-test('runs explicit clients, detached summary/counts, close idempotent with human status attribution', () => {
-  const f = fixture(); const store = f.manager.store(f.a.id)
+test('runs explicit clients, detached summary/counts, close idempotent with human status attribution', async () => {
+  const f = (await fixture()); const store = f.manager.store(f.a.id)
   const run = store.createGlobalTask({ title: 'run' }); store.moveGlobalTask(run.id, 'in_progress')
   store.createTask({ title: 'one', runId: run.id }); const done = store.createTask({ title: 'two', runId: run.id }); store.moveTask(done.id, 'done')
   const b = f.manager.store(f.b.id).createRun('B')
@@ -113,8 +114,8 @@ test('runs explicit clients, detached summary/counts, close idempotent with huma
   assert.equal(f.runs.close(f.context(f.a.id), run.id).closedAt, closed.closedAt)
   assert.equal(f.manager.active()?.id, f.a.id)
 })
-test('agents enabled by explicit project; global list detached and refresh reads real config', () => {
-  const f = fixture(); f.manager.setEnabledAgents(f.a.id, []); f.manager.setEnabledAgents(f.b.id, ['codex'])
+test('agents enabled by explicit project; global list detached and refresh reads real config', async () => {
+  const f = (await fixture()); f.manager.setEnabledAgents(f.a.id, []); f.manager.setEnabledAgents(f.b.id, ['codex'])
   assert.equal(f.agents.list(operator, f.a.id).find(a => a.id === 'codex')?.enabled, false)
   const b = f.agents.list({ ...operator, clientId: 'two' }, f.b.id); assert.equal(b.find(a => a.id === 'codex')?.enabled, true)
   b.find(a => a.id === 'codex')!.defaults.model = 'mutated'
@@ -124,8 +125,8 @@ test('agents enabled by explicit project; global list detached and refresh reads
   assert.equal(f.manager.active()?.id, f.a.id)
   assert.throws(() => f.agents.list(operator, 'missing'), code('command.projectNotFound'))
 })
-test('preflight validates real role agent/flags and explicit run before any launch/store write', () => {
-  const f = fixture(); const typeId = f.manager.projectDefaultTypeId(f.b.id)
+test('preflight validates real role agent/flags and explicit run before any launch/store write', async () => {
+  const f = (await fixture()); const typeId = f.manager.projectDefaultTypeId(f.b.id)
   const role = { id: 'developer', title: 'dev', agent: 'codex' as const, extraArgs: '--sandbox workspace-write' }
   f.manager.patchTaskType(typeId, { roles: [role] })
   const result = f.agents.preflight(f.context(f.b.id), 'developer'); assert.equal(result.agent, 'codex')
@@ -140,8 +141,8 @@ test('preflight validates real role agent/flags and explicit run before any laun
 })
 
 test('queued root replacement is stale and does not commit either repository', async () => {
-  const f = fixture(); const root = f.a.root
+  const f = (await fixture()); const root = f.a.root
   const pending = f.gitCommands.initialCommit(f.context(f.a.id), 'empty'); f.a.root = f.b.root
   await assert.rejects(pending, code('command.stale'))
-  assert.equal(f.operations.hasCommits(root), false); assert.equal(f.operations.hasCommits(f.b.root), false)
+  assert.equal(await f.operations.hasCommits(root), false); assert.equal(await f.operations.hasCommits(f.b.root), false)
 })

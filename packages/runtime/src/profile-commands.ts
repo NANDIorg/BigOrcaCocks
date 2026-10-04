@@ -3,6 +3,7 @@ import { NOTIFY_KINDS, type ClientCommandContext, type ProfileCommands, type Pro
   type RuntimeSettings, type RuntimeSettingsPatch, type TaskTypeInput, type TaskTypePatch, type NodeTemplateInput } from '@orca-board/contracts'
 import type { RuntimeProjectManager } from './projects.ts'
 import { createClientCommandExecutor, type ClientCommandHost } from './project-commands.ts'
+import { createAsyncClientCommandExecutor } from './async-client-commands.ts'
 import { commandObject, commandString, commandOptionalString, commandBoolean, commandArray, invalidCommandField } from './profile-command-input.ts'
 import type { createWorkflowAssistantServices } from './workflow-assistant.ts'
 
@@ -67,6 +68,7 @@ function runtimePatch<P extends RuntimeSettingsPatch>(input: unknown, hostKeys: 
 
 export function createProfileCommands<S extends RuntimeSettings, P extends RuntimeSettingsPatch>(host: ProfileCommandHost<S, P>): ProfileCommands<S, P> {
   const execute = createClientCommandExecutor(host)
+  const executeAsync = createAsyncClientCommandExecutor(host)
   type Manager = RuntimeProjectManager<S, P>
   function run<T>(context: ClientCommandContext, name: keyof ProfileCommands, validate: () => (manager: Manager) => T): T {
     return execute(context, `profile.${name}`, () => {
@@ -84,9 +86,9 @@ export function createProfileCommands<S extends RuntimeSettings, P extends Runti
   }
   return {
     listProjects: ctx => run(ctx, 'listProjects', () => pm => ({ projects: pm.list(), groups: pm.groups() })),
-    addProject: (ctx, root, typeId) => run(ctx, 'addProject', () => {
+    addProject: (ctx, root, typeId) => executeAsync(ctx, 'profile.addProject', () => {
       const path = commandString(root, 'root'); const type = commandOptionalString(typeId, 'typeId')
-      return pm => pm.add(path, type, false)
+      return (_, scope) => host.manager().add(path, type, false, scope.guard)
     }),
     removeProject: (ctx, id) => byId(ctx, 'removeProject', id, (pm, key) => pm.remove(key)),
     detectTaskType: (ctx, root) => run(ctx, 'detectTaskType', () => { const path = commandString(root, 'root'); return pm => pm.detectTaskType(path) }),

@@ -17,7 +17,7 @@ const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd
 const channels = ['projects:branch', 'projects:branches', 'projects:gitFetch', 'projects:gitPull', 'projects:checkoutBranch',
   'projects:createInitialCommit', 'runs:list', 'runs:close', 'agents:list']
 type Event = { client: string | null }
-function fixture() {
+async function fixture() {
   assert.equal(typeof adapter.registerDesktopProjectRunAgentCommands, 'function')
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'orca-desktop-project-api-'))); cleanup.push(() => rmSync(dir, { recursive: true, force: true }))
   const manager = new ProjectManager(join(dir, 'profile'))
@@ -26,7 +26,7 @@ function fixture() {
     git(root, 'config', 'user.name', 'test'); git(root, 'config', 'user.email', 'test@local')
     git(root, 'config', 'commit.gpgsign', 'false'); git(root, 'config', 'core.hooksPath', join(dir, 'no-hooks')); return root
   }
-  const a = manager.add(repo('A')); const b = manager.add(repo('B')); manager.setActive(a.id)
+  const a = (await manager.add(repo('A'))); const b = (await manager.add(repo('B'))); manager.setActive(a.id)
   let lookups = 0; let selections = 0; let selected: string | undefined = a.id
   const project = (id: string) => { lookups++; return manager.get(id) }
   const authorize = (ctx: { clientId: string }) => ctx.clientId === 'desktop:1'
@@ -48,12 +48,12 @@ function fixture() {
     foreign: (channel: string) => handlers.get(channel)!({ client: null }) }
 }
 test('nine verified callers precede project lookup/selection/Git side effects', async () => {
-  const f = fixture()
+  const f = (await fixture())
   for (const channel of channels) await assert.rejects(async () => f.foreign(channel), error => error instanceof OrcaError && error.key === 'command.forbidden')
-  assert.equal(f.lookups(), 0); assert.equal(f.selections(), 0); assert.equal(f.ops.hasCommits(f.a.root), false)
+  assert.equal(f.lookups(), 0); assert.equal(f.selections(), 0); assert.equal(await f.ops.hasCommits(f.a.root), false)
 })
 test('unknown project badge remains non-repo; no-project runs and global agents preserved', async () => {
-  const f = fixture(); f.select()
+  const f = (await fixture()); f.select()
   assert.deepEqual(await f.call('projects:branch', 'unknown'), { isGitRepo: false, branch: null, detached: false })
   assert.deepEqual(await f.call('runs:list'), [])
   const agents = await f.call('agents:list') as AgentInfo[]
@@ -61,16 +61,16 @@ test('unknown project badge remains non-repo; no-project runs and global agents 
   await assert.rejects(async () => f.call('runs:close', 'missing'), error => error instanceof OrcaError && error.key === 'projects.none')
 })
 test('explicit Git B and legacy invalid init mode empty preserve staged files', async () => {
-  const f = fixture(); f.select(f.a.id); writeFileSync(join(f.b.root, 'keep.txt'), 'staged'); git(f.b.root, 'add', 'keep.txt')
+  const f = (await fixture()); f.select(f.a.id); writeFileSync(join(f.b.root, 'keep.txt'), 'staged'); git(f.b.root, 'add', 'keep.txt')
   const before = git(f.b.root, 'ls-files', '--stage')
   await f.call('projects:createInitialCommit', f.b.id, 'unknown')
   assert.equal(git(f.b.root, 'ls-tree', 'HEAD'), ''); assert.equal(git(f.b.root, 'ls-files', '--stage'), before)
-  assert.equal(f.ops.hasCommits(f.a.root), false); assert.equal(f.selections(), 0)
+  assert.equal(await f.ops.hasCommits(f.a.root), false); assert.equal(f.selections(), 0)
   assert.equal(readFileSync(join(f.b.root, 'keep.txt'), 'utf8'), 'staged')
   const branch = await f.call('projects:branch', f.b.id) as { branch: string }; assert.equal(branch.branch, 'main')
 })
 test('runs/agents legacy active selection uses common detached data', async () => {
-  const f = fixture(); const a = f.manager.store(f.a.id).createRun('A'); const b = f.manager.store(f.b.id).createRun('B')
+  const f = (await fixture()); const a = f.manager.store(f.a.id).createRun('A'); const b = f.manager.store(f.b.id).createRun('B')
   assert.deepEqual((await f.call('runs:list') as { id: string }[]).map(r => r.id), [a.id])
   f.select(f.b.id); assert.deepEqual((await f.call('runs:list') as { id: string }[]).map(r => r.id), [b.id])
   await f.call('runs:close', b.id); assert.equal(f.manager.store(f.a.id).getRun(a.id)?.closedAt, undefined)
@@ -78,7 +78,7 @@ test('runs/agents legacy active selection uses common detached data', async () =
   assert.equal(agents.find(a => a.id === 'codex')?.enabled, false); assert.equal(f.manager.active()?.id, f.a.id)
 })
 test('Git Promise rejection keeps ru/en domain IPC code', async () => {
-  const f = fixture(); await f.call('projects:createInitialCommit', f.a.id, 'empty')
+  const f = (await fixture()); await f.call('projects:createInitialCommit', f.a.id, 'empty')
   for (const locale of ['ru', 'en'] as const) {
     setMainLocale(locale)
     await assert.rejects(async () => f.call('projects:gitPull', f.a.id), error => {
@@ -89,8 +89,8 @@ test('Git Promise rejection keeps ru/en domain IPC code', async () => {
   }
 })
 test('queued stale Desktop initial commit does not write a removed repository', async () => {
-  const f = fixture(); const pending = f.call('projects:createInitialCommit', f.a.id, 'snapshot') as Promise<unknown>
+  const f = (await fixture()); const pending = f.call('projects:createInitialCommit', f.a.id, 'snapshot') as Promise<unknown>
   f.manager.remove(f.a.id)
   await assert.rejects(pending, error => error instanceof OrcaError && error.key === 'command.stale')
-  assert.equal(f.ops.hasCommits(f.a.root), false)
+  assert.equal(await f.ops.hasCommits(f.a.root), false)
 })

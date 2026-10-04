@@ -73,11 +73,11 @@ test('verified session and assistant callers precede selection, lookup and nativ
   assert.equal(f.errors.length, 3); assert.ok(f.errors.every(row => row.error instanceof OrcaError && row.error.key === 'command.forbidden'))
   assert.equal(f.selections(), 0); assert.equal(f.lookups(), 0); assert.equal(f.launches.length, 0); assert.equal(f.providers.length, 0)
 })
-test('legacy global/selected/explicit shell arguments preserve root, env and metadata', t => {
+test('legacy global/selected/explicit shell arguments preserve root, env and metadata', async t => {
   const f = fixture(t)
   const global = f.call('pty:spawn', { cols: 80, rows: 24 }) as string
   assert.equal(f.launches[0].cwd, f.dir); assert.equal(f.launches[0].env.ORCA_SOCKET, 'test-socket'); assert.equal(f.launches[0].env.ORCA_PROJECT, undefined)
-  const a = f.manager.add(f.dir); f.choose(a.id)
+  const a = (await f.manager.add(f.dir)); f.choose(a.id)
   const project = f.call('pty:spawn', { cols: 100, rows: 30, label: 'terminal', env: { CUSTOM: 'user' } }) as string
   assert.equal(f.launches[1].cwd, a.root); assert.equal(f.launches[1].env.ORCA_PROJECT, a.id); assert.equal(f.launches[1].env.CUSTOM, 'user')
   f.choose(); const explicit = f.call('pty:spawn', { cols: 70, rows: 20, projectId: a.id, cwd: f.dir }) as string

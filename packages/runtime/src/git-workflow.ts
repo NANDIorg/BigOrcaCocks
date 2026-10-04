@@ -45,7 +45,14 @@ export function createGitWorkflowService(messages: GitMessages, queue: GitOperat
   }
   async function keyOf(root: string, options: GitWorkflowOptions): Promise<string> {
     check(options)
-    const key = await canonicalGitCommonDir(root, processes); check(options); return key
+    try {
+      const key = await canonicalGitCommonDir(root, processes); check(options); return key
+    } catch (error) {
+      check(options)
+      if (!(error instanceof GitProcessError) || error.cancelled) throw error
+      throw new GitProcessError(`git rev-parse --git-common-dir: ${[error.stderr, error.stdout].join('').trim() || error.message}`,
+        error.code, error.stdout, error.stderr, false, error.timedOut, error.killed)
+    }
   }
   function scope(root: string, key: string, options: GitWorkflowOptions) {
     let open = true

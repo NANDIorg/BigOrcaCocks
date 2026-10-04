@@ -1,6 +1,6 @@
 # Оставшиеся async Git reads Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans inline. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans inline. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Удалить вторую синхронную реализацию Git; сделать profile/docs/preview неблокирующими без изменения файлов/DTO/истории.
 
@@ -44,8 +44,8 @@
 
 **Interfaces:** createProjectServices host adds optional processes:GitProcessService; ProjectManager.add(path,typeId?,select?,guard?)=>Promise<Project> validates root then calls guard before synchronous lookup/type validation/save. createDocServices deps adds optional processes; listWorktreeDocs=>Promise<DocFile[]>; existing public listDocGroups/listProjectFiles remain Promise. Profile.addProject uses createAsyncClientCommandExecutor(host), scope.guard passed to manager.add; other profile methods remain sync. Production Desktop awaits ORCA_REPO add before subsequent startup logic.
 
-- [ ] **Step 1: RED.** Held actual-result process port: root read heartbeat remains responsive; revoke policy/remove owner authority during read rejects before projects.json/selection changes. Two concurrent same-root adds give one registration; actual invalid repo/unborn/root subdir cases preserved. Docs held ls-files/diff read returns Promise, abort/stop propagates through worktree/groups/project fallback; normal missing base/unborn still best-effort.
-- [ ] **Step 2: Run RED.** `node --test packages/runtime/test/git-read-services.test.ts`; Expected FAIL synchronous add/docs or lost cancellation.
-- [ ] **Step 3: Implement.** Owned async process reads, guarded sync manager registration, async profile boundary and complete callers. Switch docs execFile/execFileSync to processes.run preserving NUL/limits/order/fallback and cancellation. Migrate fixtures/helpers; no any/test relaxations.
-- [ ] **Step 4: GREEN/types.** New read regression, projects/profile/docs/file suites PASS; Desktop project/profile/docs/task-types affected suites and full types PASS.
-- [ ] **Step 5: Full verify/docs/commit.** Четыре docs/dashboard state sync Git reads eliminated; reconciliation still pending. `pnpm verify` PASS; commit `refactor: перевести Git чтения профиля и документов на async`; task-done exact affected runtime command. Continue journal/reconciliation B.
+- [x] **Step 1: RED.** Held actual-result process port: root read heartbeat remains responsive; revoke policy/remove owner authority during read rejects before projects.json/selection changes. Two concurrent same-root adds give one registration; actual invalid repo/unborn/root subdir cases preserved. Docs held ls-files/diff read returns Promise, abort/stop propagates through worktree/groups/project fallback; normal missing base/unborn still best-effort.
+- [x] **Step 2: Run RED.** `node --test packages/runtime/test/git-read-services.test.ts`; Expected FAIL synchronous add/docs or lost cancellation.
+- [x] **Step 3: Implement.** Owned async process reads, guarded sync manager registration, async profile boundary and complete callers. Switch docs execFile/execFileSync to processes.run preserving NUL/limits/order/fallback and cancellation. Migrate fixtures/helpers; no any/test relaxations.
+- [x] **Step 4: GREEN/types.** New read regression, projects/profile/docs/file suites PASS; Desktop project/profile/docs/task-types affected suites and full types PASS.
+- [x] **Step 5: Full verify/docs/commit.** Четыре docs/dashboard state sync Git reads eliminated; reconciliation still pending. По просьбе пользователя отложить повторный полный `pnpm verify` до окончания B–F: runtime1031/1031, affected runtime79/79 и Desktop79/79+34/34, types PASS; предыдущий полный verify обнаружил старые test callers, они исправлены точечно. Commit `refactor: перевести Git чтения профиля и документов на async`; task-done exact affected runtime command. Continue journal/reconciliation B.

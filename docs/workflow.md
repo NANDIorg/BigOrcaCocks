@@ -76,8 +76,9 @@ Async RunBranchServices готовит/восстанавливает feature wo
 cleanup тем же Git owner. Отсутствующая feature не создаётся из другой истории; root branch,
 detached base, dirty worktree и feature ref после конфликта сохраняются. Одновременные
 подготовки объединены с отдельным guard каждого caller. Run Git metadata проверяются отдельно
-от domain token, поэтому подготовка соседа не отменяет lane. Persistent reconciliation и
-оставшиеся sync profile/file Git reads продолжаются в B: native effect до отмены может
+от domain token, поэтому подготовка соседа не отменяет lane. Profile/docs/preview Git reads тоже
+асинхронны; policy проверяется до сохранения проекта, cancellation не становится fallback. Persistent
+reconciliation продолжается в B: native effect до отмены может
 остаться, автоматического rollback и безопасного повтора после crash пока не обещаем.
 
 ## Создание и правка графа через ассистента
@@ -149,7 +150,7 @@ orca-board workflow create --title "..." --base-type <id> --definition '<JSON>'
 | `decision` (роль R, вопрос, варианты) | выбор ветки графа по смыслу задачи | агент роли R, **одна** задача-решатель (`gateFor.runId`), её создаёт приложение; не смог — человек (запрос `decision` в Инбоксе) | нет |
 | `condition` | ветвление: `attempts` по `Run.stage.visits`; `role` не бывает | приложение | нет |
 | `git` | `commit` / `push` в worktree глобальной задачи (`RunGit.worktree`) | приложение | нет |
-| `merge` | слияние ветки глобальной задачи в `RunGit.base` локально (в корне, если база выгружена там, иначе через временный worktree); защищённых веток нет — кому нужен PR, ставит вместо неё `git push` | приложение (`execFileSync('git', …)`) | нет |
+| `merge` | слияние ветки глобальной задачи в `RunGit.base` локально (в корне, если база выгружена там, иначе через временный worktree); защищённых веток нет — кому нужен PR, ставит вместо неё `git push` | приложение (общий async Git port) | нет |
 | `fork` (пути 2–4) | запуск путей параллельно: у каждого своя позиция (`Run.lanes`) | приложение | по `stage_started` каждой «Работы» пути — её подзадачи (`--stage`) |
 | `join` (`forkId`) | ждёт все пути своего `fork`, потом идёт по `next` | приложение | — |
 | `end` | прогон закрыт, карточка в «Сделано», координатору `run_done` | приложение | выходит по `run_done` |
@@ -439,7 +440,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 `merge` на `git push` и PR. Корень проекта не переключается: если база выгружена в корне (или другом worktree) и там чисто — `git merge --no-ff` прямо там, с
 незакоммиченными правками — `workflow_blocked` (мерж в грязное дерево может их задеть); иначе **временный worktree** базы (`git worktree add <os.tmpdir()>/orca-merge-*/base <база>`
 → мерж → `worktree remove --force`, папка удаляется). Конфликт (`git merge --abort` уже выполнен) — исход `conflict`, обычно «Конфликт мержа» (`human`) с текстом git; «Принять»
-повторяет слияние (ветку разрешает человек). Повтор ноды после `workflow_blocked` — `startRunWorkflow` (см. ниже). Платформенных веток нет: только `execFileSync('git', […])` и `os.tmpdir()`.
+повторяет слияние (ветку разрешает человек). Повтор ноды после `workflow_blocked` — `startRunWorkflow` (см. ниже). Платформенных веток нет: общий async Git process/queue и `os.tmpdir()`.
 
 **Вход и повтор.** Общая trusted orchestration `createCoordinatorOperations` вызывает `startRunWorkflow` после запуска координатора. В неё входят owner `CoordinatorCommands` с явным context/policy и старый agent socket через Desktop `runCoordinator`: граф не начат — `enterRunStage` и эффект первой ноды
 (обычно `stage_started`), граф идёт — повтор эффекта текущей ноды. Повтор безопасен: задача-вопрос и проверка этого захода не дублируются (нашлась — при необходимости просто запускается),

@@ -327,7 +327,7 @@ describe('сценарий 1: старый projects.json и доска со ст
 describe('сценарий 2: один проект, две глобальные задачи разных типов', () => {
   it('«Документация» и «Бэкенд»: у координаторов и воркеров свои агенты и модели, у задач свои графы', async () => {
     const pm = newProjectManager()
-    const pid = pm.add(repo).id
+    const pid = (await pm.add(repo)).id
     // Исполнителя встроенного типа меняют на месте, без копии.
     const docs = presetTaskType('docs')!
     pm.saveTaskType({
@@ -402,7 +402,7 @@ describe('сценарий 2: один проект, две глобальные
 
   it('гейт берёт проверяющего из типа прогона: два одновременных прогона, ревьюеры на разных агентах и моделях', async () => {
     const pm = newProjectManager()
-    const pid = pm.add(repo).id
+    const pid = (await pm.add(repo)).id
     const withReviewer = (patch: Partial<Role>): Role[] => DEFAULT_ROLES.map((r) => (r.id === 'reviewer' ? { ...r, ...patch } : { ...r }))
     const ta = pm.saveTaskType({ title: 'Ревью Claude', settings: { roles: withReviewer({ agent: 'claude', model: 'opus' }) } })
     const tb = pm.saveTaskType({ title: 'Ревью Codex', settings: { roles: withReviewer({ agent: 'codex', model: 'gpt-5.5' }) } })
@@ -444,7 +444,7 @@ describe('сценарий 2: один проект, две глобальные
 describe('сценарий 3: тип удалён посреди прогона', () => {
   it('воркер, проверка и координатор стартуют по снимку типа; граф — снимок прогона', async () => {
     const pm = newProjectManager()
-    const pid = pm.add(repo).id
+    const pid = (await pm.add(repo)).id
     const roles = DEFAULT_ROLES.map((r) =>
       r.id === 'developer' ? { ...r, agent: 'codex' as const, model: 'gpt-5-codex' } : r.id === 'coordinator' ? { ...r, model: 'opus' } : { ...r })
     const t = pm.saveTaskType({ title: 'Временный', settings: { roles, workflow: qaWorkflow(roles), agentRules: 'правила типа', permissionMode: 'acceptEdits' } })
@@ -479,9 +479,9 @@ describe('сценарий 3: тип удалён посреди прогона'
 })
 
 describe('сценарий 3а: заготовку типа изменили и удалили посреди прогона', () => {
-  it('снимок типа и граф запущенной задачи не меняются; новая задача берёт правку; после удаления задачи идут по снимку', () => {
+  it('снимок типа и граф запущенной задачи не меняются; новая задача берёт правку; после удаления задачи идут по снимку', async () => {
     const pm = newProjectManager()
-    const pid = pm.add(repo).id
+    const pid = (await pm.add(repo)).id
     const h = appHarness(pm, pid)
     const backend = presetTaskType('backend')!
     const runOld = startCoordinator(pm, h, pid, 'До правки', 'backend')

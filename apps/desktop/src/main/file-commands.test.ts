@@ -18,7 +18,7 @@ const channels = ['docs:list', 'docs:read', 'docs:view', 'docs:bytes', 'docs:pre
 const cleanup: Array<() => void> = []
 afterEach(() => { for (const close of cleanup.splice(0)) close(); setMainLocale('ru') })
 function deferred() { let resolve = () => {}; const promise = new Promise<void>(done => { resolve = done }); return { promise, resolve } }
-function fixture(paused = false) {
+async function fixture(paused = false) {
   assert.equal(typeof adapter.registerDesktopFileCommands, 'function')
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'orca-desktop-file-api-')))
   const manager = new ProjectManager(join(dir, 'profile'))
@@ -31,7 +31,7 @@ function fixture(paused = false) {
     execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=t@t', 'commit', '-qm', 'init'], { cwd: root, stdio: 'pipe' })
     return root
   }
-  const a = manager.add(repo('A')); const b = manager.add(repo('B')); manager.setActive(a.id)
+  const a = (await manager.add(repo('A'))); const b = (await manager.add(repo('B'))); manager.setActive(a.id)
   let lookups = 0; let selections = 0; let selected: string | undefined = a.id
   const messages = { Error: OrcaError, text: mt }; const entered = deferred(); const gate = deferred()
   cleanup.push(() => { gate.resolve(); rmSync(dir, { recursive: true, force: true }) })
@@ -59,12 +59,12 @@ function fixture(paused = false) {
 }
 
 test('14 файловых caller проверены до selection, lookup, native и grant', async () => {
-  const f = fixture()
+  const f = (await fixture())
   for (const channel of channels) await assert.rejects(async () => f.foreign(channel), e => e instanceof OrcaError && e.key === 'command.forbidden')
   assert.equal(f.lookups(), 0); assert.equal(f.selections(), 0); assert.deepEqual(f.native, []); assert.equal(f.tokens.size, 0)
 })
 test('docs legacy active source/DTO, no-project list [] и остальные projects.none', async () => {
-  const f = fixture()
+  const f = (await fixture())
   assert.equal(await f.call('docs:read', 'project', 'README.md'), 'A\r\n')
   f.select(f.b.id)
   const view = await f.call('docs:view', 'project', 'README.md') as DocView
@@ -78,7 +78,7 @@ test('docs legacy active source/DTO, no-project list [] и остальные pr
   await assert.rejects(async () => f.call('docs:read', 'project', 'README.md'), e => e instanceof OrcaError && e.key === 'projects.none')
 })
 test('files explicit B без selection, native пути через common guard и DTO прежний', async () => {
-  const f = fixture(); f.select()
+  const f = (await fixture()); f.select()
   const listing = await f.call('files:list', f.b.id, null) as ProjectFilesListing
   assert.equal(listing.dir, ''); assert.ok(listing.entries.some(entry => entry.name === 'README.md'))
   assert.equal(f.selections(), 0)
@@ -89,7 +89,7 @@ test('files explicit B без selection, native пути через common guard
   assert.deepEqual(f.native.slice(1), [join(f.a.root, 'README.md'), join(f.a.root, 'image.png')])
 })
 test('showcase read/open/reveal/preview/base сохраняют legacy параметры', async () => {
-  const f = fixture(); const store = f.manager.store(f.a.id); const task = store.createTask({ title: 'showcase' })
+  const f = (await fixture()); const store = f.manager.store(f.a.id); const task = store.createTask({ title: 'showcase' })
   store.updateTask(task.id, { worktree: f.a.root }); const dispatch = store.startDispatch(task.id, 'pty')
   const read = await f.call('showcase:read', task.id, 'image.png', dispatch.id) as DocBytes
   assert.deepEqual([...read.bytes], [1, 2, 3])
@@ -101,13 +101,13 @@ test('showcase read/open/reveal/preview/base сохраняют legacy пара�
   assert.deepEqual(f.native, [join(f.a.root, 'index.html'), join(f.a.root, 'image.png')])
 })
 test('malformed explicit id/source/options переводится в прежние command codes', async () => {
-  const f = fixture()
+  const f = (await fixture())
   await assert.rejects(async () => f.call('files:list', null, ''), e => e instanceof OrcaError && e.key === 'command.invalidContext')
   await assert.rejects(async () => f.call('docs:view', 'project', 'README.md', { source: 'yes' }), e => e instanceof OrcaError && e.key === 'command.invalidInput')
   assert.equal(f.lookups(), 0)
 })
 test('common domain rejection локализуется ru/en без утраты error code', async () => {
-  const f = fixture()
+  const f = (await fixture())
   for (const locale of ['ru', 'en'] as const) {
     setMainLocale(locale)
     await assert.rejects(async () => f.call('docs:view', 'project', 'missing.txt'), e => {
@@ -118,7 +118,7 @@ test('common domain rejection локализуется ru/en без утраты
   }
 })
 test('late project removal: Desktop shell не вызывается и board JSON прежний', async () => {
-  const f = fixture(true)
+  const f = (await fixture(true))
   f.manager.store(f.a.id).createTask({ title: 'persisted' })
   const board = join(f.dir, 'profile', 'boards', `${f.a.id}.json`); const before = readFileSync(board, 'utf8')
   const pending = f.call('docs:open', 'project', 'README.md') as Promise<void>

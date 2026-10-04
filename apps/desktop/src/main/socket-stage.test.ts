@@ -1,9 +1,10 @@
 // Запуск: pnpm --filter @orca-board/desktop test. Хендлеры сокета воркфлоу глобальной задачи (`scope: 'run'`):
 // `stage finish`, `workflow show` по прогону, `review accept/reject` по проверке ветки прогона, ошибки `task create`,
-// `runs finish`, запросы без `taskId`, история этапов с решением «Решения ИИ». Настоящий TaskStore и сокет; PTY и git не участвуют.
+// `runs finish`, запросы без `taskId`, история этапов с решением «Решения ИИ». Настоящий TaskStore, сокет и unborn Git для metadata; PTY заменён.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { connect, type Server } from 'node:net'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -120,6 +121,7 @@ beforeEach(async () => {
   finishCalls = []
   taskTypes = []
   tmp = mkdtempSync(path.join(tmpdir(), 'orca-sock-stage-'))
+  execFileSync('git', ['init', '-q', '-b', 'master', tmp], { stdio: 'pipe' })
   sockPath = process.platform === 'win32' ? `\\\\.\\pipe\\orca-sock-stage-${process.pid}-${Date.now()}` : path.join(tmp, 'orca.sock')
   store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
   roles = DEFAULT_ROLES

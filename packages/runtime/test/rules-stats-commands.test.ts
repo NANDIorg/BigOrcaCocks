@@ -16,12 +16,12 @@ class ResourceError extends Error {
   readonly key: string
   constructor(key: string) { super(key); this.key = key }
 }
-function fixture(cache?: runtime.TranscriptCache) {
+async function fixture(cache?: runtime.TranscriptCache) {
   assert.equal(typeof runtime.createRuleCommands, 'function')
   assert.equal(typeof runtime.createStatsCommands, 'function')
   assert.equal(typeof runtime.statsProject, 'function')
   assert.equal(typeof runtime.isStatsProjectCurrent, 'function')
-  const f = profileFixture(); let lookups = 0; let depsReads = 0; let allow = true
+  const f = (await profileFixture()); let lookups = 0; let depsReads = 0; let allow = true
   const env = { claudeDir: join(f.dir, 'claude'), codexDir: join(f.dir, 'codex') }
   const messages = { Error: ResourceError }; const rules = runtime.createRuleServices({ messages })
   const stats = runtime.createStatsServices({ messages })
@@ -45,7 +45,7 @@ class PausedCache extends runtime.TranscriptCache {
     this.entered.resolve(); await this.gate.promise; return super.read(...args)
   }
 }
-function codex(f: ReturnType<typeof fixture>, projectId: string) {
+function codex(f: Awaited<ReturnType<typeof fixture>>, projectId: string) {
   const store = f.manager.store(projectId); const task = store.createTask({ title: 'codex', agent: 'codex' })
   const d = store.startDispatch(task.id, 'pty', 'dispatch', { agent: 'codex' })
   const date = new Date(d.startedAt); const pad = (n: number) => String(n).padStart(2, '0')
@@ -56,8 +56,8 @@ function codex(f: ReturnType<typeof fixture>, projectId: string) {
   writeFileSync(join(dir, 'rollout-x-found.jsonl'), JSON.stringify({ timestamp: at, type: 'session_meta', payload: { id: 'found', cwd, timestamp: at } }) + '\n')
   return { store, task, d }
 }
-it('правила: public context/policy и malformed input раньше lookup', () => {
-  const f = fixture()
+it('правила: public context/policy и malformed input раньше lookup', async () => {
+  const f = (await fixture())
   try {
     assert.throws(() => f.ruleCommands.list({} as never), { code: 'command.invalidContext' })
     assert.throws(() => f.ruleCommands.save(f.context(f.a.id), '../AGENTS.md' as never, 'x'), { code: 'command.rejected' })
@@ -67,8 +67,8 @@ it('правила: public context/policy и malformed input раньше lookup
     assert.equal(f.lookups(), 0)
   } finally { f.close() }
 })
-it('правила: явно B, detached DTO и прежний формат файлов без смены active A', () => {
-  const f = fixture()
+it('правила: явно B, detached DTO и прежний формат файлов без смены active A', async () => {
+  const f = (await fixture())
   try {
     const ctx = f.context(f.b.id)
     const saved = f.ruleCommands.save(ctx, 'AGENTS.md', 'B\n'); saved.text = 'подмена'
@@ -80,7 +80,7 @@ it('правила: явно B, detached DTO и прежний формат фа
   } finally { f.close() }
 })
 it('статистика: payload/policy раньше lookup и deps, неизвестные ids до диска', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     await assert.rejects(f.statsCommands.project({} as never, 'all'), { code: 'command.invalidContext' })
     await assert.rejects(f.statsCommands.project(f.context(f.a.id), 'bad' as never), { code: 'command.rejected' })
@@ -94,7 +94,7 @@ it('статистика: payload/policy раньше lookup и deps, неизв
   } finally { f.close() }
 })
 it('статистика: project B не выбирает A, найденный Codex session id сохраняется и загружается', async () => {
-  const f = fixture()
+  const f = (await fixture())
   try {
     const { store, d } = codex(f, f.b.id)
     const result = await f.statsCommands.project(f.context(f.b.id), 'all')
@@ -105,7 +105,7 @@ it('статистика: project B не выбирает A, найденный 
   } finally { f.close() }
 })
 it('статистика: удаление проекта во время чтения не меняет поздно board JSON', async () => {
-  const cache = new PausedCache(); const f = fixture(cache)
+  const cache = new PausedCache(); const f = (await fixture(cache))
   try {
     const { store, d } = codex(f, f.b.id)
     const pending = f.statsCommands.project(f.context(f.b.id), 'all')
@@ -116,18 +116,18 @@ it('статистика: удаление проекта во время чте
   } finally { cache.gate.resolve(); f.close() }
 })
 it('статистика: повторное добавление того же пути не оживляет старый запрос', async () => {
-  const cache = new PausedCache(); const f = fixture(cache)
+  const cache = new PausedCache(); const f = (await fixture(cache))
   try {
     const { store, d } = codex(f, f.b.id)
     const pending = f.statsCommands.project(f.context(f.b.id), 'all')
     await cache.entered.promise; f.manager.remove(f.b.id)
-    assert.equal(f.manager.add(f.b.root, undefined, false).id, f.b.id)
+    assert.equal((await f.manager.add(f.b.root, undefined, false)).id, f.b.id)
     cache.gate.resolve(); await assert.rejects(pending, { code: 'command.stale' })
     assert.equal(store.getDispatch(d.id)?.sessionId, undefined)
   } finally { cache.gate.resolve(); f.close() }
 })
 it('статистика: замена identity dispatch во время чтения не получает чужой session id', async () => {
-  const cache = new PausedCache(); const f = fixture(cache)
+  const cache = new PausedCache(); const f = (await fixture(cache))
   try {
     const { store, d } = codex(f, f.b.id)
     const pending = f.statsCommands.project(f.context(f.b.id), 'all')
@@ -140,7 +140,7 @@ it('статистика: замена identity dispatch во время чте�
   } finally { cache.gate.resolve(); f.close() }
 })
 it('статистика: изменение соседней задачи не отменяет чтение', async () => {
-  const cache = new PausedCache(); const f = fixture(cache)
+  const cache = new PausedCache(); const f = (await fixture(cache))
   try {
     const { store, d } = codex(f, f.b.id)
     const pending = f.statsCommands.project(f.context(f.b.id), 'all')
@@ -149,9 +149,9 @@ it('статистика: изменение соседней задачи не 
     assert.equal(store.getDispatch(d.id)?.sessionId, 'found')
   } finally { cache.gate.resolve(); f.close() }
 })
-it('общие stats deps захватывают названия ролей default и снимка удалённого типа', () => {
+it('общие stats deps захватывают названия ролей default и снимка удалённого типа', async () => {
   assert.equal(typeof runtime.statsProjectDeps, 'function')
-  const f = fixture()
+  const f = (await fixture())
   try {
     const roles = structuredClone(DEFAULT_ROLES); roles.find(r => r.id === 'developer')!.title = 'Default developer'
     f.manager.patchTaskType('general', { roles })
