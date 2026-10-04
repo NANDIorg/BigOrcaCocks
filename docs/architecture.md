@@ -394,7 +394,11 @@ SessionWriterLeases ограничивают input/resize одним client/toke
 сохраняет process/tail; operator kill — отдельная команда, не writer takeover.
 Лимит ввода64KiB проверяется до lastInputAt/native write; dimensions2..1000/1..1000.
 Expiry/dead records удаляются на обращении, background interval не создаётся.
-Desktop bridge подключается после dialog API:
+Desktop прежние pty:spawn/terminals:list и pty:write/resize/kill вызывают common commands.
+Legacy write/resize сначала валидируют payload общим helper, затем claim/renew writer
+проверенного окна. Fire-and-forget rejection записывается в logger. Закрытие/reload/crash
+окна освобождает его lease без остановки process/tail; exit PTY удаляет lease.
+Проверки:
 [план](superpowers/plans/2026-10-04-orca-session-dialog-commands.md).
 
 ### Общие команды диалогов и совместимость ассистента
@@ -412,7 +416,10 @@ ORCA_PROJECT после удаления унаследованных task/run/d
 ассистент остаётся без project binding. AssistantCommands сохраняют выбранный Desktop
 диалог, open/reset и terminal fallback Amp/Shell; host готовит скрытый workflow context.
 Async client executor сохраняет domain cause, не держит status attribution через await.
-Desktop IPC подключается следующим шагом. Durable message dedup/replay — рубеж C.
+Desktop все прежние assistant/assistantChat IPC вызывают compatibility commands через
+verified mainFrame; Promise сохраняет локализованную domain cause. Native attachment
+open/reveal также проверяют caller до selection и используют прежний общий file guard.
+Durable message dedup/replay — рубеж C.
 
 ### Общий запуск агентов и терминальные сессии
 

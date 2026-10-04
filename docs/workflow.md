@@ -45,6 +45,11 @@ expiry/disconnect не меняет workflow и не запускает новы
 context передаётся скрыто, как прежде; malformed permission answer не меняет pending
 request. История после stop/restart не исполняет сохранённые tool calls.
 
+Desktop session/assistant каналы подключены к common commands без изменения preload
+сигнатур. Нативный PTY exit по-прежнему вызывает loaded store ptyExited; disconnect
+окна освобождает только leases. Внутренний worker answer nudge остаётся owner effect,
+а ввод из UI проверяет principal/payload и writer до native write.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

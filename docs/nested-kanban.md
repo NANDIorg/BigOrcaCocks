@@ -34,6 +34,11 @@ registration во время ожидаемого ACK делает резуль�
 сохраняет свой transcript/provider binding. Глобальный Desktop assistant по-прежнему
 не привязан к глобальной задаче или унаследованному run/dispatch.
 
+Desktop global attachment open/reveal теперь входит в тот же verified project
+adapter, что CRUD глобальной задачи. OS получает только путь из metadata и общего
+file guard; чужой frame не читает selection/store. PTY ввод Desktop использует
+common writer lease; закрытие окна не завершает координаторов и воркеров.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime

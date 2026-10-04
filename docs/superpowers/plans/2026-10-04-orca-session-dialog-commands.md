@@ -58,10 +58,10 @@
 
 **Interfaces:** Desktop handles existing pty:spawn/terminals:list and pty:write/resize/kill events + existing assistant/assistantChat channels through common commands. Auto claim/renew verified local window writer for legacy event args; rejected fire-and-forget reported via logger, not uncaught exception. Window disconnect drops its leases only; PTY owner disposal unchanged. AssistantSession common registry remains single selected compatibility instance; new operator composition uses DialogRegistry independently.
 
-- [ ] **Step 1:** Real session/assistant adapters tests exact channels, foreign mainFrame stops before selection/lookup/spawn/native, no-project default shell and selected project/env/meta, event unknown/lease conflicts reported, dialog Promise translation/legacy args. No UI clicks.
-- [ ] **Step 2:** Desktop Node/ts-resolve new adapter test; Expected FAIL missing register factory.
-- [ ] **Step 3:** Wire adapters, remove inline session/assistant mutation logic; retain Electron notifications/windows/update glue. Native attachment OS handlers validate caller and continue shared resource guard.
-- [ ] **Step 4:** Affected Desktop/runtime/types/core + full verify after completed A; Expected PASS. Remaining B–F before final claim.
-- [ ] **Step 5:** Diff/staged diff/commit/task-done; dashboard records actual A/C writer portion, continue async Git B.
+- [x] **Step 1:** Real session/assistant adapters tests exact channels, foreign mainFrame stops before selection/lookup/spawn/native, no-project default shell and selected project/env/meta, event unknown/lease conflicts reported, dialog Promise translation/legacy args. No UI clicks.
+- [x] **Step 2:** Desktop Node/ts-resolve new adapter test; Expected FAIL missing register factory.
+- [x] **Step 3:** Wire adapters, remove inline session/assistant mutation logic; retain Electron notifications/windows/update glue. Native attachment OS handlers validate caller and continue shared resource guard.
+- [x] **Step 4:** Affected Desktop/runtime/types/core + full verify after completed A; Expected PASS. Remaining B–F before final claim.
+- [x] **Step 5:** Diff/staged diff/commit/task-done; dashboard records actual A/C writer portion, continue async Git B.
 
 Self-review: Task1 exports SessionWriterLeases and explicit commands consumed Task3; Task2 preserves legacy AssistantSession projection and supplies independent Dialog API for future composition. C durable dedup/revisions/replay and D installed artifact intentionally remain separate requirements; no readiness claim from module presence alone.

@@ -62,6 +62,11 @@ request/turn и вариантов самим driver. История диало�
 не воспроизводит tool calls и не принимает прежний permission. HumanRequest доски
 сохраняет собственный существующий lifecycle.
 
+Desktop assistantChat send/respond теперь вызывает общий compatibility API через
+проверенное главное окно; локализованная domain ошибка сохраняется при Promise.
+PTY input/resize auto claim не выполняется для malformed payload, а отказ event
+пишется в logger. Отключение окна освобождает его writer, pending запрос остаётся.
+
 ## Модель
 
 ```ts

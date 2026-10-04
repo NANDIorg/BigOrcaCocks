@@ -9,7 +9,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { getAppTheme } from '../shared/theme'
 import { mainWindowChrome, windowsTitleBarOverlay } from './window-chrome'
 import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, withStatusSource, type Attachment, type TaskStore, type Task, type OrcaEvent, type AgentKind, type AgentInfo, type BoardColumn, type RequestResolution, type ResolvedRunType } from '@orca-board/core'
-import { spawnPty, writePty, resizePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow, terminalSnapshots } from './pty'
+import { sessionRegistry, writePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, pruneLaunchTempFiles, type WorkerEnvContext } from './worker'
 import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
 import { createAssistantConversation } from './assistant-conversation'
@@ -17,8 +17,8 @@ import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { workflowServices } from './workflow-services'
 import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, createProjectGitCommands, createRunCommands, createAgentCommands, registeredProject, isRegisteredProjectCurrent, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
-import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands, ProjectGitCommands, RunCommands, AgentCommands } from '@orca-board/contracts'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, createProjectGitCommands, createRunCommands, createAgentCommands, createSessionCommands, createSessionWriterLeases, createAssistantCommands, registeredProject, isRegisteredProjectCurrent, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands, ProjectGitCommands, RunCommands, AgentCommands, SessionCommands, AssistantCommands } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
 import { registerDesktopCoordinatorCommands } from './coordinator-commands'
@@ -28,6 +28,7 @@ import { registerDesktopProfileCommands } from './profile-commands'
 import { registerDesktopRulesStatsCommands } from './rules-stats-commands'
 import { registerDesktopFileCommands } from './file-commands'
 import { registerDesktopProjectRunAgentCommands } from './project-run-agent-commands'
+import { registerDesktopSessionAssistantCommands } from './session-assistant-commands'
 import { executionResources } from './execution-resources'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities } from './attachments'
@@ -57,7 +58,7 @@ import { createTray, refreshTray } from './tray'
 import { statsServices } from './stats'
 import { createUpdater, type Updater, type InstallChoice, type InstallRequest } from './updater'
 import { createPlatformUpdater } from './updaterBackend'
-import type { AppSettings, AppSettingsPatch, UpdateInstallWhen, RequestFocus, PtySpawnOptions, InteractionAnswer } from '../shared/ipc'
+import type { AppSettings, AppSettingsPatch, UpdateInstallWhen, RequestFocus } from '../shared/ipc'
 import { shouldNotify } from '../shared/notifications'
 import { describeEvent, answerNudge } from './notify'
 import { backupOnVersionChange, getJustUpdatedFrom, rememberUpdate } from './backup'
@@ -122,6 +123,10 @@ let fileCommands: FileCommands
 let projectGitCommands: ProjectGitCommands
 let runCommands: RunCommands
 let agentCommands: AgentCommands
+let sessionCommands: SessionCommands
+let assistantCommands: AssistantCommands
+const sessionWriterLeases = createSessionWriterLeases({ isAlive })
+sessionRegistry.subscribe(event => { if (event.type === 'exit') sessionWriterLeases.dropSession(event.ptyId) })
 const taskWorkerLifecycle = createTaskWorkerLifecycle({ isAlive, killPty })
 let globalTaskRemoval: ReturnType<typeof createGlobalTaskRemoval>
 let updater: Updater
@@ -170,6 +175,7 @@ function createWindow(): BrowserWindow {
     win.on('leave-full-screen', () => setWindowFullscreen(false))
   }
   const created = win
+  const sessionClientId = `desktop:${created.webContents.id}`
   // В авторском меню renderer сначала возвращает фокус редактору и сам вызывает команду.
   // Blur/reload/crash возвращают нативные сочетания, даже если renderer не успел закрыть popup.
   const restoreMenuShortcuts = (): void => {
@@ -177,6 +183,7 @@ function createWindow(): BrowserWindow {
   }
   if (process.platform === 'win32') created.on('blur', restoreMenuShortcuts)
   win.on('closed', () => {
+    sessionWriterLeases.dropClient(sessionClientId)
     if (win === created) {
       win = null
       menuActions.clear()
@@ -186,11 +193,12 @@ function createWindow(): BrowserWindow {
   win.webContents.on('did-start-loading', () => {
     // Загрузка показа в iframe не размонтирует App: его подписка на меню остаётся действующей.
     if (created.webContents.isLoadingMainFrame()) {
+      sessionWriterLeases.dropClient(sessionClientId)
       menuActions.disconnect()
       restoreMenuShortcuts()
     }
   })
-  win.webContents.on('render-process-gone', () => { menuActions.disconnect(); restoreMenuShortcuts() })
+  win.webContents.on('render-process-gone', () => { sessionWriterLeases.dropClient(sessionClientId); menuActions.disconnect(); restoreMenuShortcuts() })
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalWebUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
@@ -781,18 +789,18 @@ function registerIpc(): void {
     commands: globalTaskCommands,
     activeProjectId: () => projects.active()?.id,
     clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
-      ? `desktop:${event.sender.id}` : null
-  })
-  // Показать в папке — любое вложение задачи (только из её метаданных).
-  handle('globalTasks:revealAttachment', (_e, id: string, imageId: string) => {
-    const p = resolveProject()
-    shell.showItemInFolder(revealTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
-  })
-  // Открыть приложением системы — только белый список (`attachmentOpenable`: картинки, Markdown, PDF), не HTML, SVG и не программы.
-  handle('globalTasks:openAttachment', async (_e, id: string, imageId: string) => {
-    const p = resolveProject()
-    const err = await shell.openPath(openTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
-    if (err) throw new Error(err)
+      ? `desktop:${event.sender.id}` : null,
+    attachments: {
+      reveal: (ctx, id, imageId) => {
+        const p = resolveProject(ctx.projectId)
+        shell.showItemInFolder(revealTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
+      },
+      open: async (ctx, id, imageId) => {
+        const p = resolveProject(ctx.projectId)
+        const error = await shell.openPath(openTaskAttachment(p.store, runImagesRoot(app.getPath('userData')), p.id, id, imageId))
+        if (error) throw new Error(error)
+      }
+    }
   })
   registerDesktopCoordinatorCommands(handle, {
     commands: coordinatorCommands,
@@ -807,42 +815,19 @@ function registerIpc(): void {
       ? `desktop:${event.sender.id}` : null
   })
 
-  handle('pty:spawn', (_e, { label, projectId, ...opts }: PtySpawnOptions) => {
-    const p = projectId ? projects.get(projectId) : projects.active()
-    return spawnPty(
-      {
-        ...opts,
-        meta: { role: 'shell', label: label ?? 'терминал', projectId: projectId ?? p?.id },
-        cwd: opts.cwd ?? p?.root,
-        env: {
-          ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}),
-          ORCA_SOCKET: SOCKET_PATH,
-          ...(p ? { ORCA_PROJECT: p.id } : {}),
-          PATH: workerPath(),
-          ...(opts.env ?? {})
-        }
-      },
-      (id, code) => projects.loadedStores().forEach(([, s]) => s.ptyExited(id, code))
-    )
+  registerDesktopSessionAssistantCommands<IpcMainInvokeEvent>(handle, (channel, listener) => ipcMain.on(channel, listener), {
+    sessions: sessionCommands, assistant: assistantCommands,
+    activeProjectId: () => projects.active()?.id,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
+      ? `desktop:${event.sender.id}` : null,
+    onEventError: (error, channel) => console.error(channel, error)
   })
-  ipcMain.on('pty:write', (_e, id: string, data: string) => writePty(id, data))
-  ipcMain.on('pty:resize', (_e, id: string, cols: number, rows: number) => resizePty(id, cols, rows))
-  ipcMain.on('pty:kill', (_e, id: string) => killPty(id))
-  handle('terminals:list', () => terminalSnapshots())
 
   registerDesktopWorkerCommands(handle, {
     commands: workerCommands, activeProjectId: () => projects.active()?.id,
     clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
       ? `desktop:${event.sender.id}` : null
   })
-  handle('assistant:open', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, false))
-  handle('assistant:reset', (_e, cols: number, rows: number) => assistantSession.open(cols, rows, true))
-  handle('assistantChat:available', (_e, id: string) => assistantSession.available(id))
-  handle('assistantChat:getMessages', (_e, id: string) => assistantSession.snapshot(id))
-  handle('assistantChat:sendWithWorkflow', (_e, id: string, text: unknown, context: unknown) => assistantSession.send(id, text, buildWorkflowAssistantContext(projects, context)))
-  handle('assistantChat:send', (_e, id: string, text: unknown) => assistantSession.send(id, text))
-  handle('assistantChat:interrupt', (_e, id: string) => assistantSession.interrupt(id))
-  handle('assistantChat:respond', (_e, id: string, requestId: string, answer: InteractionAnswer) => assistantSession.respond(id, requestId, answer))
   registerDesktopFileCommands<IpcMainInvokeEvent>(handle, {
     commands: fileCommands, activeProjectId: () => projects.active()?.id,
     clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame
@@ -870,6 +855,14 @@ function initializeDesktop(): void {
   projects = new ProjectManager(app.getPath('userData'))
   const authorize = (context: ClientCommandContext) => Boolean(win && !win.isDestroyed()
     && context.clientId === `desktop:${win.webContents.id}` && context.actor.kind === 'operator' && context.actor.id === 'local-user')
+  sessionCommands = createSessionCommands({ authorize, project: id => projects.get(id), sessions: sessionRegistry,
+    leases: sessionWriterLeases, defaultCwd: homedir(),
+    env: project => ({ ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}), ORCA_SOCKET: SOCKET_PATH,
+      ...(project ? { ORCA_PROJECT: project.id } : {}), PATH: workerPath() }),
+    onExit: (id, code) => projects.loadedStores().forEach(([, store]) => store.ptyExited(id, code))
+  })
+  assistantCommands = createAssistantCommands({ authorize, session: assistantSession,
+    buildWorkflowContext: raw => buildWorkflowAssistantContext(projects, raw) })
   profileCommands = createProfileCommands<AppSettings, AppSettingsPatch>({ manager: () => projects, authorize,
     settingsKeys: ['keepInBackground', 'updates'], workflowAssistant: createWorkflowAssistantServices({ messages: { Error: OrcaError } }),
     exportMeta: () => ({ appVersion: app.getVersion(), exportedAt: new Date().toISOString() }) })

@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TaskStore, DEFAULT_ROLES, type GlobalTask } from '@orca-board/core'
@@ -14,7 +14,7 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 type Event = { client: string | null }
 const channels = ['list', 'get', 'create', 'update', 'changeType', 'move', 'remove', 'tasks', 'createTask', 'addImages', 'removeImage', 'image']
 
-function fixture() {
+function fixture(native = false) {
   assert.equal(typeof adapter.registerDesktopGlobalTaskCommands, 'function', 'Нужен Desktop adapter общего API')
   const dir = mkdtempSync(join(tmpdir(), 'orca-desktop-global-commands-')); dirs.push(dir)
   let active: string | undefined; let installed = true; let selections = 0; let lookups = 0
@@ -36,10 +36,15 @@ function fixture() {
     }
   })
   const handlers = new Map<string, (event: Event, ...args: unknown[]) => unknown>()
+  const opened: string[] = []; const revealed: string[] = []
   adapter.registerDesktopGlobalTaskCommands<Event>((channel, handler) => {
     handlers.set(channel, handler as (event: Event, ...args: unknown[]) => unknown)
-  }, { commands, activeProjectId: () => { selections++; return active }, clientId: event => event.client })
-  return { stores, commands, select: (id?: string) => { active = id }, uninstall: () => { installed = false },
+  }, { commands, activeProjectId: () => { selections++; return active }, clientId: event => event.client,
+    ...(native ? { attachments: {
+      reveal: (ctx: { projectId: string }, id: string, imageId: string) => { revealed.push(executionResources.revealTaskAttachment(stores.get(ctx.projectId)!, executionResources.runImagesRoot(dir), ctx.projectId, id, imageId)) },
+      open: async (ctx: { projectId: string }, id: string, imageId: string) => { opened.push(executionResources.openTaskAttachment(stores.get(ctx.projectId)!, executionResources.runImagesRoot(dir), ctx.projectId, id, imageId)) }
+    } } : {}) })
+  return { stores, commands, opened, revealed, select: (id?: string) => { active = id }, uninstall: () => { installed = false },
     counts: () => ({ selections, lookups }),
     call: (channel: string, ...args: unknown[]) => handlers.get(`globalTasks:${channel}`)!({ client: 'desktop:1' }, ...args),
     foreign: (channel: string) => handlers.get(`globalTasks:${channel}`)!({ client: null }) }
@@ -106,4 +111,18 @@ test('legacy ошибка вложения сохраняет причину и 
   const f = fixture(); f.select('A')
   assert.throws(() => f.call('create', { title: 'No' }, [{ name: 'empty.txt', data: new Uint8Array() }]), /нет данных/)
   assert.equal(f.stores.get('A')!.listRuns().length, 0)
+})
+
+test('native attachment channels verify caller before selection and shared file guards before OS effect', async () => {
+  const f = fixture(true)
+  for (const name of ['revealAttachment', 'openAttachment']) await assert.rejects(async () => f.foreign(name), e => e instanceof OrcaError && e.key === 'command.forbidden')
+  assert.deepEqual(f.counts(), { selections: 0, lookups: 0 }); assert.deepEqual(f.opened, []); assert.deepEqual(f.revealed, [])
+  f.select('A'); const bytes = new Uint8Array(Buffer.from('hello'))
+  const run = f.call('create', { title: 'A' }, [{ name: 'hello.md', data: bytes }]) as GlobalTask
+  const id = run.images![0].id
+  f.call('revealAttachment', run.id, id); await f.call('openAttachment', run.id, id)
+  assert.equal(readFileSync(f.opened[0], 'utf8'), 'hello'); assert.equal(readFileSync(f.revealed[0], 'utf8'), 'hello')
+  f.select('B'); await assert.rejects(async () => f.call('openAttachment', run.id, id))
+  f.select('A'); await assert.rejects(async () => f.call('openAttachment', run.id, '../foreign'))
+  assert.equal(f.opened.length, 1); assert.equal(f.revealed.length, 1)
 })

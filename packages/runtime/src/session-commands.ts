@@ -4,6 +4,7 @@ import { commandInputError } from './command-input.ts'
 import { commandObject, commandOptionalString, commandString } from './profile-command-input.ts'
 import type { createSessionRegistry } from './sessions.ts'
 import type { SessionWriterLeases } from './session-writer-leases.ts'
+import { sessionDimension as dimension, sessionInput } from './session-command-input.ts'
 
 export interface SessionCommandHost extends ClientCommandHost<SessionCommandName> {
   project(id: string): Project | undefined
@@ -12,10 +13,6 @@ export interface SessionCommandHost extends ClientCommandHost<SessionCommandName
   defaultCwd: string
   env(project?: Project): Record<string, string>
   onExit?(id: string, exitCode: number): void
-}
-function dimension(raw: unknown, field: string, minimum: number): number {
-  if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < minimum || raw > 1000) commandInputError(field)
-  return raw
 }
 function spawnOptions(raw: unknown): PtySpawnOptions {
   const value = commandObject(raw, ['cols', 'rows', 'cwd', 'command', 'args', 'env', 'projectId', 'label'], 'options')
@@ -68,8 +65,7 @@ export function createSessionCommands(host: SessionCommandHost): SessionCommands
     renewWriter: (context, id, leaseId) => session(context, 'sessions.renewWriter', id, () => { const lease = token(leaseId); return (id, ctx) => host.leases.renew(id, ctx.clientId, lease) }),
     releaseWriter: (context, id, leaseId) => session(context, 'sessions.releaseWriter', id, () => { const lease = token(leaseId); return (id, ctx) => host.leases.release(id, ctx.clientId, lease) }),
     write: (context, id, raw, leaseId) => session(context, 'sessions.write', id, () => {
-      const data = commandString(raw, 'data', false); const lease = token(leaseId)
-      if (Buffer.byteLength(data) > 64 * 1024) commandInputError('data')
+      const data = sessionInput(raw); const lease = token(leaseId)
       return (id, ctx) => { host.leases.require(id, ctx.clientId, lease); host.sessions.writePty(id, data) }
     }),
     resize: (context, id, cols, rows, leaseId) => session(context, 'sessions.resize', id, () => {

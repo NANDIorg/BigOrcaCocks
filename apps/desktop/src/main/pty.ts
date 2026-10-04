@@ -6,6 +6,7 @@ export { defaultShell } from '@orca-board/runtime'
 export type { PtyCommand } from '@orca-board/runtime'
 
 const registry = createSessionRegistry({ spawn: pty.spawn })
+export const sessionRegistry = registry
 
 /** Окно может закрыться и появиться снова; процессы и их tail принадлежат runtime. */
 let ptyWindow: BrowserWindow | null = null
