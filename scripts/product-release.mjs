@@ -29,5 +29,7 @@ export function productReleasePolicy(product, version) {
 }
 export function assertProductReleaseAssets(product, files) {
   if (!products[product]) throw new Error('неизвестный продукт')
+  if (product === 'desktop' && files.some(file => /(?:^|[/\\])(?:orca-web-[^/\\]*|install-orca-web\.sh)$/.test(file))) throw new Error('Desktop release не может содержать Web assets')
+  if (product === 'cli' && files.some(file => /(?:^|[/\\])(?:orca-web-[^/\\]*|install-orca-web\.sh)$/.test(file))) throw new Error('CLI release не может содержать Web assets')
   if (product !== 'desktop' && files.some(file => /(?:^|[/\\])(?:latest[^/\\]*\.yml|orca-board-[^/\\]*)$/.test(file))) throw new Error('CLI/Web release не может содержать Desktop update assets')
 }

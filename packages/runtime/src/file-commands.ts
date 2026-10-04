@@ -128,6 +128,7 @@ export function createFileCommands(host: FileCommandHost): FileCommands {
         await scope.commit(() => host.native.reveal(target))
       })
     }),
+    downloadDoc: (context, source, path) => doc('files.downloadDoc', context, source, path, (root, path) => host.view.downloadDoc(root, path)),
     readShowcase: (context, taskId, path, dispatchId) => show('files.readShowcase', context, taskId, path, dispatchId, (root, path) => host.showcase.readShowcaseFile(root, path)),
     showcasePreview: (context, dispatchId, path, options) => execute(context, 'files.showcasePreview', () => {
       const id = commandString(dispatchId, 'dispatchId'); const rel = pathFrom(path); const value = optionsFrom(options, 'network')

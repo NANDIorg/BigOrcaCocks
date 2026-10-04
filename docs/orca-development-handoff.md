@@ -1,5 +1,12 @@
 # Orca: точка продолжения после подготовки 2.0.0
 
+> Актуальное состояние 05.10.2026: фундамент и W1–W6 Web реализованы, добавлены
+> браузерные обновления/recovery. Выпуски Desktop/Web независимы: vX.Y.Z и web/vX.Y.Z.
+> README и docs/web описывают установку. Далее: feature PR, первый Web release отдельным
+> поручением, реальный Linux-сервер/DNS/HTTPS и ручная GUI-приёмка; человеческий CLI позже.
+> Ниже сохранён исходный план после 2.0.0 и журнал фактического продолжения.
+
+
 Зафиксировано 4 октября 2026 по поручению пользователя. Общий фундамент завершён,
 [PR #59](https://github.com/NANDIorg/BigOrcaCocks/pull/59) слит в `develop`, merge commit
 `fe94656ac148a9c7f30ef7ae7c9644343cc6b269`. Следующее поручение — Desktop **2.0.0 · Sea Otter**.
@@ -164,4 +171,86 @@ release policy в scripts/guards/workflow нужно заменить в W6 до
 Рубежи W1–W6: host/auth → UI/projects → streams → files/preview → installer →
 update/acceptance. [Первый implementation plan W1](superpowers/plans/2026-10-04-orca-web-host-auth.md)
 подготовлен для проверки пользователем. Выполнять самому, отдельное итоговое ревью —
-сохранённый выбор пользователя. Web-код пока не реализован, повторять A–F не нужно.
+сохранённый выбор пользователя. W1–W6 реализованы в feature/web-self-hosted; повторять A–F не нужно.
+Текущее состояние и проверки записаны ниже; первоначальная спецификация сохраняет свой срез.
+
+## Состояние Web после W1–W6
+
+Реализованы HTTP/auth/session host, общий typed UI adapter и browser shell, server project
+picker, bounded observer/long polling/reconnect, explicit PTY writer, upload/download и
+preview отдельного hostname. Linux archive включает Node/native/resources/browser;
+installer/wizard/systemd/Caddy и серверный update с owner backup/health/rollback реализованы.
+Общие Desktop/Web release guards и release job включены, версия не повышалась, Draft 2.0.0
+и remote rulesets не менялись. Полный порядок — [web.md](web.md).
+
+Итоговое независимое ревью выявило и исправлено: workflowContext classification, Amp/Shell
+snapshot, resync чата, systemd config path и старый browser bundle. Installed smoke выявил
+скачивание file attachment по image-only пути — теперь отдельный bounded binary method.
+Каталог нового профиля создаётся headless до canonical lookup; smoke больше не создаёт его
+заранее. Пользователь просил основные проверки в конце; их актуальные результаты добавляются
+после выполнения в этой ветке.
+
+Далее: ручная приёмка общего интерфейса, выбор Linux-сервера/DNS, проверка реального
+systemd/HTTPS и обновления с опубликованным Web-выпуском. Публикация первого выпуска с Web
+— отдельное поручение с собственным тегом web/vX.Y.Z; существующий Desktop 2.0.0 не переупаковывать. После Web —
+человеческий CLI на общем client/runtime; независимый CLI tag/release сохраняется. Docker
+дистрибутив, ARM64, аккаунтный SaaS и недоверенные операторы остаются будущими задачами.
+
+### Итоговые проверки этой ветки
+
+- Вся цепочка verify: Git Flow/codenames, все typechecks, 53 script tests и 4052 workspace
+  tests (всего 4105), все builds — прошли. Старый macOS workflow assertion ожидал только
+  Desktop jobs; обновлён под общий выпуск, затем повторён affected suite и выполнены
+  оставшиеся workspace/build шаги. После последних packaging fixes повторены Web tests,
+  Web typecheck/build и installed acceptance; неизменённые suites не повторялись.
+- Frozen install и git diff --check прошли. Static UI audit strict по browser host:
+  ноль findings, canonical map сохранён в UX-CONTRACT.md.
+- macOS installed Web вне workspace прошёл реальные auth/two users/RPC replay,
+  upload/download/preview, native PTY/writer/detach/restart и control start/status/doctor.
+- Linux bundle compiled Node-native на Linux, checksum/installer проверены под ordinary
+  user. Ubuntu 24.04 acceptance: TTY wizard/hidden password/custom config, installed host
+  и CLI, systemd-analyze verify units и Caddy validate — прошли.
+- TTY/direct-path acceptance выявил лишний top-level запуск start.ts внутри bundled
+  control.mjs; guard удалён, control теперь единственная CLI entrypoint. systemd-analyze
+  выявил неподходящие кавычки WorkingDirectory: используется HOME заданного User (`~`).
+- Desktop local pack собран и открыт с последними общими изменениями. Web localhost
+  также запущен на disposable profile. GUI/screens/платные ответы агентов вручную
+  пока не проверены; Windows проверяется CI, не локальной машиной.
+
+Linux-пакет готов для проверки; публичного Release/tag/bump не выполнено. На настоящем
+сервере остаются DNS/сертификаты, реальный systemd autostart и обновление из опубликованного
+первого отдельного Web-выпуска. Старый Desktop Draft 2.0.0 остаётся прежним.
+
+Ручная проверка пользователя выявила Times New Roman и отсутствующий логотип на login:
+font-sans задавался только в mountOrcaUi после auth, logo geometry была scoped к rail.
+Font публикуется appearance до первого рендера, app-logo работает вне rail, Web inputs
+наследуют font, submit центрирован. Regression appearance test прошёл; browser rebuild
+обновлён в локальном Web. Повторная визуальная приёмка принадлежит пользователю.
+
+### Последнее уточнение 05.10.2026
+
+Web/Desktop релизы независимы по явному выбору пользователя: vX.Y.Z и web/vX.Y.Z,
+собственные manifests/feeds/workflows. CLI позже отдельно cli/vX.Y.Z. Shared пакеты
+встраиваются из SHA продукта. Новый Desktop для первой публикации Web не требуется.
+README содержит краткие установку Desktop и Linux setup/два домена/агентов/обновления Web.
+Обновлены docs/web, architecture, shared-foundation, git-flow/releasing, CONTRIBUTING,
+CLAUDE, DESIGN/UX-CONTRACT, spec/plan/handoff. Старое общее release policy superseded.
+Браузерные обновления реализованы через общий UpdateCard/Banner; отдельный ordinary-user
+worker выполняет checksum/backup/owner/rollback. Review выявил аварии и races очереди:
+fix pass добавил private transaction и pinned ExecStopPost recovery, атомарный claim,
+ожидание inactive до следующей job. Регрессии проверяют настоящий SIGKILL в disposable
+install, восстановление согласованного профиля и отсутствие повторного/потерянного job.
+Публикация, bump, tag и реальные сервер/DNS/сертификаты остаются отдельными шагами.
+
+Финал расширения: Web18 tests PASS (включая настоящий SIGKILL, очереди/ownership,
+потерянные jobs и independent feed), affected release36 PASS, UI40 PASS со штатным
+loader (прямой Node запуск без host loader не разрешает directory imports).
+Все typechecks прошли; новый общий reason добавлен в exhaustive Desktop switch.
+Ubuntu installed bundle/setup и systemd-analyze/visudo/Caddy templates прошли.
+Полная прежняя цепочка 4105 тестов не повторялась: после расширения проверены затронутые suites.
+
+Desktop pack с финальными shared изменениями завершён; app открыт из
+apps/desktop/release/local/mac/orca-board.app. GUI проверяет пользователь.
+Web доступен локально на http://localhost:3737 с прежними данными входа;
+локальная проверка настоящего Web feed прошла (публичных Web-выпусков ещё нет).
+Остаются PR/CI и отдельные поручения на публикацию Web/сервер, не код W1–W6.

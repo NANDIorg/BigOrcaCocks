@@ -1,6 +1,6 @@
 import type { AppSettings } from '../shared/ipc'
 import { normalizeAppearance, type AppearanceSettings } from '../shared/appearance'
-import { getAppTheme, type ThemeDefinition } from '../shared/theme'
+import { getAppTheme, appFontFamily, type ThemeDefinition } from '../shared/theme'
 
 interface AppearanceSurface {
   dataset: DOMStringMap
@@ -35,6 +35,7 @@ export function createAppearanceController(options: { root?: AppearanceSurface; 
     const reducedMotion = settings.motion === 'reduced' || options.media?.matches === true
     snapshot = { settings, theme, reducedMotion }
     if (options.root) {
+      options.root.style.setProperty('--font-sans', appFontFamily)
       for (const [token, color] of Object.entries(theme.colors)) options.root.style.setProperty(`--${token}`, color)
       options.root.style.setProperty('color-scheme', theme.colorScheme)
       options.root.dataset.theme = settings.theme

@@ -5,12 +5,23 @@ import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import { createOrcaRuntime, startOperatorEndpoint, getProfileLocation, type PtyFactory, type OrcaRuntimeOptions } from '@orca-board/runtime'
 import { homedir } from 'node:os'
+import type { OperatorProduct } from '@orca-board/contracts'
 
 export { createOrcaRuntime, startOperatorEndpoint } from '@orca-board/runtime'
 export type { OrcaRuntimeOptions, PtyFactory } from '@orca-board/runtime'
 
+export interface HeadlessOptions {
+  dataDir: string
+  resourceDir?: string
+  warn?: OrcaRuntimeOptions['warn']
+  product?: OperatorProduct
+  operatorAuthorize?: OrcaRuntimeOptions['authorize']
+  previewAddress?: OrcaRuntimeOptions['previewAddress']
+}
+export type HeadlessHost = Awaited<ReturnType<typeof startHeadless>>
+
 /** Installed resources и native dependency находятся только в каталоге этого Node host. */
-export async function startHeadless(options: { dataDir: string; resourceDir?: string; warn?: OrcaRuntimeOptions['warn'] }) {
+export async function startHeadless(options: HeadlessOptions) {
   const resourceDir = options.resourceDir ?? dirname(fileURLToPath(import.meta.url))
   const manifest: { version: string } = JSON.parse(readFileSync(join(resourceDir, 'package.json'), 'utf8'))
   const native = createRequire(join(resourceDir, 'package.json'))('node-pty') as { spawn: PtyFactory }
@@ -18,9 +29,11 @@ export async function startHeadless(options: { dataDir: string; resourceDir?: st
   const location = await getProfileLocation(options.dataDir)
   const socketPath = process.platform === 'win32' ? String.raw`\\.\pipe\orca-agent-${location.profileId.slice(0, 32)}` : join(homedir(), '.orca-board', 'run', `${location.profileId.slice(0, 32)}.sock`)
   const runtime = await createOrcaRuntime({ dataDir: location.dataDir, socketPath,
-    cliBinDir: join(resourceDir, 'cli'), product: { name: 'orca-headless', version: manifest.version },
+    cliBinDir: join(resourceDir, 'cli'), product: options.product ?? { name: 'orca-headless', version: manifest.version },
     prompts: { worker: readFileSync(join(resourceDir, 'skills', 'worker.md'), 'utf8'), coordinator: readFileSync(join(resourceDir, 'skills', 'coordinator.md'), 'utf8'), assistant: readFileSync(join(resourceDir, 'skills', 'assistant.md'), 'utf8') },
-    native, authorize: context => context.actor.kind === 'operator' && context.actor.id === 'local-user', warn: options.warn })
+    native, authorize: (context, command) => context.actor.kind === 'operator' &&
+      (context.actor.id === 'local-user' || Boolean(options.operatorAuthorize?.(context, command))),
+    previewAddress: options.previewAddress, warn: options.warn })
   let endpoint: Awaited<ReturnType<typeof startOperatorEndpoint>> | undefined
   try {
     const token = randomBytes(32).toString('hex'); endpoint = await startOperatorEndpoint({ runtime: runtime.value, token })

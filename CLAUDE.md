@@ -4,7 +4,7 @@
 (модель, store, промпты — TypeScript без сборки), `packages/contracts` (общие DTO и чистые функции),
 `packages/runtime` (общий Node backend: commands, workflow, процессы, Git, файлы и диалоги; без Electron),
 `packages/client` (browser-safe operator client), `packages/ui` (общий React UI),
-`apps/headless` (установленный Node host), `packages/cli` (голый JS, `bin/orca-board.js`),
+`apps/headless` (установленный Node host), `apps/web` (HTTP/auth/browser и Linux-поставка), `packages/cli` (голый JS, `bin/orca-board.js`),
 `skills/` (инструкции координатора и воркера, вшиваются в сборку), `docs/` (архитектура и решения).
 Карта общих слоёв и запуск Node host — [docs/shared-foundation.md](docs/shared-foundation.md).
 Полная картина — `docs/architecture.md`. Комментарии в коде, документация и коммиты — на русском;
@@ -56,11 +56,11 @@ orca-board; `skills/*.md` — инструкции самого продукта
   Ревьюер сдаёт отчёт через `orca-board done`, а не файлом в ветке.
 - **Не запускать `pnpm pack`**: это встроенная команда pnpm. Сборка — `pnpm --filter @orca-board/desktop run pack`.
 - **Не менять версию** вне задачи на релиз. Релиз — коммит `chore: release vX.Y.Z`, версия меняется
-  одновременно в `/package.json` и `apps/desktop/package.json`, через PR подготовки в `release/*`
+  одновременно в `/package.json` и `apps/desktop/package.json` для Desktop; Web меняет только
+  `apps/web/package.json`, CLI — `packages/cli/package.json`, через PR подготовки в `release/*`
   или `hotfix/*`. Существующие теги не передвигать. Полный порядок — в `docs/git-flow.md`.
-  Для будущего общего выпуска Desktop/Web согласован также `apps/web/package.json`;
-  совместный bump/guards/workflow подключаются в W6 до первого выпуска с Web,
-  как описано в `docs/superpowers/specs/2026-10-04-orca-web-self-hosted-design.md`.
+  Desktop использует `vX.Y.Z`, Web — `web/vX.Y.Z`, CLI — `cli/vX.Y.Z`; выпуски независимы.
+  Порядок Web-поставки — [docs/web.md](docs/web.md).
 - **Не повторять и не переназначать морские кодовые имена Orca.** Источник —
   `packages/core/src/release-codenames.json`: каждой новой серии major/minor `X.Y` назначается
   уникальное английское название морского животного, patch наследует имя серии.

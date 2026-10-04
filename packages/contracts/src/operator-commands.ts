@@ -15,13 +15,15 @@ import type { RuleCommands } from './rule-commands.ts'
 import type { StatsCommands } from './stats-commands.ts'
 import type { FileCommands } from './file-commands.ts'
 import type { DialogCommands } from './dialog-commands.ts'
+import type { BuiltinPrompts } from '@orca-board/core'
+import type { ClientCommandContext } from './project-commands.ts'
 
 /** Binary и PTY stream отделены от JSON RPC; native actions задаёт PlatformAdapter. */
 export interface OperatorCommands {
   profile: ProfileCommands
   projectConfig: ProjectConfigCommands
   board: BoardCommands
-  globalTask: Omit<GlobalTaskCommands, 'image'>
+  globalTask: Omit<GlobalTaskCommands, 'image' | 'attachment'>
   coordinator: CoordinatorCommands
   worker: WorkerCommands
   review: ReviewCommands
@@ -33,8 +35,12 @@ export interface OperatorCommands {
   recovery: RecoveryCommands
   rules: RuleCommands
   stats: StatsCommands
-  files: Omit<FileCommands, 'openDoc' | 'revealDoc' | 'revealFile' | 'openShowcase' | 'revealShowcase' | 'docBytes' | 'readShowcase'>
+  files: Omit<FileCommands, 'openDoc' | 'revealDoc' | 'revealFile' | 'openShowcase' | 'revealShowcase' | 'docBytes' | 'downloadDoc' | 'readShowcase'>
   dialog: DialogCommands
+  resources: {
+    builtinPrompts(context: ClientCommandContext): BuiltinPrompts
+    assistantTerminal(context: ClientCommandContext, cols: number, rows: number): string
+  }
 }
 export type OperatorArgs<F> = F extends (...args: infer A) => unknown ? A extends [unknown, ...infer Rest] ? Rest : never : never
 export type OperatorResult<F> = F extends (...args: never[]) => infer R ? Awaited<R> : never

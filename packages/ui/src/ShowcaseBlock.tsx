@@ -309,8 +309,8 @@ function ShowcaseFile({ taskId, dispatchId, file, inline, onInline, onView, onLi
         )}
         {file.view === 'open' && (
           <>
-            <button type="button" className="btn-sm" onClick={open} title={t('board.showcase.openTitle')}>{t('board.showcase.open')}</button>
-            <button type="button" className="btn-sm" onClick={reveal}>{t('board.showcase.reveal')}</button>
+            <button type="button" className="btn-sm" onClick={open} title={t('board.showcase.openTitle')}>{(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.open'))}</button>
+            <button type="button" className="btn-sm" onClick={reveal}>{(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.reveal'))}</button>
           </>
         )}
       </div>
@@ -325,7 +325,7 @@ function ShowcaseFile({ taskId, dispatchId, file, inline, onInline, onView, onLi
           ariaLabel={t('board.showcase.moreActions')}
           items={[
             { id: 'open', label: t(file.view === 'html' ? 'board.showcase.viewer.openBrowser' : 'board.showcase.openSystem') },
-            { id: 'reveal', label: t('board.showcase.revealLong') },
+            { id: 'reveal', label: (getUiApi().app.environment === 'web' ? t('shell.web.download') : t('board.showcase.revealLong')) },
             { id: 'copy', label: t('board.showcase.viewer.copyPath') }
           ]}
           onPick={(id) => {

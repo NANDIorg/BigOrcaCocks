@@ -1,3 +1,4 @@
+import { getUiApi } from './host'
 import type React from 'react'
 import type { DocView } from '../shared/ipc'
 import { DocIcon } from './docsIcons'
@@ -76,7 +77,7 @@ export function DocStub({ path, view, failure, now, actions, onAction, onRetry }
                 <button type="button" className="btn-sm primary" onClick={onRetry}><DocIcon.refresh />{t('config.docs.view.retry')}</button>
               )}
               {actions.reveal && failure?.kind !== 'missing' && (
-                <button type="button" className="btn-sm" onClick={() => onAction('reveal')}><DocIcon.reveal />{t('config.docs.view.reveal')}</button>
+                <button type="button" className="btn-sm" onClick={() => onAction('reveal')}><DocIcon.reveal />{(getUiApi().app.environment === 'web' ? t('shell.web.download') : t('config.docs.view.reveal'))}</button>
               )}
               {actions.copy && (
                 <button type="button" className="btn-sm" onClick={() => onAction('copy')}><DocIcon.copy />{t('config.docs.view.copyPath')}</button>

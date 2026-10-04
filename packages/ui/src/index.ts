@@ -1,2 +1,5 @@
 export { mountOrcaUi } from './mount.tsx'
 export { configureUiHost, setUiApiResolver, getUiApi } from './host.ts'
+export { RailLogo } from './RailLogo.tsx'
+export { useModalFocus } from './useModalFocus.ts'
+export { initLocale, setLocale, getLocale, useLocale, useT, t, LOCALE_NAMES } from './i18n/index.ts'

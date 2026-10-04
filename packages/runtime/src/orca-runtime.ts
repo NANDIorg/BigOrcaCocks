@@ -42,6 +42,8 @@ import { missingRoleText } from './launch-policy.ts'
 import { createAgentSocketServices } from './agent-socket.ts'
 import { createLegacySocketDeps } from './legacy-socket-deps.ts'
 import { createOperatorApi } from './operator-api.ts'
+import { createClientCommandExecutor } from './project-commands.ts'
+import { conversationDimension } from './conversation-command-input.ts'
 
 class RuntimeMessageError extends Error {
   readonly key: string
@@ -103,7 +105,8 @@ export async function createOrcaRuntime(options: OrcaRuntimeOptions) {
       deps: p => statsProjectDeps(projects, p, { isAlive: sessions.isAlive }), workflow: (p, taskId) => projects.resolveRun(p.id, p.store.getTask(taskId)?.runId).workflow })
     const files = createProjectFileServices({ messages, gitCheckIgnore: git.gitCheckIgnore }); const preview = createPreviewServices(options.previewAddress ?? createSchemePreviewAddress('orca-preview'))
     const docs = createDocServices({ messages, processes }); const view = createDocViewServices({ messages, files, preview }); const showcase = createShowcaseServices({ messages, preview })
-    const fileCommands = createFileCommands({ project, isCurrent, authorize, files, docs, view, showcase, tokens: new PreviewTokens(), snapshots: services.showcaseSnapshots,
+    const previewTokens = new PreviewTokens()
+    const fileCommands = createFileCommands({ project, isCurrent, authorize, files, docs, view, showcase, tokens: previewTokens, snapshots: services.showcaseSnapshots,
       branch: p => git.currentBranch(p.root), native: { open: () => { throw new Error('Этот host не поддерживает native open') }, reveal: () => { throw new Error('Этот host не поддерживает native reveal') } } })
     const conversations = createAssistantConversationServices({ messages: key => `Ошибка диалога (${key})`, env: () => env, homeDir: home, executablePath: options.nodePath ?? process.execPath, platform: process.platform }); owner.deferCleanup(conversations.stop)
     const registry = new DialogRegistry({ repository: createDialogRepository(join(owner.dataDir, 'dialogs.json')), errors: {
@@ -127,7 +130,20 @@ export async function createOrcaRuntime(options: OrcaRuntimeOptions) {
     }
     const dialogsOff = new Map<string, () => void>()
     const registerDialog = (id: string) => { if (!dialogsOff.has(id)) dialogsOff.set(id, registry.subscribe(id, event => services.events.publish('dialog.changed', { id, revision: event.revision }, registry.snapshot(id).dialog.projectId))) }
-    const groups = { profile: services.profileCommands, projectConfig: services.projectConfigCommands, board: services.boardCommands, globalTask: services.globalTaskCommands,
+    const resourceExecute = createClientCommandExecutor({ authorize })
+    const resourceCommands = {
+      builtinPrompts: (ctx: ClientCommandContext) => resourceExecute(ctx, 'resources.builtinPrompts', () => () => structuredClone(options.prompts)),
+      assistantTerminal: (ctx: ClientCommandContext, cols: number, rows: number) => resourceExecute(ctx, 'resources.assistantTerminal', () => {
+        const width = conversationDimension(cols, 'cols', 2); const height = conversationDimension(rows, 'rows', 1)
+        return () => {
+          const settings = projects.settings().assistant
+          const selection: ReturnType<typeof createAgentSelection> = createAgentSelection({ error })
+          selection.assertAgentUsable(discovery.agentInfos(undefined), settings.agent)
+          return workers.startAssistant({ settings, socketPath: options.socketPath }, width, height).ptyId
+        }
+      })
+    }
+    const groups = { resources: resourceCommands, profile: services.profileCommands, projectConfig: services.projectConfigCommands, board: services.boardCommands, globalTask: services.globalTaskCommands,
       coordinator: services.coordinatorCommands, worker: services.workerCommands, review: services.reviewCommands, humanRequest: services.humanRequestCommands,
       projectGit: services.projectGitCommands, run: services.runCommands, agent: services.agentCommands, session: services.sessionCommands, recovery: services.recoveryCommands,
       rules: ruleCommands, stats: statsCommands, files: fileCommands, dialog: dialogCommands }
@@ -144,6 +160,6 @@ export async function createOrcaRuntime(options: OrcaRuntimeOptions) {
       return shutdown
     }
     owner.deferCleanup(beginStop)
-    return { ...services, get revision() { return services.revision }, ledger, registry, operator, metadata, fileCommands, ruleCommands, statsCommands, dialogCommands, agentSocket, beginStop }
+    return { ...services, get revision() { return services.revision }, ledger, registry, operator, metadata, fileCommands, preview, previewTokens, ruleCommands, statsCommands, dialogCommands, agentSocket, beginStop }
   } })
 }

@@ -1,5 +1,11 @@
 # Web W1: сервер и авторизация — Implementation Plan
 
+> Состояние 05.10.2026: W1–W6 выполнены; актуальные результаты — в таблице ниже и handoff.
+> Последнее уточнение: независимые Desktop/Web версии и release workflows.
+> Checklist W1 сохраняет исходный инженерный план; фактическое выполнение расширено пользователем,
+> тестовая последовательность переопределена его просьбой проверять основные suites в конце.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Запустить отдельный Web host с входом операторов и существующим typed HTTP API одного общего runtime.
@@ -9,6 +15,29 @@
 **Tech Stack:** Node.js 24, TypeScript strict, node:http, node:crypto.scrypt, esbuild, pnpm 10.33.0; существующие contracts/runtime/client/headless.
 
 **Spec:** [Утверждённая спецификация Web](../specs/2026-10-04-orca-web-self-hosted-design.md), включая уточнение об общем выпуске Desktop/Web.
+
+## Фактическое выполнение 04.10.2026
+
+Пользователь расширил поручение до всех W1–W6 и попросил основные тесты в конце.
+Этот исходный подробный план W1 сохранён как утверждённый срез, включая RED-шаги,
+которые по прямому указанию пользователя не выполнялись на каждом этапе. Текущий
+беклог и результаты — [handoff](../../orca-development-handoff.md#состояние-web-после-w1w6)
+и [установка Web](../../web.md). Implementation W1–W6 завершён; ручная GUI-приёмка,
+выбор сервера/DNS и публичный выпуск остаются отдельными действиями.
+
+| Рубеж | Выполнено | Проверка |
+| --- | --- | --- |
+| W1 | общий handler/headless, config/accounts/session/auth | security tests, installed owner/restart |
+| W2 | общий typed UI client, browser login/project picker | client regression/i18n/types, static UI audit |
+| W3 | long polling/cursor recovery, chat resync, writer leases | disconnect/replay tests, настоящий native PTY |
+| W4 | upload, image/attachment/doc/showcase download, отдельный preview | installed binary/path/CSP smoke |
+| W5 | Linux bundle Node/native, installer/TTY wizard, systemd/Caddy | Ubuntu 24.04 install/CLI/TTY, systemd-analyze/Caddy validate |
+| W6 | browser update/backup/rollback/recovery и независимый Web workflow | owner/rollback tests, release guards/workflow fixtures |
+
+Итоговое отдельное ревью выполнено; подтверждённые ошибки исправлены. Проверено
+4105 тестов, все typechecks/builds и frozen lockfile. Полная цепочка verify доведена
+после исправления старого workflow assertion; неизменённые suites не повторялись.
+Локальный Desktop собран и открыт; автоматического обхода GUI не было.
 
 ## Global Constraints
 
@@ -276,3 +305,23 @@ interface WebAccount {
 агентом с отдельным итоговым ревью; повторно выбирать метод не нужно. Дождаться
 проверки этого письменного плана пользователем, затем использовать
 `superpowers:executing-plans`. До этого product code/dependencies не создаются.
+
+### Уточнение W6: браузерная установка (04.10.2026)
+
+Пользователь подтвердил проверку и установку из браузера, включая отдельный systemd worker.
+Расширение существующего updater: prepare/install разделены; защищённые routes возвращают
+общий UpdateState, сохраняют private job и фиксированную версию. Отдельный oneshot unit
+использует те же checksum/backup/owner/rollback и переживает stop основной панели.
+Service install генерирует unit + три фиксированных sudoers команды, проверяет visudo.
+Общая UpdateCard/Banner сохраняется; source host имеет check + terminal fallback.
+Проверки: очередь/повторы/восстановление/ошибки/CSRF, реальные systemd-analyze/visudo templates,
+browser-safe types/build, финальный Desktop pack; неизменённые suites повторно не запускаются.
+
+### Последнее решение о выпусках (05.10.2026)
+
+Пользователь выбрал независимые выпуски Web/Desktop. Общий release policy выше superseded:
+Desktop vX.Y.Z и свой feed; Web web/vX.Y.Z и отдельный web-release.yml, make_latest=false.
+Web installer/check/update выбирают только собственные стабильные tags/assets; версия Web
+не выравнивается с root/Desktop. Первый Web-выпуск готовится отдельным поручением, без нового Desktop.
+Recovery fix pass: private transaction до stop, согласованный backup, pinned ExecStopPost rescue,
+wait inactive до следующей queue, атомарный private file claim с CLI/browser ownership.

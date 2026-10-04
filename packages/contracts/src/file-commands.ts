@@ -9,6 +9,7 @@ export interface FileCommands {
   readDoc(context: ProjectCommandContext, source: string, path: string): Promise<string>
   viewDoc(context: ProjectCommandContext, source: string, path: string, options?: DocViewOptions): Promise<DocView>
   docBytes(context: ProjectCommandContext, source: string, path: string): Promise<DocBytes>
+  downloadDoc(context: ProjectCommandContext, source: string, path: string): Promise<DocBytes>
   docPreview(context: ProjectCommandContext, source: string, path: string): Promise<DocPreviewUrl>
   openDoc(context: ProjectCommandContext, source: string, path: string): Promise<void>
   revealDoc(context: ProjectCommandContext, source: string, path: string): Promise<void>

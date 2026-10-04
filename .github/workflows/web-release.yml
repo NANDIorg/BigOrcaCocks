@@ -1,0 +1,111 @@
+name: Web release draft
+
+on:
+  push:
+    tags: ['web/v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/check-git-flow.mjs
+      - run: git merge-base --is-ancestor HEAD origin/master
+      - name: Версия и описание отдельного выпуска Web
+        id: metadata
+        run: |
+          version=$(node -p "require('./apps/web/package.json').version")
+          test "$GITHUB_REF_NAME" = "web/v$version"
+          test -s "docs/releases/web/v$version.md"
+          cp "docs/releases/web/v$version.md" release-notes.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: web-release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  package:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @orca-board/web build
+      - run: pnpm --filter @orca-board/web run bundle:linux
+      - run: node scripts/smoke-web-bundle.mjs apps/web/release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: web-installers
+          path: |
+            apps/web/release/orca-web-linux-x64-*.tar.gz
+            apps/web/release/install-orca-web.sh
+            apps/web/release/SHA256SUMS
+          if-no-files-found: error
+
+  draft:
+    needs: [validate, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: web-release-notes
+          path: notes
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: web-installers
+          path: installers
+      - name: Проверить комплект и сохранить Web draft вне Desktop Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        working-directory: installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=("orca-web-linux-x64-$RELEASE_VERSION.tar.gz" install-orca-web.sh SHA256SUMS)
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 3
+          for file in "${files[@]}"; do test -s "$file"; done
+          sha256sum --check --strict SHA256SUMS
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.tag_name == env.RELEASE_TAG) | {id, draft}' | jq -s . > ../releases.json
+          count=$(jq length ../releases.json)
+          if test "$count" -eq 0; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --latest=false --title "Orca Web $RELEASE_VERSION" --notes-file ../notes/release-notes.md
+          else
+            test "$count" -eq 1
+            test "$(jq -r '.[0].draft' ../releases.json)" = true
+            gh release edit "$RELEASE_TAG" --draft=true --latest=false --title "Orca Web $RELEASE_VERSION" --notes-file ../notes/release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+          gh release view "$RELEASE_TAG" --json isDraft,assets > ../uploaded.json
+          jq -e --arg package "${files[0]}" '.isDraft == true and ([.assets[].name] | sort) == ([$package,"install-orca-web.sh","SHA256SUMS"] | sort)' ../uploaded.json

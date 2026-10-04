@@ -4,7 +4,7 @@ import type { ProjectCommandContext } from './project-commands.ts'
 
 export type GlobalTaskCommandName = 'globalTasks.list' | 'globalTasks.get' | 'globalTasks.create' | 'globalTasks.update'
   | 'globalTasks.changeType' | 'globalTasks.move' | 'globalTasks.remove' | 'globalTasks.tasks' | 'globalTasks.createTask'
-  | 'globalTasks.addImages' | 'globalTasks.removeImage' | 'globalTasks.image'
+  | 'globalTasks.addImages' | 'globalTasks.removeImage' | 'globalTasks.image' | 'globalTasks.attachment'
 
 /** Owner API: project/client/actor устанавливает transport host; DTO не открывают persistence. */
 export interface GlobalTaskCommands {
@@ -20,4 +20,5 @@ export interface GlobalTaskCommands {
   addImages(context: ProjectCommandContext, globalTaskId: string, images?: AttachmentInput[] | null): GlobalTask
   removeImage(context: ProjectCommandContext, globalTaskId: string, imageId: string): GlobalTask
   image(context: ProjectCommandContext, globalTaskId: string, imageId: string): { mime: string; data: Uint8Array }
+  attachment(context: ProjectCommandContext, globalTaskId: string, imageId: string): { mime: string; data: Uint8Array }
 }

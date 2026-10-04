@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DEFAULT_ASSISTANT_SETTINGS } from '@orca-board/core'
 import { appearance, createAppearanceController, motionScrollBehavior } from './appearance'
-import { getAppTheme } from '../shared/theme'
+import { getAppTheme, appFontFamily } from '../shared/theme'
 import { droppedPatch, saveAppSettings } from './appSettingsSave'
 import { DEFAULT_UPDATE_SETTINGS, type AppSettings } from '../shared/ipc'
 import { DEFAULT_NOTIFICATION_SETTINGS } from '../shared/notifications'
@@ -28,6 +28,7 @@ test('кэш устраняет вспышку старой темы; подтв
     setItem: (key, value) => { cache.set(key, value) }
   } })
   assert.equal(root.dataset.theme, 'slate')
+  assert.equal(root.values.get('--font-sans'), appFontFamily, 'Шрифт установлен до подключения UI/авторизации')
   let calls = 0
   const stop = store.subscribe(() => { calls++ })
   store.apply({ theme: 'paper', motion: 'reduced' })

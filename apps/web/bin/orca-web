@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export ORCA_WEB_HOME="${ORCA_WEB_HOME:-$(dirname "$(dirname "$(readlink -f "$0")")")}"
+export PATH="$ORCA_WEB_HOME/current/node/bin:$PATH"
+exec "$ORCA_WEB_HOME/current/node/bin/node" "$ORCA_WEB_HOME/current/app/control.mjs" "$@"

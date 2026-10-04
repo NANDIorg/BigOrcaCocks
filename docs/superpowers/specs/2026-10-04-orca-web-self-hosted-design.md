@@ -1,8 +1,15 @@
 # Устанавливаемая Web-версия Orca
 
+> Актуализация 05.10.2026 по последнему решению пользователя: Desktop и Web выпускаются
+> независимо, теги vX.Y.Z и web/vX.Y.Z, собственные manifests/assets/feeds. Web не меняет
+> Desktop Latest. Раннее решение об общем выпуске ниже отменено. Установка Web из браузера
+> подтверждена: отдельный systemd worker с pinned ExecStopPost recovery и private transaction.
+> Фактическая схема — docs/web.md, docs/git-flow.md и docs/releasing.md.
+
+
 Дата: 04.10.2026. База: `origin/develop`, `57f6d1b`, после Desktop 2.0.0.
-Статус: пользователь утвердил архитектуру 04.10.2026 и уточнил общий выпуск
-Desktop/Web; уточнение включено ниже. Web ещё не реализован.
+Статус: архитектура утверждена 04.10.2026; W1–W6 реализованы и проверены.
+Последнее решение — независимые выпуски Desktop/Web. Реальный сервер и публикация ещё впереди.
 
 ## 1. Согласованный результат
 
@@ -10,7 +17,7 @@ Desktop/Web; уточнение включено ниже. Web ещё не ре�
 Orca в браузере. Web должен быть самостоятельным продуктом: любой владелец своего
 сервера устанавливает готовую поставку и задаёт несколько настроек. Общие runtime,
 contracts, client и UI используются из монорепозитория. Desktop и Web имеют отдельные
-entrypoints и поставки, но получают один номер версии и общий выпуск Orca.
+entrypoints, номера версий и независимые выпуски Orca.
 Будущий терминальный CLI сохраняет ранее согласованный отдельный выпуск.
 
 Подтверждено в этой сессии:
@@ -280,12 +287,16 @@ credential-файлов. Поддержка systemd проверяется от�
 Новая версия не подменяется под существующим тегом. Самовольной смены версии
 сервером и скрытого рестарта активных агентов нет.
 
-Desktop и Web проверяют один общий выпуск Orca, но установка обновления независима
+Desktop и Web проверяют собственные выпуски и устанавливаются независимо
 на каждой машине. Desktop updater выбирает только свои установщики/manifests,
-`orca-web update` — только Web archive подходящей ОС/архитектуры. Обновление Desktop
-на компьютере не перезапускает Web-сервер. Уведомление об обновлении в Web показывает
-версию и команду владельцу; браузерный HTTP handler не выполняет privileged install.
-При отсутствии совместимого Web archive версия не предлагается как Web update.
+`orca-web update` — только Web archive из web/vX.Y.Z подходящей ОС/архитектуры. Обновление Desktop
+на компьютере не перезапускает Web-сервер. По явному уточнению пользователя 04.10.2026 Web использует общую карточку обновлений:
+проверка, описание версии, скачивание и установка из браузера. HTTP handler только
+ставит задание с фиксированной версией; отдельный ordinary-user systemd worker
+переживает остановку панели и выполняет checksum/backup/owner/rollback. Sudoers
+разрешает только start worker и stop/start основного unit. Перед установкой нужно
+подтверждение остановки агентов; source/unmanaged host предлагает команду владельцу.
+При отсутствии совместимого Web archive показывается ошибка, без предложения установки.
 
 Rollback приложения допускается только при совместимой схеме. После изменения
 схемы возвращается согласованный backup; проекты с непушенными ветками/worktrees
@@ -304,7 +315,7 @@ plan и проверяемый результат. Завершённый общ
 | W3. Потоки | Observer/reconnect, terminal output, writer leases | Disconnect не убивает PTY; stale/duplicate packets безопасны; очереди ограничены |
 | W4. Файлы и preview | Binary routes, attachments, download и isolated preview origin | Root/symlink guards и preview restrictions сохранены; cookies панели не попадают в preview |
 | W5. Установка | Installed Linux artifact с Node/native, wizard и systemd/reverse proxy templates | Чистая установка без workspace, перезапуск сервиса и сохранение данных; понятные prereqs |
-| W6. Обновление и приёмка | Backup/update/rollback, документация и Web job общего release workflow | Два клиента, installed artifact, CI и ручная browser-проверка; общий выпуск и корректный выбор assets |
+| W6. Обновление и приёмка | Browser update/backup/rollback/recovery, документация и отдельный Web release workflow | Два клиента, installed artifact, CI и ручная browser-проверка; независимый выпуск и корректный выбор assets |
 
 Первым подробно планируется W1. Он включает только configuration/authentication,
 reuse host/HTTP handler, backend entrypoint и интеграционные проверки. Общий React
@@ -322,7 +333,7 @@ reuse host/HTTP handler, backend entrypoint и интеграционные пр
 - `apps/web/test/*.test.ts`: auth, два клиента, protocol, startup/stop в disposable profile.
 - Архитектура, handoff и карта пакетов обновляются вместе с фактически готовым рубежом.
 
-## 12. Проверки и общий выпуск
+## 12. Проверки и независимый выпуск Web
 
 Целевые проверки W1: отсутствие доступа без сессии, неверный пароль/expiry/logout,
 подмена actor/client, cross-origin mutations и CSRF, limits, owner conflict и stop.
@@ -339,30 +350,11 @@ PR, без повторных полных прогонов на неизмен�
 core/HELP проверку. После пользовательского этапа собирается и открывается Desktop
 по AGENTS.md; Web browser acceptance выполняет пользователь.
 
-Web build связывает browser/server/resources одним commit. Desktop/Web используют
-общие `release/X.Y.Z` / `hotfix/X.Y.Z`, тег `vX.Y.Z`, морское кодовое имя, release notes
-и один GitHub Release. Preparation синхронно меняет root/Desktop/Web manifests;
-private shared packages и CLI не выравниваются. Общий release workflow собирает оба
-продукта с того же SHA, проверяет все assets/checksums и создаёт один Draft Release
-после успеха обязательных jobs. Частично готовый общий выпуск не публикуется.
-
-Desktop сохраняет нынешние имена latest manifests и формат feed; Web assets имеют
-свой префикс и не попадают в Desktop updater. Уже существующая product policy
-`web/vX.Y.Z`/`make_latest=false` отражает старое решение и переводится на общий выпуск
-в W6 вместе с guards, fixtures, workflow, правилами версий и документацией.
-В W1–W5 отдельный Web release/tag не создаётся. Существующий Draft 2.0.0 не изменяется.
-CLI сохраняет `cli/vX.Y.Z` и `make_latest=false`. Выпуск новой общей версии и применение
-конфигурации реального сервера остаются отдельными поручениями.
-
-## 13. Источники технических решений
-
-Текущие APIs проверены по коду перечисленных выше модулей. Внешние первоисточники:
-
-- [Node.js 24 crypto: scrypt](https://nodejs.org/docs/latest-v24.x/api/crypto.html#cryptoscryptpassword-salt-keylen-options-callback).
-- [Systemd service semantics](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml)
-  и [process termination](https://github.com/systemd/systemd/blob/main/man/systemd.kill.xml).
-- [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https).
-- [Docker Compose: назначение](https://docs.docker.com/compose/intro/features-uses/) — для отложенной альтернативы.
-
-Этот документ описывает целевой Web. Текущее состояние продукта определяется
-[картой пакетов](../../shared-foundation.md) и [handoff](../../orca-development-handoff.md).
+Web build связывает browser/server/resources одним commit. Desktop/Web выпускаются
+независимо: Web release/web/X.Y.Z или hotfix/web/X.Y.Z → master, тег web/vX.Y.Z,
+версия только apps/web/package.json, notes docs/releases/web/vX.Y.Z.md.
+Web workflow проверяет installed Linux package/checksums до отдельного Draft с latest=false.
+Desktop сохраняет vX.Y.Z/root+desktop, marine codename и нынешний feed. Web updater
+выбирает только стабильные Web tags/assets; root/shared/CLI версии не выравниваются.
+CLI позже независимо cli/vX.Y.Z. Первый Web release и реальный сервер остаются отдельными
+поручениями. Существующий Desktop Draft 2.0.0 не меняется.

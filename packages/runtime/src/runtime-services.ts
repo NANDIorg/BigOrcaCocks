@@ -265,6 +265,7 @@ function coordinatorProject(projectId: string): CoordinatorProject | undefined {
       if (host.enableLifecycle !== false) { taskWorkerLifecycle.closeDoneWorkers(store); const project = projects.get(projectId); if (project) background(() => runBranchSync.sync(store, project.root, executionContextFor(projectId))) }
     }),
     projects.onDataChange(() => { revision++; events.publish('profile.changed', { revision }) }),
+    projects.onWorkflowSaved(saved => events.publish('workflow.saved', saved)),
     sessions.subscribe(event => { if (event.type === 'exit') leases.dropSession(event.ptyId); events.publish(`session.${event.type}`, event) })
   ]
   const timers = new Set<ReturnType<typeof setTimeout>>()
