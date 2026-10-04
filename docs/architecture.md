@@ -20,6 +20,8 @@ Recovery сопоставляет worktrees с metadata по canonical realpath,
 Desktop node-pty остаётся в Electron install root; Node24 test root создаёт
 `scripts/node-native.mjs` в `.native/node-<abi>-<platform>-<arch>`. Общий test resolver
 направляет node-pty/subpaths только туда. Electron pack/rebuild не меняет этот root.
+Release packaging workflow также готовит Node root явно до `pnpm verify`, чтобы
+параллельные test workers не запускали одновременно lazy npm install из resolver.
 Installed headless artifact имеет собственный package/node_modules и проверяется
 в Linux CI вне workspace без DISPLAY; Native Git/PTY smoke не использует TS links.
 

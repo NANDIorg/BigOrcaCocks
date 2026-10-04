@@ -5,6 +5,8 @@
 Web для собственного сервера и терминальный интерфейс CLI — следующие отдельные задачи.
 Результаты проверки базы — [orca-foundation-progress.md](orca-foundation-progress.md),
 подробные алгоритмы и протоколы — [architecture.md](architecture.md).
+Точка остановки и порядок следующих проектов после 2.0.0 —
+[orca-development-handoff.md](orca-development-handoff.md).
 
 ## Где находится общая логика
 
