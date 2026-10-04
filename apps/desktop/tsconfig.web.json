@@ -26,7 +26,8 @@
   "include": [
     "src/renderer",
     "src/shared",
-    "src/preload/api.d.ts"
+    "src/preload/api.d.ts",
+    "../../packages/ui/src/env.d.ts"
   ],
   "exclude": [
     "src/renderer/**/*.test.ts"

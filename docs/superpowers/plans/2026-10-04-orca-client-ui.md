@@ -26,4 +26,4 @@ Spec: [утверждённый фундамент](../specs/2026-10-02-orca-sha
 - [x] Bind Desktop shared operator session to same command graph, mutation preflight before backup; close client drops leases only.
 - [x] Browser boundaries/types и целевой reconnect check; docs/commit одним блоком.
 
-Фактические проверки: client identity/late RED missing module → GREEN2/2; actual browser graph guard обнаружил provider type edge, перенесён обратно в Desktop → GREEN; focused client/boundaries/real endpoint4/4, Desktop startup/editor/chat integration51/51. Client/UI/runtime/headless/Desktop types PASS. Whole-end full verify/build/review/pack после F.
+Фактические проверки: client identity/late RED missing module → GREEN2/2; actual browser graph guard обнаружил provider type edge, перенесён обратно в Desktop → GREEN; focused client/boundaries/real endpoint4/4, Desktop startup/editor/chat integration51/51. Client/UI/runtime/headless types PASS; Desktop ambient SVG include и optional projectId исправлены в следующем блоке, окончательный types receipt whole-end. Whole-end full verify/build/review/pack после F.

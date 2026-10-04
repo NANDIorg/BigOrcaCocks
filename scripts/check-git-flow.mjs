@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs'
+import { releaseBranch, releaseTag, productVersion } from './product-release.mjs'
 
 const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const named = /^(feature|fix|sync)\/[a-z0-9]+(?:[a-z0-9._/-]*[a-z0-9])?$/
-const releaseVersion = (branch) => /^(release|hotfix)\/(.+)$/.exec(branch)?.[2]
-const releaseBranch = (branch) => semver.test(releaseVersion(branch) ?? '')
 const read = (path) => JSON.parse(readFileSync(path, 'utf8'))
 
 try {
@@ -29,17 +28,18 @@ try {
         ? releaseBranch(head) && sameRepo
         : releaseBranch(base) && sameRepo && (kind === 'fix' || (kind === 'sync' && base.startsWith('release/')))
     if (!allowed) throw new Error(`запрещённое направление PR: ${head} → ${base}; см. docs/git-flow.md`)
-    if (base === 'master' && releaseVersion(head) !== version) {
-      throw new Error(`версия ${version} не совпадает с веткой ${head}`)
+    if (base === 'master' && releaseBranch(head).version !== productVersion(releaseBranch(head).product)) {
+      throw new Error(`версия продукта не совпадает с веткой ${head}`)
     }
-    if (releaseBranch(base) && releaseVersion(base) !== version) {
-      throw new Error(`версия ${version} не совпадает с целевой веткой ${base}`)
+    if (releaseBranch(base) && releaseBranch(base).version !== productVersion(releaseBranch(base).product)) {
+      throw new Error(`версия продукта не совпадает с целевой веткой ${base}`)
     }
   }
 
   const ref = process.env.GITHUB_REF ?? ''
-  if (ref.startsWith('refs/tags/') && ref !== `refs/tags/v${version}`) {
-    throw new Error(`тег ${ref.slice(10)} не совпадает с версией v${version}`)
+  if (ref.startsWith('refs/tags/')) {
+    const target = releaseTag(ref.slice(10))
+    if (!target || target.version !== productVersion(target.product)) throw new Error(`тег ${ref.slice(10)} не совпадает с версией выбранного продукта`)
   }
   process.stdout.write(`Git Flow: версии согласованы (${version})${pr ? ', направление PR допустимо' : ''}.\n`)
 } catch (error) {

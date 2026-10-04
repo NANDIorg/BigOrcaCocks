@@ -11,3 +11,5 @@ release/
 .orca-attachments/
 /review/
 .superdesign/
+
+.native/

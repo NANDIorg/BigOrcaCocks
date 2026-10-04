@@ -1,5 +1,21 @@
 # Архитектура orca-board
 
+## Независимые поставки и native ABI
+
+Desktop node-pty остаётся в Electron install root; Node24 test root создаёт
+`scripts/node-native.mjs` в `.native/node-<abi>-<platform>-<arch>`. Общий test resolver
+направляет node-pty/subpaths только туда. Electron pack/rebuild не меняет этот root.
+Installed headless artifact имеет собственный package/node_modules и проверяется
+в Linux CI вне workspace без DISPLAY; Native Git/PTY smoke не использует TS links.
+
+`product-release.mjs` задаёт manifests/tags/Latest policy. Desktop сохраняет `vX.Y.Z`,
+root/Desktop alignment и marine codenames. CLI/Web используют `cli/vX.Y.Z`, `web/vX.Y.Z`,
+`release/cli/X.Y.Z`, `release/web/X.Y.Z` и соответствующие hotfix branches. Guards
+проверяют версию выбранного manifest; nonDesktop release policy — make_latest=false
+и запрет Desktop update assets. Новые CLI/Web workflows добавляются с продуктами.
+Local ruleset configs включают их branches/tags; remote rulesets здесь не меняются.
+
+
 ## Общий client и UI
 
 `packages/client` — browser-safe typed operator client без React: explicit project/revision,

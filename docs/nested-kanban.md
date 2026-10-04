@@ -1,5 +1,10 @@
 # Двухуровневый канбан: глобальные задачи и подзадачи
 
+Независимые product artifacts встраивают проверенный runtime snapshot своего commit.
+Обновление будущего CLI/Web не меняет уже установленный Desktop и не требует новой
+схемы глобальных задач; owner проверяет storage/connection schema до записи.
+
+
 Прежняя доска/подзадачи теперь находятся в общем `packages/ui`; Desktop передаёт
 client/platform ports. Новый operator bridge задаёт project явно и не переключает
 ProjectManager.activeId; общая модель/канбан остаются прежними.

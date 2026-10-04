@@ -9,12 +9,15 @@ import { fileURLToPath } from 'node:url'
 const script = fileURLToPath(new URL('./check-git-flow.mjs', import.meta.url))
 
 // Проверяем настоящий CLI и exit code, а не совпадение текста конфигурации.
-function check(t, { head, base, version = '0.0.7', desktop = version, fork = false, tag } = {}) {
+function check(t, { head, base, version = '0.0.7', desktop = version, fork = false, tag, cli = '2.3.4', web = '5.6.7' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'orca-flow-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   mkdirSync(join(root, 'apps/desktop'), { recursive: true })
   writeFileSync(join(root, 'package.json'), JSON.stringify({ version }))
   writeFileSync(join(root, 'apps/desktop/package.json'), JSON.stringify({ version: desktop }))
+  for (const [path, productVersion] of [['packages/cli', cli], ['apps/web', web]]) {
+    mkdirSync(join(root, path), { recursive: true }); writeFileSync(join(root, path, 'package.json'), JSON.stringify({ version: productVersion }))
+  }
   const event = head ? { pull_request: {
     head: { ref: head, repo: { full_name: fork ? 'fork/repo' : 'team/repo' } },
     base: { ref: base, repo: { full_name: 'team/repo' } }
@@ -78,5 +81,15 @@ test('релизный тег точно совпадает с версиями 
   assert.equal(check(t, { tag: 'v0.0.7' }).status, 0)
   for (const tag of ['v0.0.8', 'v01.0.7', 'v0.0.7-rc.1']) {
     assert.equal(check(t, { tag }).status, 1)
+  }
+})
+
+test('CLI/Web release branches/tags используют собственные manifest версии', t => {
+  for (const [product, own] of [['cli', '2.3.4'], ['web', '5.6.7']]) {
+    assert.equal(check(t, { head: `release/${product}/${own}`, base: 'master' }).status, 0)
+    assert.equal(check(t, { head: 'fix/prepare', base: `hotfix/${product}/${own}` }).status, 0)
+    assert.equal(check(t, { tag: `${product}/v${own}` }).status, 0)
+    assert.equal(check(t, { tag: `${product}/v0.0.7` }).status, 1)
+    assert.equal(check(t, { head: `release/${product}/${own}`, base: 'master', fork: true }).status, 1)
   }
 })

@@ -1,10 +1,11 @@
 import { build } from 'esbuild'
-import { mkdirSync, cpSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdirSync, cpSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const root = dirname(fileURLToPath(import.meta.url)); const out = join(root, 'dist')
-mkdirSync(out, { recursive: true })
+// Удаляем только собственный build output: installed artifact не содержит старых chunks.
+rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true })
 await build({ entryPoints: { index: join(root, 'src/index.ts'), start: join(root, 'src/start.ts') }, outdir: out, bundle: true, splitting: true, banner: { js: '#!/usr/bin/env node' },
   format: 'esm', platform: 'node', target: 'node24', outExtension: { '.js': '.mjs' }, packages: 'bundle', external: ['node-pty'], metafile: true,
   plugins: [{ name: 'host-boundaries', setup(builder) { builder.onResolve({ filter: /^electron(?:\/|$)/ }, args => ({ errors: [{ text: `Headless не импортирует ${args.path}` }] })) } }] }).then(result => writeFileSync(join(out, 'build-meta.json'), JSON.stringify(result.metafile)))

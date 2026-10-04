@@ -1,5 +1,10 @@
 # Воркфлоу задачи
 
+Node/Electron native roots раздельны: сборка Desktop не переключает ABI процесса,
+который проверяет common workflow. Installed Linux smoke использует настоящий Git/PTY
+из собственной Node поставки, production runtime не импортирует native backend.
+
+
 Редактор workflow и его presentation state теперь принадлежат общему UI package.
 Desktop compatibility IPC продолжает вызывать тот же runtime; operator client
 не запускает workflow tools локально и не считает потерянный ответ новым эффектом.

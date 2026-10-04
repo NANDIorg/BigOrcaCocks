@@ -426,7 +426,7 @@ const assistantSession = new AssistantSession({
   create: (settings, onUpdate, projectId) => {
     const launch = assistantLaunch(settings, BUILTIN_PROMPTS.assistant, mainLocale())
     const cwd = projectId ? projects.get(projectId)?.root : assistantCwd(app.getPath('userData'))
-    if (!cwd) throw new OrcaError('command.projectNotFound', { projectId })
+    if (!cwd) throw new OrcaError('command.projectNotFound', { projectId: projectId ?? '' })
     mkdirSync(cwd, { recursive: true })
     return createAssistantConversation({
       agent: launch.agent, system: launch.system, model: launch.model, effort: launch.effort, extraArgs: launch.extraArgs, cwd, projectId,

@@ -1,5 +1,10 @@
 # Запросы к человеку (`HumanRequest`)
 
+Release version продукта не заменяет protocol/schema compatibility. Клиент другой
+поддерживаемой версии решает запрос теми же commands, несовместимый handshake
+блокирует mutation до effects; данные запросов сохраняет единственный profile owner.
+
+
 Общие request UI/presentation helpers перенесены в `packages/ui`, runtime resolution
 не дублируется на клиенте. Binary вложения и повтор RPC используют общий client
 transport; native file actions поступают через PlatformAdapter.
