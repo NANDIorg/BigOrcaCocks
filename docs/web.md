@@ -8,8 +8,8 @@ HTTP API. Один сервер предназначен для одного и�
 
 ## Готовая установка
 
-Первый поддерживаемый сервер — Linux x64, Ubuntu 24.04. Нужны обычный Unix-пользователь,
-Git, curl, tar, sha256sum и Python 3; sudo нужен для systemd и HTTPS. Node 24 и собранный native PTY
+Первый поддерживаемый сервер — Linux x64, Ubuntu 24.04. Рекомендуется обычный Unix-пользователь.
+Нужны Git, curl, tar, sha256sum и Python 3; sudo нужен для systemd и HTTPS. Node 24 и собранный native PTY
 включены в архив. Исходники, pnpm и компилятор на сервере не нужны.
 
 Первый пакет — [Orca Web 2.0.0](https://github.com/NANDIorg/BigOrcaCocks/releases/tag/web/v2.0.0):
@@ -21,6 +21,16 @@ Web выпускается отдельно под тегами `web/vX.Y.Z`; De
 
 ```sh
 curl -fL https://github.com/NANDIorg/BigOrcaCocks/releases/download/web%2Fv2.0.0/install-orca-web.sh -o install-orca-web.sh
+bash install-orca-web.sh
+```
+
+Для установки под root используйте актуальный скрипт из `develop`: установщик
+из опубликованного Web 2.0.0 ещё запрещает такой запуск. В самом пакете Web 2.0.0
+мастер настройки и команды установки сервиса также требуют обычного пользователя;
+замена скрипта позволяет установить файлы, но не снимает эти ограничения пакета.
+
+```sh
+curl -fL https://raw.githubusercontent.com/NANDIorg/BigOrcaCocks/develop/apps/web/install-orca-web.sh -o install-orca-web.sh
 bash install-orca-web.sh
 ```
 
@@ -44,7 +54,9 @@ bash install-orca-web.sh
 
 Если команда не найдена, добавьте `~/.local/bin` в PATH. `ORCA_WEB_HOME` выбирает
 каталог установки; `ORCA_WEB_CONFIG` — абсолютный путь config.json, который сохраняется
-в systemd unit. Не запускайте Web или установщик под root.
+в systemd unit. Установка под root разрешена с предупреждением и продолжается без подтверждения.
+В этом случае Web и CLI-агенты работают с правами root и могут изменять любые файлы
+на сервере; рекомендуется отдельный пользователь проектов.
 
 ## Агенты и Git
 

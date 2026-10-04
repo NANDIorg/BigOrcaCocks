@@ -2,7 +2,9 @@
 # Готовый Web artifact: на сервере не нужны исходники, pnpm и компилятор.
 set -euo pipefail
 umask 077
-if [[ $(id -u) == 0 ]]; then echo 'Запускайте установщик под пользователем проектов, не root.' >&2; exit 1; fi
+if [[ $(id -u) == 0 ]]; then
+  echo 'Предупреждение: установка под root. Orca Web и CLI-агенты будут работать с правами root и смогут изменять любые файлы на сервере. Рекомендуется отдельный пользователь проектов; установка продолжится.' >&2
+fi
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then echo 'Поддерживается Linux x64 (Ubuntu 24.04).' >&2; exit 1; fi
 for tool in curl tar sha256sum python3; do command -v "$tool" >/dev/null || { echo "Установите $tool" >&2; exit 1; }; done
 base=${ORCA_WEB_HOME:-"$HOME/.local/share/orca-web"}
