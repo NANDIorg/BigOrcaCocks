@@ -8,6 +8,9 @@ Linux installed smoke также проверяет service без `SHELL` и я
 Продление writer lease не расходует durable ledger workflow; повторный quit Desktop
 не обходит ожидание native exit/profile lease, включая выход установщика обновления.
 
+В recovery исходные пути Git остаются в отчёте, а referenced определяется по realpath:
+различия Windows slash/8.3 и эквивалентные пути не меняют принадлежность worktree.
+
 
 Редактор workflow и его presentation state теперь принадлежат общему UI package.
 Desktop compatibility IPC продолжает вызывать тот же runtime; operator client

@@ -8,7 +8,7 @@ import { until } from './conversation-fixture.ts'
 import { profileFixture, operator } from './profile-command-test-host.ts'
 
 test('root/linked worktree/symlink resolve one canonical commonDir', async t => {
-  const f = gitQueueFixture(t); const expected = realpathSync(join(f.root, '.git'))
+  const f = gitQueueFixture(t); const expected = realpathSync.native(join(f.root, '.git'))
   assert.deepEqual(await Promise.all([f.root, f.linked, f.alias].map(root => runtime.canonicalGitCommonDir(root))), [expected, expected, expected])
   assert.notEqual(await runtime.canonicalGitCommonDir(f.other), expected)
 })
@@ -65,7 +65,7 @@ test('factory project mutations use owner queue; stale principal cannot commit a
   const commands = runtime.createProjectGitCommands({ authorize: () => allowed, project: id => profile.manager.get(id),
     isCurrent: p => profile.manager.get(p.id) === p, git: operations, liveAgents: () => 0 })
   const pending = commands.initialCommit({ ...operator, projectId: project.id }, 'empty')
-  await until(() => admitted.length > 0); assert.equal(admitted[0], realpathSync(join(f.unborn, '.git')))
+  await until(() => admitted.length > 0); assert.equal(admitted[0], realpathSync.native(join(f.unborn, '.git')))
   assert.equal((await operations.hasCommits(f.unborn)), false); allowed = false; release.resolve(); await first
   await assert.rejects(pending, e => e instanceof runtime.CommandError && e.code === 'command.forbidden')
   assert.equal((await operations.hasCommits(f.unborn)), false); assert.equal(git(f.unborn, 'ls-files', '--stage'), '')

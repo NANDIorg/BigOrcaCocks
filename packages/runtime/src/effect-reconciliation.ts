@@ -33,7 +33,9 @@ export async function inspectEffectRecovery(journal: EffectJournal, project: Eff
   const worktrees: RecoveryWorktree[] = []; let worktree: RecoveryWorktree | undefined
   for (const field of output.split('\0')) {
     if (field.startsWith('worktree ')) {
-      const path = field.slice('worktree '.length); worktree = { path, available: existsSync(path), referenced: referenced.has(path) }; worktrees.push(worktree)
+      const path = field.slice('worktree '.length); let canonical = path
+      try { canonical = await realpath(path) } catch { /* Отсутствующий worktree сохраняет исходный путь Git. */ }
+      worktree = { path, available: existsSync(path), referenced: referenced.has(path) || referenced.has(canonical) }; worktrees.push(worktree)
     } else if (worktree && field.startsWith('HEAD ')) worktree.head = field.slice(5)
     else if (worktree && field.startsWith('branch refs/heads/')) worktree.branch = field.slice('branch refs/heads/'.length)
   }

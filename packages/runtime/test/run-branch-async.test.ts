@@ -110,7 +110,7 @@ test('scoped head/remotes/checked-out path primitives preserve raw path and nonf
   git(f.root, 'remote', 'add', 'origin', f.other)
   await f.operations.workflowGit.read(f.root, async repo => {
     assert.equal(await repo.head('refs/heads/raw-path'), git(wt, 'rev-parse', 'HEAD')); assert.equal(await repo.head('missing'), undefined)
-    assert.deepEqual(await repo.remotes(), ['origin']); assert.equal(await repo.checkedOutAt('raw-path'), wt); assert.equal(await repo.checkedOutAt('missing'), undefined)
+    assert.deepEqual(await repo.remotes(), ['origin']); assert.equal(await repo.checkedOutAt('raw-path'), git(wt, 'rev-parse', '--show-toplevel')); assert.equal(await repo.checkedOutAt('missing'), undefined)
     writeFileSync(join(wt, 'dirty.txt'), 'preserve'); assert.equal(await repo.isDirty(wt), true)
   })
   assert.equal(await f.operations.workflowGit.transaction(f.root, repo => repo.removeCleanWorktree(wt)), false)

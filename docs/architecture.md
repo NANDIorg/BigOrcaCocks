@@ -7,6 +7,9 @@ Headless сохраняет разделители Windows named pipe через
 проверяет default shell без явного command. Desktop shutdown различает начало
 остановки и разрешение Electron exit: повторный quit ждёт native exit и profile lease.
 
+Recovery сопоставляет worktrees с metadata по canonical realpath, сохраняя исходный
+путь Git в DTO: Windows slash/8.3 и другие записи того же каталога не делают его orphan.
+
 Desktop node-pty остаётся в Electron install root; Node24 test root создаёт
 `scripts/node-native.mjs` в `.native/node-<abi>-<platform>-<arch>`. Общий test resolver
 направляет node-pty/subpaths только туда. Electron pack/rebuild не меняет этот root.

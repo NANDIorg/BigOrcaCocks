@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import * as runtime from '../src/index.ts'
 import type { GitProcessService } from '../src/git-process.ts'
-import { gitQueueFixture, deferred } from './git-queue-fixture.ts'
+import { gitQueueFixture, deferred, git } from './git-queue-fixture.ts'
 import { operator, ProfileHostError } from './profile-command-test-host.ts'
 import type { ProjectMessageKey } from '../src/project-messages.ts'
 
@@ -49,10 +49,10 @@ test('project manager root subdirectory, duplicate concurrent adds and legacy se
   const services = projectServices(process); const manager = new services.ProjectManager(join(f.dir, 'profile'))
   const sub = join(f.root, 'folder'); mkdirSync(sub)
   const pending = manager.add(sub); assert.ok(pending instanceof Promise)
-  const one = await pending; assert.equal(one.root, f.root); assert.equal(manager.active()?.id, one.id)
+  const one = await pending; assert.equal(one.root, git(f.root, 'rev-parse', '--show-toplevel')); assert.equal(manager.active()?.id, one.id)
   const [a, b] = await Promise.all([manager.add(f.unborn, undefined, false), manager.add(f.unborn, undefined, false)])
   assert.equal(a.id, b.id); assert.equal(manager.list().length, 2); assert.equal(manager.active()?.id, one.id)
-  const reloaded = new services.ProjectManager(join(f.dir, 'profile')); assert.equal(reloaded.get(a.id)?.root, f.unborn)
+  const reloaded = new services.ProjectManager(join(f.dir, 'profile')); assert.equal(reloaded.get(a.id)?.root, git(f.unborn, 'rev-parse', '--show-toplevel'))
   await assert.rejects(manager.add(f.dir), e => e instanceof ProfileHostError && e.key === 'projects.notGit')
 })
 test('project add preserves owned process cancellation instead of projects.notGit', async t => {

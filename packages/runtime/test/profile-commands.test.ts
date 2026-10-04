@@ -1,6 +1,6 @@
 import { afterEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULT_COLUMNS, DEFAULT_ROLES } from '@orca-board/core'
 import type { ClientCommandContext, RuntimeSettingsPatch, TaskTypeInput, TaskTypePatch, NodeTemplateInput } from '@orca-board/contracts'
@@ -54,7 +54,8 @@ test('list DTO не содержит active и изменение копии н�
 test('add другого клиента не меняет legacy selection, persisted root и старый default add сохраняются', async () => {
   const f = (await fixture()); const root = f.repo('C'); const other = { ...operator, clientId: 'two' }
   const project = (await f.commands.addProject(other, root))
-  assert.equal(f.manager.active()?.id, f.a.id); assert.equal(f.reload().get(project.id)?.root, root)
+  assert.equal(f.manager.active()?.id, f.a.id); assert.equal(f.reload().get(project.id)?.root, project.root)
+  assert.equal(realpathSync.native(project.root), realpathSync.native(root))
   assert.equal((await f.commands.addProject(operator, root)).id, project.id); assert.equal(f.manager.active()?.id, f.a.id)
   await f.manager.add(root); assert.equal(f.manager.active()?.id, project.id)
   assert.equal(f.commands.detectTaskType(operator, root).path, root)

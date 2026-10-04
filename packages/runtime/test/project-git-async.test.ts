@@ -27,7 +27,7 @@ async function fixture(t: TestContext) {
   const context = { ...operator, projectId: project.id }
   const pause = () => {
     const release = deferred(); let held = false
-    hold = async (cwd, args) => { if (!held && cwd === f.unborn && args[0] === 'symbolic-ref') {
+    hold = async (cwd, args) => { if (!held && cwd === project.root && args[0] === 'symbolic-ref') {
       held = true; await release.promise
     } }
     t.after(release.resolve)

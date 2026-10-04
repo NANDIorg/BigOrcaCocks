@@ -8,6 +8,9 @@
 остаётся ephemeral heartbeat, а создание/изменение задач сохраняет durable dedup.
 Повторный выход Desktop во время остановки ждёт native processes и освобождения owner.
 
+Recovery считает worktree задачи/run referenced по canonical filesystem identity,
+даже если Git и metadata записали разделители или короткие имена пути по-разному.
+
 
 Прежняя доска/подзадачи теперь находятся в общем `packages/ui`; Desktop передаёт
 client/platform ports. Новый operator bridge задаёт project явно и не переключает

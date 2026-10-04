@@ -8,6 +8,9 @@ Writer heartbeat терминала не заполняет durable журнал
 Ответы человеку сохраняют request identity/revision и прежнее безопасное повторение;
 shutdown Desktop завершает native cleanup до выхода и освобождения profile owner.
 
+Отчёт восстановления сопоставляет пути по filesystem identity; иной формат Windows
+пути не превращает используемый worktree в orphan для ручного решения оператора.
+
 
 Общие request UI/presentation helpers перенесены в `packages/ui`, runtime resolution
 не дублируется на клиенте. Binary вложения и повтор RPC используют общий client

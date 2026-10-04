@@ -38,6 +38,12 @@ durable ledger, повторный Desktop quit ждёт native/owner exit, Wind
 разделители, Linux service без SHELL использует системный sh. Minor/Critical не обнаружены.
 Ошибка renderer build после переноса React устранена явным разрешением UI dependencies.
 
+Первый cross-platform CI выявил Linux peer-reset в тестовом foreign socket и Windows
+различия slash/8.3 в assertions/held-read fixture. Assertions сохранены и сравнивают
+filesystem/Git identity; реальные stale/authority guards не ослаблены. Recovery referenced
+также сопоставляет canonical realpath (новая equivalent-path regression RED→GREEN).
+Целевые suites72/72 и runtime types PASS; Linux foreign endpoint4/4 PASS в Docker.
+
 Последний installed Linux artifact smoke EXIT0: native PTY/default shell, Git, legacy CLI,
 operator snapshot/disconnect, writer duplicate ровно один раз, second owner refusal/restart.
 `pnpm --filter @orca-board/desktop run pack` EXIT0; приложение открыто и его процесс подтверждён:

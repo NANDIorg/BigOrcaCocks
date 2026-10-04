@@ -39,8 +39,15 @@ test('headless backup не меняет Desktop version и не сравнива
 
 test('agent socket не удаляет живой foreign endpoint', { skip: process.platform === 'win32' }, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-foreign-')); t.after(() => rmSync(dir, { recursive: true, force: true }))
-  const path = join(dir, 'agent.sock'); const foreign = createServer(socket => socket.end('foreign'))
+  const path = join(dir, 'agent.sock'); const resets: unknown[] = []
+  const foreign = createServer(socket => {
+    // Probe закрывает соединение до чтения приветствия: Linux может доставить peer reset.
+    // Реальный endpoint продолжает обслуживать следующие соединения; прочие ошибки не скрываем.
+    socket.on('error', (error: NodeJS.ErrnoException) => { if (error.code !== 'ECONNRESET') resets.push(error) })
+    socket.end('foreign')
+  })
   foreign.listen(path); await once(foreign, 'listening'); t.after(() => new Promise<void>(resolve => foreign.close(() => resolve())))
   await assert.rejects(listenPrivateSocket(createServer(), path), /живым/)
   const client = createConnection(path); const [data] = await once(client, 'data'); assert.equal(String(data), 'foreign'); client.destroy()
+  await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(resets, [])
 })

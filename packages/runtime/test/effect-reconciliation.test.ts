@@ -20,9 +20,17 @@ test('reconciliation видит dirty foreign/orphan worktree и старую ta
   const processes = runtime.createGitProcessService(); t.after(() => processes.stop())
   const report = await runtime.inspectEffectRecovery(journal, { id: 'p', root, store }, processes)
   assert.equal(report.records.length, 1); assert.equal(report.records[0].current, false)
-  const worktree = report.worktrees.find(w => w.path === orphan || w.path === realpathSync(orphan))!
+  const worktree = report.worktrees.find(w => realpathSync.native(w.path) === realpathSync.native(orphan))!
   assert.equal(worktree.branch, 'foreign'); assert.equal(worktree.dirty, true); assert.equal(worktree.referenced, false)
   assert.equal(readFileSync(join(orphan, 'keep.txt'), 'utf8'), 'keep'); assert.equal(git('show-ref'), refs)
   assert.equal(readFileSync(join(dir, 'profile', 'effect-journal.json'), 'utf8'), before)
+  // Git и metadata могут представлять один каталог разными строками (Windows slash/8.3).
+  const alternate = `${realpathSync.native(root)}/../repo`
+  const spelling: runtime.GitProcessService = { stop: processes.stop, async run(cwd, args, options) {
+    const result = await processes.run(cwd, args, options)
+    return args[0] === 'worktree' ? { ...result, stdout: result.stdout.replace(/^worktree [^\0]+/, `worktree ${alternate}`) } : result
+  } }
+  const sameResources = await runtime.inspectEffectRecovery(journal, { id: 'p', root, store }, spelling)
+  assert.equal(sameResources.worktrees[0].referenced, true)
   await processes.stop(); await assert.rejects(runtime.inspectEffectRecovery(journal, { id: 'p', root, store }, processes), e => e instanceof runtime.GitProcessError && e.cancelled)
 })
