@@ -8,6 +8,6 @@ export type HumanResolutionInput = Omit<RequestResolution, 'images'>
 
 export interface HumanRequestCommands {
   list(context: ProjectCommandContext, options?: RequestListOptions): HumanRequest[]
-  resolve(context: ProjectCommandContext, id: string, resolution: HumanResolutionInput, images?: AttachmentInput[]): RequestResolveResult
+  resolve(context: ProjectCommandContext, id: string, resolution: HumanResolutionInput, images?: AttachmentInput[]): Promise<RequestResolveResult>
   answer(context: ProjectCommandContext, questionId: string, answer: string): Question
 }

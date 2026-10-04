@@ -28,7 +28,7 @@ test('feature branch is isolated, no upstream/root switch; repeated preparation 
   assert.equal(await f.service.reviewBase(f.project, { runId: f.run.id }), g.branch)
   assert.deepEqual(await f.service.mergeTarget(f.project, {}), { cwd: f.root, branch: 'main' })
   const common = runtime.createExecutionResources({ messages: f.messages, git: f.operations, logger: { warn: () => {} } })
-  t.after(() => common.effects.stop()); assert.ok(common.asyncBranches)
+  t.after(() => common.effects.stop()); assert.deepEqual(await common.ensureRunBranch(f.store, f.root, f.run.id), g)
 })
 test('detached base is actual SHA; unborn rejects before refs/worktree/store changes', async t => {
   const f = fixture(t); const head = git(f.root, 'rev-parse', 'HEAD'); git(f.root, 'checkout', '-q', '--detach')

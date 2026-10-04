@@ -29,7 +29,7 @@ function single(n: WfNode, retry = false): Workflow {
     edges: [edge('start', 'next', n.id), edge(n.id, n.type === 'gate' ? 'accept' : n.type === 'decision' ? 'yes' : 'next', 'end'),
       ...(retry ? [edge(n.id, 'reject', n.id)] : [])] }
 }
-function fixture(wf: Workflow, label = 'one', language = 'ru', failNode?: string) {
+async function fixture(wf: Workflow, label = 'one', language = 'ru', failNode?: string) {
   assert.equal(typeof runtime.createRunWorkflowServices, 'function', 'Run workflow работает без Desktop')
   const repo = join(dir, label); mkdirSync(repo)
   git(repo, 'init', '-q', '-b', 'master'); writeFileSync(join(repo, 'README.md'), 'base\n')
@@ -42,77 +42,77 @@ function fixture(wf: Workflow, label = 'one', language = 'ru', failNode?: string
   const starts: string[] = []
   const deps: RunWorkflowDeps = { store, repoRoot: repo, run: () => ({ roles: DEFAULT_ROLES }), isAlive: () => true,
     startCoordinator: () => {},
-    startWorker(taskId) {
+    async startWorker(taskId) {
       const task = store.getTask(taskId)!
       if ((task.gateFor?.nodeId ?? task.stageOf?.nodeId) === failNode) throw new Error('agent unavailable')
-      workflow.enterWork(deps, taskId)
+      await workflow.enterWork(deps, taskId)
       const branch = task.branch ?? `orca/${taskId}`; const worktree = task.worktree ?? join(dir, `${label}_${taskId}`)
-      const base = workflowResources.ensureRunBranch(store, repo, task.runId)
+      const base = await workflowResources.ensureRunBranch(store, repo, task.runId)
       if (!existsSync(worktree)) git(repo, 'worktree', 'add', '-q', '-b', branch, worktree, ...(base ? [base.branch] : []))
       store.updateTask(taskId, { branch, worktree }); starts.push(taskId)
       const dispatch = store.startDispatch(taskId, `pty_${taskId}_${starts.length}`, undefined, { roleId: task.roleId })
       return { ptyId: dispatch.ptyId, dispatchId: dispatch.id }
-    }, mergeTarget: task => workflowResources.mergeTarget(store, repo, task) }
+    }, mergeTarget: async task => await workflowResources.mergeTarget(store, repo, task) }
   const run = store.createGlobalTask({ title: label, workflow: wf })
-  workflowResources.ensureRunBranch(store, repo, run.id)
+  await workflowResources.ensureRunBranch(store, repo, run.id)
   store.setRunPty(run.id, `coordinator_${label}`)
-  service.startRunWorkflow(deps, run.id)
+  await service.startRunWorkflow(deps, run.id)
   return { service, workflow, review, store, deps, run, starts, repo }
 }
 
-it('два approval пути: неоднозначная карточка без мутаций, решение двигает только свой путь', () => {
-  const f = fixture(fork()); const requests = f.store.pendingRequests(f.run.id)
+it('два approval пути: неоднозначная карточка без мутаций, решение двигает только свой путь', async () => {
+  const f = await fixture(fork()); const requests = f.store.pendingRequests(f.run.id)
   assert.equal(requests.length, 2)
   const before = structuredClone(f.store.snapshot())
-  assert.throws(() => f.service.acceptRun(f.deps, f.run.id), e => e instanceof WorkflowHostError && e.key === 'global.approvalAmbiguous')
+  await assert.rejects(async () => await f.service.acceptRun(f.deps, f.run.id), e => e instanceof WorkflowHostError && e.key === 'global.approvalAmbiguous')
   assert.deepEqual(f.store.snapshot(), before)
   const request = requests.find(r => r.nodeId === 'left')!
-  f.review.resolveHumanRequest(f.store, f.repo, request.id, { action: 'accept' }, f.deps.startWorker,
-    request => f.service.handleRunRequest(f.deps, request), f.deps.mergeTarget)
+  await f.review.resolveHumanRequest(f.store, f.repo, request.id, { action: 'accept' }, f.deps.startWorker,
+    async request => await f.service.handleRunRequest(f.deps, request), f.deps.mergeTarget)
   assert.equal(f.store.pendingRequests(f.run.id).length, 1)
   assert.equal(f.store.pendingRequests(f.run.id)[0].nodeId, 'right')
   assert.equal(f.store.getRun(f.run.id)?.lanes?.find(l => l.branchId === 'right')?.nodeId, 'right')
 })
-it('повтор после восстановления не создаёт второй gate или ask и не запускает воркеры ещё раз', () => {
-  const f = fixture(fork('gate', 'ask')); const before = structuredClone(f.store.snapshot()); const starts = [...f.starts]
-  f.service.startRunWorkflow(f.deps, f.run.id)
+it('повтор после восстановления не создаёт второй gate или ask и не запускает воркеры ещё раз', async () => {
+  const f = await fixture(fork('gate', 'ask')); const before = structuredClone(f.store.snapshot()); const starts = [...f.starts]
+  await f.service.startRunWorkflow(f.deps, f.run.id)
   assert.deepEqual(f.store.snapshot(), before)
   assert.deepEqual(f.starts, starts)
   assert.equal(starts.length, 2)
 })
-it('повтор human effects сохраняет единственный approval на каждый путь', () => {
-  const f = fixture(fork()); const before = structuredClone(f.store.snapshot())
-  f.service.startRunWorkflow(f.deps, f.run.id)
+it('повтор human effects сохраняет единственный approval на каждый путь', async () => {
+  const f = await fixture(fork()); const before = structuredClone(f.store.snapshot())
+  await f.service.startRunWorkflow(f.deps, f.run.id)
   assert.deepEqual(f.store.snapshot(), before)
 })
-it('ответ заменённому gate не двигает новую проверку', () => {
-  const f = fixture(single(node({ id: 'gate', type: 'gate', roleId: 'reviewer' }), true))
+it('ответ заменённому gate не двигает новую проверку', async () => {
+  const f = await fixture(single(node({ id: 'gate', type: 'gate', roleId: 'reviewer' }), true))
   const gate = f.store.listTasks().find(t => t.gateFor)!
-  f.service.runGateDecision(f.deps, gate.id, 'reject', 'retry')
+  await f.service.runGateDecision(f.deps, gate.id, 'reject', 'retry')
   assert.equal(f.store.listTasks().filter(t => t.gateFor).length, 2)
   const before = structuredClone(f.store.snapshot())
-  assert.throws(() => f.service.runGateDecision(f.deps, gate.id, 'accept'), /уже не актуальна/)
+  await assert.rejects(async () => await f.service.runGateDecision(f.deps, gate.id, 'accept'), /уже не актуальна/)
   assert.deepEqual(f.store.snapshot(), before)
 })
-it('повтор решения decision не двигает завершённый граф', () => {
-  const f = fixture(single(node({ id: 'decision', type: 'decision', roleId: 'reviewer', question: 'Ready?', options: [{ id: 'yes', label: 'Yes' }] })))
+it('повтор решения decision не двигает завершённый граф', async () => {
+  const f = await fixture(single(node({ id: 'decision', type: 'decision', roleId: 'reviewer', question: 'Ready?', options: [{ id: 'yes', label: 'Yes' }] })))
   const decider = f.store.listTasks().find(t => t.gateFor?.nodeId === 'decision')!
-  f.service.runDecision(f.deps, decider.id, 'yes', 'ready')
+  await f.service.runDecision(f.deps, decider.id, 'yes', 'ready')
   const before = structuredClone(f.store.snapshot())
-  assert.throws(() => f.service.runDecision(f.deps, decider.id, 'yes', 'late'), /уже принято/)
+  await assert.rejects(async () => await f.service.runDecision(f.deps, decider.id, 'yes', 'late'), /уже принято/)
   assert.deepEqual(f.store.snapshot(), before)
 })
-it('два экземпляра services независимо выбирают язык approval и свой store', () => {
-  const a = fixture(fork(), 'a', 'ru'); const b = fixture(fork(), 'b', 'en')
+it('два экземпляра services независимо выбирают язык approval и свой store', async () => {
+  const a = await fixture(fork(), 'a', 'ru'); const b = await fixture(fork(), 'b', 'en')
   assert.ok(a.store.pendingRequests().every(r => r.title.startsWith('ru:runApproval.laneTitle')))
   assert.ok(b.store.pendingRequests().every(r => r.title.startsWith('en:runApproval.laneTitle')))
   const before = structuredClone(b.store.snapshot())
-  a.review.resolveHumanRequest(a.store, a.repo, a.store.pendingRequests()[0].id, { action: 'accept' }, a.deps.startWorker,
-    request => a.service.handleRunRequest(a.deps, request), a.deps.mergeTarget)
+  await a.review.resolveHumanRequest(a.store, a.repo, a.store.pendingRequests()[0].id, { action: 'accept' }, a.deps.startWorker,
+    async request => await a.service.handleRunRequest(a.deps, request), a.deps.mergeTarget)
   assert.deepEqual(b.store.snapshot(), before)
 })
-it('ошибка запуска worker одного пути не блокирует эффекты соседнего', () => {
-  const f = fixture(fork('gate', 'ask'), 'one', 'ru', 'left')
+it('ошибка запуска worker одного пути не блокирует эффекты соседнего', async () => {
+  const f = await fixture(fork('gate', 'ask'), 'one', 'ru', 'left')
   const other = f.store.listTasks().find(t => t.stageOf?.nodeId === 'right')!
   assert.ok(other.dispatchId)
   assert.ok(f.starts.includes(other.id))

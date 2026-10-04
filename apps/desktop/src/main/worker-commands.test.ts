@@ -19,19 +19,19 @@ function fixture() {
   })
   assert.deepEqual([...callbacks.keys()], ['worker:start'])
   return { ...f, select: (id?: string) => { active = id }, selections: () => selections,
-    call: (...args: unknown[]) => callbacks.get('worker:start')!({ client: 'desktop:1' }, ...args),
+    call: async (...args: unknown[]) => callbacks.get('worker:start')!({ client: 'desktop:1' }, ...args),
     foreign: () => callbacks.get('worker:start')!({ client: null }) }
 }
-test('caller проверяется раньше selection, отсутствие проекта сохраняет projects.none', () => {
+test('caller проверяется раньше selection, отсутствие проекта сохраняет projects.none', async () => {
   const f = fixture()
   assert.throws(() => f.foreign(), e => e instanceof OrcaError && e.key === 'command.forbidden')
   assert.equal(f.selections(), 0); assert.deepEqual(f.counts(), { lookups: 0, spawns: 0 })
-  assert.throws(() => f.call('task', 80, 24), e => e instanceof OrcaError && e.key === 'projects.none')
+  await assert.rejects(async () => await f.call('task', 80, 24), e => e instanceof OrcaError && e.key === 'projects.none')
 })
-test('capture selection один раз: прежний DTO/размеры/настоящий Git/dispatch, соседний проект не меняется', () => {
+test('capture selection один раз: прежний DTO/размеры/настоящий Git/dispatch, соседний проект не меняется', async () => {
   const f = fixture(); f.select('A'); const p = f.projects.get('A')!
   const task = p.store.createTask({ title: 'A', roleId: 'developer' }); const before = structuredClone(f.projects.get('B')!.store.snapshot())
-  const result = f.call(task.id, 100, 40) as WorkerLaunchResult
+  const result = await f.call(task.id, 100, 40) as WorkerLaunchResult
   assert.equal(f.selections(), 1); assert.deepEqual(Object.keys(result).sort(), ['branch', 'dispatchId', 'ptyId', 'worktree'])
   assert.equal(p.store.getDispatch(result.dispatchId)?.ptyId, result.ptyId)
   assert.equal(f.git(result.worktree, 'branch', '--show-current'), result.branch)
@@ -39,23 +39,23 @@ test('capture selection один раз: прежний DTO/размеры/на�
   assert.equal(p.store.getTask(task.id)?.statusHistory?.at(-1)?.by, 'human')
   assert.deepEqual(f.projects.get('B')!.store.snapshot(), before)
 })
-test('wrong project сохраняет чужой PTY, невалидные размеры отказывают до lookup', () => {
+test('wrong project сохраняет чужой PTY, невалидные размеры отказывают до lookup', async () => {
   const f = fixture(); f.select('A'); const t = f.projects.get('A')!.store.createTask({ title: 'A', roleId: 'developer' })
-  const first = f.call(t.id) as WorkerLaunchResult; f.select('B')
-  assert.throws(() => f.call(t.id), e => e instanceof OrcaError && e.key === 'command.taskNotFound')
+  const first = await f.call(t.id) as WorkerLaunchResult; f.select('B')
+  await assert.rejects(async () => await f.call(t.id), e => e instanceof OrcaError && e.key === 'command.taskNotFound')
   assert.equal(f.sessions.isAlive(first.ptyId), true)
-  const before = f.counts(); assert.throws(() => f.call(t.id, 0, 24), e => e instanceof OrcaError && e.key === 'command.invalidInput')
+  const before = f.counts(); await assert.rejects(async () => await f.call(t.id, 0, 24), e => e instanceof OrcaError && e.key === 'command.invalidInput')
   assert.deepEqual(f.counts(), before)
 })
-test('omitted dimensions сохраняют defaults 120×30', () => {
+test('omitted dimensions сохраняют defaults 120×30', async () => {
   const f = fixture(); f.select('A'); const t = f.projects.get('A')!.store.createTask({ title: 'A', roleId: 'developer' })
-  f.call(t.id); assert.equal(f.processes[0].options.cols, 120); assert.equal(f.processes[0].options.rows, 30)
+  await f.call(t.id); assert.equal(f.processes[0].options.cols, 120); assert.equal(f.processes[0].options.rows, 30)
 })
-for (const language of ['ru', 'en'] as const) test(`host preflight сохраняет OrcaError и перевод ${language}`, () => {
+for (const language of ['ru', 'en'] as const) test(`host preflight сохраняет OrcaError и перевод ${language}`, async () => {
   const f = fixture(); f.select('A'); setMainLocale(language)
   const t = f.projects.get('A')!.store.createTask({ title: 'A', roleId: 'developer' }); const before = structuredClone(f.projects.get('A')!.store.snapshot())
   f.configs.get('A')!.agents = f.configs.get('A')!.agents.map(a => ({ ...a, enabled: false }))
-  assert.throws(() => f.call(t.id), e => {
+  await assert.rejects(async () => await f.call(t.id), e => {
     assert.ok(e instanceof OrcaError); assert.equal(e.key, 'agent.disabled')
     const ipc = ipcError(e) as Error; assert.equal(ipc.name, 'OrcaError[agent.disabled]')
     assert.match(ipc.message, language === 'ru' ? /выключен/ : /disabled/i); return true

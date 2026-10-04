@@ -46,8 +46,8 @@ beforeEach(() => {
     run: () => ({ roles }),
     // Как runWorker: задача входит в воркфлоу / на этап «Работа», затем dispatch; роль этапа «Вопрос человеку»
     // едет в запуск, а не в роль задачи.
-    startWorker(taskId, opts) {
-      const entered = enterWork(deps, taskId)
+    async startWorker(taskId, opts) {
+      const entered = await enterWork(deps, taskId)
       const roleId = opts?.roleId ?? entered.roleId ?? task(taskId).roleId
       started.push(taskId)
       startedRoles.push(roleId)
@@ -65,13 +65,13 @@ const events = (type: string, taskId?: string) => store.listEvents().filter((e) 
 const gatesOf = (taskId: string): Task[] => store.listTasks().filter((t) => t.gateFor?.taskId === taskId)
 
 /** Рабочая задача в своём worktree на orca/<id>, запущенная (как `worker start` координатора). */
-function workTask(title: string, runId?: string): Task {
+async function workTask(title: string, runId?: string): Promise<Task> {
   const t = store.createTask({ title, roleId: 'developer', ...(runId ? { runId } : {}) })
   const branch = `orca/${t.id}`
   const worktree = path.join(tmp, t.id)
   git(repo, 'worktree', 'add', '-q', '-b', branch, worktree)
   store.updateTask(t.id, { worktree, branch })
-  deps.startWorker(t.id)
+  await deps.startWorker(t.id)
   return task(t.id)
 }
 
@@ -83,22 +83,22 @@ function commit(t: Task, file: string, text: string): void {
 }
 
 /** Решение запроса человеком (Инбокс / `request resolve`), как `resolveRequest` в index.ts. */
-function resolve(requestId: string, action: 'accept' | 'reject', text?: string): void {
-  resolveHumanRequest(store, repo, requestId, { action, ...(text ? { text } : {}) }, deps.startWorker, (r) => approvalResolved(deps, r))
+async function resolve(requestId: string, action: 'accept' | 'reject', text?: string): Promise<void> {
+  await resolveHumanRequest(store, repo, requestId, { action, ...(text ? { text } : {}) }, deps.startWorker, async (r) => await approvalResolved(deps, r))
 }
 
 /** `orca-board done` текущего запуска + доставка событий исполнителю (как подписка в index.ts). */
-function done(taskId: string, summary = 'сделал'): void {
+async function done(taskId: string, summary = 'сделал'): Promise<void> {
   const before = store.listEvents().length
   store.finishDispatch(task(taskId).dispatchId!, summary, [])
-  handleWorkflowEvents(deps, store.listEvents().slice(before))
+  await handleWorkflowEvents(deps, store.listEvents().slice(before))
 }
 
 describe('дефолтный граф с reviewer = прежнее поведение', () => {
-  it('done → проверка стартует сама; review accept → мерж, done; done проверки → она закрыта', () => {
-    const a = workTask('Логин')
+  it('done → проверка стартует сама; review accept → мерж, done; done проверки → она закрыта', async () => {
+    const a = await workTask('Логин')
     commit(a, 'login.ts', 'export {}\n')
-    done(a.id)
+    await done(a.id)
 
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(task(a.id).status, 'review')
@@ -111,89 +111,89 @@ describe('дефолтный граф с reviewer = прежнее поведе�
     assert.equal(events('task_ready', gate.id).length, 0, 'координатору task_ready по проверке не шлётся')
 
     // Ревьюер: review accept по рабочей задаче, потом свой done.
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(task(a.id).stage?.nodeId, 'end')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true, 'ветка слита в master')
     assert.equal(branchExists(`orca/${a.id}`), false)
     assert.equal(task(a.id).worktree, undefined)
 
-    done(gate.id, 'принято')
+    await done(gate.id, 'принято')
     assert.equal(task(gate.id).status, 'done', 'проверка закрыта')
     const doneEvent = events('worker_done', gate.id)[0]
     assert.equal(doneEvent.payload.gateFor, a.id)
   })
 
-  it('review reject с картинками → feedbackImages и промпт воркера; следующий reject без картинок их сбрасывает', () => {
-    const a = workTask('Логин')
+  it('review reject с картинками → feedbackImages и промпт воркера; следующий reject без картинок их сбрасывает', async () => {
+    const a = await workTask('Логин')
     commit(a, 'login.ts', 'v1\n')
-    done(a.id)
+    await done(a.id)
     const shot = path.join(task(a.id).worktree!, '.orca-attachments', a.id, 'ret_x1', 'image-1.png')
-    reviewReject(deps, a.id, 'кнопка не там', [shot])
+    await reviewReject(deps, a.id, 'кнопка не там', [shot])
     assert.deepEqual(task(a.id).feedbackImages, [shot])
     assert.ok(workerTaskPrompt(task(a.id)).includes(`\`${shot}\``))
     assert.equal(started.at(-1), a.id, 'воркер перезапущен с картинкой в замечаниях')
 
     commit(a, 'login.ts', 'v2\n')
-    done(a.id)
-    reviewReject(deps, a.id, 'ещё раз, без скриншота')
+    await done(a.id)
+    await reviewReject(deps, a.id, 'ещё раз, без скриншота')
     assert.equal(task(a.id).feedbackImages, undefined)
     assert.ok(!workerTaskPrompt(task(a.id)).includes(shot))
   })
 
-  it('review reject → замечания и сразу новый запуск воркера; повторный done → новая проверка', () => {
-    const a = workTask('Логин')
+  it('review reject → замечания и сразу новый запуск воркера; повторный done → новая проверка', async () => {
+    const a = await workTask('Логин')
     commit(a, 'login.ts', 'v1\n')
-    done(a.id)
+    await done(a.id)
     const [first] = gatesOf(a.id)
 
-    reviewReject(deps, a.id, 'нет тестов')
+    await reviewReject(deps, a.id, 'нет тестов')
     assert.equal(task(a.id).feedback, 'нет тестов')
     assert.equal(task(a.id).stage?.nodeId, 'work')
     assert.equal(task(a.id).stage?.visits.work, 2)
     assert.equal(task(a.id).status, 'in_progress')
     assert.equal(started.at(-1), a.id, 'воркер перезапущен приложением, не координатором')
 
-    done(first.id, 'отклонено')
+    await done(first.id, 'отклонено')
     assert.equal(task(first.id).status, 'done', 'старая проверка закрыта')
 
-    done(a.id)
+    await done(a.id)
     const gates = gatesOf(a.id)
     assert.equal(gates.length, 2)
     assert.equal(task(a.id).stage?.nodeId, 'review')
   })
 
-  it('проверка сдала done без решения — workflow_blocked, проверка остаётся на ревью', () => {
-    const a = workTask('Логин')
-    done(a.id)
+  it('проверка сдала done без решения — workflow_blocked, проверка остаётся на ревью', async () => {
+    const a = await workTask('Логин')
+    await done(a.id)
     const [gate] = gatesOf(a.id)
-    done(gate.id, 'забыл решить')
+    await done(gate.id, 'забыл решить')
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(task(gate.id).status, 'review')
     const [blocked] = events('workflow_blocked', a.id)
     assert.match(String(blocked.payload.reason), new RegExp(`task reopen --task ${gate.id} --start`))
   })
 
-  it('проверка вышла без done, но решение уже есть — закрывается сама', () => {
-    const a = workTask('Логин')
-    done(a.id)
+  it('проверка вышла без done, но решение уже есть — закрывается сама', async () => {
+    const a = await workTask('Логин')
+    await done(a.id)
     const [gate] = gatesOf(a.id)
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     const before = store.listEvents().length
     store.ptyExited(store.getDispatch(task(gate.id).dispatchId!)!.ptyId, 1)
-    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    await handleWorkflowEvents(deps, store.listEvents().slice(before))
     assert.equal(task(gate.id).status, 'done')
     assert.equal(store.pendingRequests().length, 0, 'эскалация проверки снята')
   })
 
-  it('проверка не запустилась — workflow_blocked с командой перезапуска, рабочая задача ждёт на ревью', () => {
-    const a = workTask('Логин')
+  it('проверка не запустилась — workflow_blocked с командой перезапуска, рабочая задача ждёт на ревью', async () => {
+    const a = await workTask('Логин')
     const origStart = deps.startWorker
-    deps.startWorker = (id) => {
+    deps.startWorker = async (id) => {
       if (task(id).gateFor) throw new Error('агент claude выключен в проекте')
-      return origStart(id)
+      return await origStart(id)
     }
-    done(a.id)
+    await done(a.id)
     const [gate] = gatesOf(a.id)
     assert.equal(task(gate.id).status, 'ready')
     assert.equal(task(a.id).status, 'review')
@@ -207,10 +207,10 @@ describe('дефолтный граф без reviewer — решает чело�
     roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
   })
 
-  it('done → запрос approval; «Принять» → мерж и done', () => {
-    const a = workTask('Логин')
+  it('done → запрос approval; «Принять» → мерж и done', async () => {
+    const a = await workTask('Логин')
     commit(a, 'login.ts', 'export {}\n')
-    done(a.id, 'логин готов')
+    await done(a.id, 'логин готов')
     const [request] = store.pendingRequests()
     assert.equal(request.kind, 'approval')
     assert.equal(request.nodeId, 'review')
@@ -219,37 +219,37 @@ describe('дефолтный граф без reviewer — решает чело�
     assert.equal(task(a.id).status, 'needs_input')
     assert.equal(gatesOf(a.id).length, 0)
 
-    resolveHumanRequest(store, repo, request.id, { action: 'accept' }, deps.startWorker, (r) => approvalResolved(deps, r))
+    await resolveHumanRequest(store, repo, request.id, { action: 'accept' }, deps.startWorker, async (r) => await approvalResolved(deps, r))
     assert.equal(store.getRequest(request.id)!.status, 'resolved')
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
   })
 
-  it('«Вернуть» с замечаниями → снова в работу с feedback; review reject из UI решает тот же запрос', () => {
-    const a = workTask('Логин')
-    done(a.id)
+  it('«Вернуть» с замечаниями → снова в работу с feedback; review reject из UI решает тот же запрос', async () => {
+    const a = await workTask('Логин')
+    await done(a.id)
     const [request] = store.pendingRequests()
-    resolveHumanRequest(store, repo, request.id, { action: 'reject', text: 'поправь' }, deps.startWorker, (r) => approvalResolved(deps, r))
+    await resolveHumanRequest(store, repo, request.id, { action: 'reject', text: 'поправь' }, deps.startWorker, async (r) => await approvalResolved(deps, r))
     assert.equal(task(a.id).feedback, 'поправь')
     assert.equal(task(a.id).status, 'in_progress')
     assert.equal(task(a.id).stage?.nodeId, 'work')
 
-    done(a.id)
+    await done(a.id)
     const [second] = store.pendingRequests()
-    reviewReject(deps, a.id, 'ещё раз')
+    await reviewReject(deps, a.id, 'ещё раз')
     assert.equal(store.getRequest(second.id)!.resolution?.action, 'reject')
     assert.equal(task(a.id).feedback, 'ещё раз')
     assert.equal(task(a.id).status, 'in_progress')
   })
 
-  it('конфликт мержа → запрос «Конфликт мержа» с текстом ошибки; после разрешения «Принять» сливает', () => {
-    const a = workTask('Логин')
+  it('конфликт мержа → запрос «Конфликт мержа» с текстом ошибки; после разрешения «Принять» сливает', async () => {
+    const a = await workTask('Логин')
     commit(a, 'README.md', 'из ветки\n')
     writeFileSync(path.join(repo, 'README.md'), 'из master\n')
     git(repo, 'commit', '-qam', 'master')
-    done(a.id)
+    await done(a.id)
     const [review] = store.pendingRequests()
-    resolveHumanRequest(store, repo, review.id, { action: 'accept' }, deps.startWorker, (r) => approvalResolved(deps, r))
+    await resolveHumanRequest(store, repo, review.id, { action: 'accept' }, deps.startWorker, async (r) => await approvalResolved(deps, r))
 
     assert.equal(task(a.id).stage?.nodeId, 'conflict')
     const [conflict] = store.pendingRequests()
@@ -260,7 +260,7 @@ describe('дефолтный граф без reviewer — решает чело�
 
     // Человек разрешил конфликт в ветке задачи.
     git(a.worktree!, 'merge', '-q', 'master', '-X', 'ours', '-m', 'resolve')
-    resolveHumanRequest(store, repo, conflict.id, { action: 'accept' }, deps.startWorker, (r) => approvalResolved(deps, r))
+    await resolveHumanRequest(store, repo, conflict.id, { action: 'accept' }, deps.startWorker, async (r) => await approvalResolved(deps, r))
     assert.equal(task(a.id).status, 'done')
     assert.equal(readFileSync(path.join(repo, 'README.md'), 'utf8'), 'из ветки\n')
   })
@@ -287,17 +287,17 @@ const noReview: Workflow = {
 }
 
 describe('свой граф прогона', () => {
-  it('без ревью: done сразу сливает ветку по снимку прогона', () => {
+  it('без ревью: done сразу сливает ветку по снимку прогона', async () => {
     const run = store.createRun('цель', undefined, noReview)
-    const a = workTask('Логин', run.id)
+    const a = await workTask('Логин', run.id)
     commit(a, 'login.ts', 'x\n')
-    done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
     assert.equal(gatesOf(a.id).length, 0)
   })
 
-  it('конец без мержа: задача в done, worktree убран, ветка сохранена', () => {
+  it('конец без мержа: задача в done, worktree убран, ветка сохранена', async () => {
     const wf: Workflow = {
       version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
@@ -311,11 +311,12 @@ describe('свой граф прогона', () => {
       ]
     }
     const run = store.createRun('цель', undefined, wf)
-    const a = workTask('Черновик', run.id)
-    writeFileSync(path.join(a.worktree!, 'draft.md'), 'черновик\n')
-    done(a.id)
+    const a = await workTask('Черновик', run.id)
+    const worktree = a.worktree!
+    writeFileSync(path.join(worktree, 'draft.md'), 'черновик\n')
+    await done(a.id)
     assert.equal(task(a.id).status, 'done')
-    assert.equal(existsSync(a.worktree!), false)
+    assert.equal(existsSync(worktree), false)
     assert.equal(task(a.id).branch, `orca/${a.id}`)
     assert.equal(branchExists(`orca/${a.id}`), true)
     assert.equal(existsSync(path.join(repo, 'draft.md')), false, 'в master не попало')
@@ -344,20 +345,20 @@ const design: Workflow = {
 
 describe('показ человеку: «Работа» с showcase → «человек»', () => {
   /** `done` с показом, как `orca-board done --show-file … --show …`. */
-  function doneWithShowcase(taskId: string, showcase: { text?: string; files: string[] }): string {
+  async function doneWithShowcase(taskId: string, showcase: { text?: string; files: string[] }): Promise<string> {
     const before = store.listEvents().length
     const dispatchId = task(taskId).dispatchId!
     store.finishDispatch(dispatchId, 'макеты готовы', [], undefined, { showcase })
-    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    await handleWorkflowEvents(deps, store.listEvents().slice(before))
     return dispatchId
   }
 
-  it('показ последнего done — в body approval и showcaseDispatchId; «Принять» с выбором — decision в событии, мерж', () => {
+  it('показ последнего done — в body approval и showcaseDispatchId; «Принять» с выбором — decision в событии, мерж', async () => {
     const run = store.createRun('цель', undefined, design)
-    const a = workTask('Лендинг', run.id)
+    const a = await workTask('Лендинг', run.id)
     assert.throws(() => store.finishDispatch(task(a.id).dispatchId!, 'без показа', []), /требует показ человеку/)
     commit(a, 'a.html', '<p>A</p>\n')
-    const dispatchId = doneWithShowcase(a.id, { text: '## Варианты\n\nA — строгий, B — яркий', files: ['a.html', 'b.png'] })
+    const dispatchId = await doneWithShowcase(a.id, { text: '## Варианты\n\nA — строгий, B — яркий', files: ['a.html', 'b.png'] })
 
     const [request] = store.pendingRequests()
     assert.equal(request.kind, 'approval')
@@ -369,20 +370,20 @@ describe('показ человеку: «Работа» с showcase → «чел
     assert.match(body, /- `a\.html`\n- `b\.png`/)
     assert.ok(body.indexOf('макеты готовы') < body.indexOf('## Показ'), 'итог воркера — перед показом')
 
-    resolve(request.id, 'accept', 'вариант B')
+    await resolve(request.id, 'accept', 'вариант B')
     const resolved = events('request_resolved', a.id).at(-1)!
     assert.equal(resolved.payload.decision, 'вариант B')
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'a.html')), true, 'ветка слита')
   })
 
-  it('«Вернуть» → новый done: в новом approval показ нового запуска', () => {
+  it('«Вернуть» → новый done: в новом approval показ нового запуска', async () => {
     const run = store.createRun('цель', undefined, design)
-    const a = workTask('Лендинг', run.id)
-    doneWithShowcase(a.id, { files: ['v1.png'] })
+    const a = await workTask('Лендинг', run.id)
+    await doneWithShowcase(a.id, { files: ['v1.png'] })
     const [first] = store.pendingRequests()
-    resolve(first.id, 'reject', 'ярче')
-    const second = doneWithShowcase(a.id, { files: ['v2.png'] })
+    await resolve(first.id, 'reject', 'ярче')
+    const second = await doneWithShowcase(a.id, { files: ['v2.png'] })
     const [request] = store.pendingRequests()
     assert.notEqual(request.id, first.id)
     assert.equal(request.showcaseDispatchId, second)
@@ -390,10 +391,10 @@ describe('показ человеку: «Работа» с showcase → «чел
     assert.doesNotMatch(request.body ?? '', /v1\.png/)
   })
 
-  it('без показа (нода без showcase) — body как раньше, showcaseDispatchId нет', () => {
+  it('без показа (нода без showcase) — body как раньше, showcaseDispatchId нет', async () => {
     roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
-    const a = workTask('Логин')
-    done(a.id, 'логин готов')
+    const a = await workTask('Логин')
+    await done(a.id, 'логин готов')
     const [request] = store.pendingRequests()
     assert.equal(request.showcaseDispatchId, undefined)
     assert.doesNotMatch(request.body ?? '', /## Показ/)
@@ -401,33 +402,33 @@ describe('показ человеку: «Работа» с showcase → «чел
 })
 
 describe('мимо воркфлоу и возвраты', () => {
-  it('задача-ответ: done не трогает воркфлоу, review accept — прежняя приёмка', () => {
+  it('задача-ответ: done не трогает воркфлоу, review accept — прежняя приёмка', async () => {
     const t = store.createTask({ title: 'Разберись', answerFor: 'coordinator' })
-    deps.startWorker(t.id)
+    await deps.startWorker(t.id)
     const before = store.listEvents().length
     store.finishDispatch(task(t.id).dispatchId!, 'суть', [], 'ответ')
-    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    await handleWorkflowEvents(deps, store.listEvents().slice(before))
     assert.equal(task(t.id).stage, undefined)
     assert.equal(gatesOf(t.id).length, 0)
-    reviewAccept(deps, t.id)
+    await reviewAccept(deps, t.id)
     assert.equal(task(t.id).status, 'done')
   })
 
-  it('worker start задачи на этапе проверки возвращает её на «Работу», старая проверка закроется по done', () => {
-    const a = workTask('Логин')
-    done(a.id)
+  it('worker start задачи на этапе проверки возвращает её на «Работу», старая проверка закроется по done', async () => {
+    const a = await workTask('Логин')
+    await done(a.id)
     const [gate] = gatesOf(a.id)
-    deps.startWorker(a.id)
+    await deps.startWorker(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'work')
     assert.equal(events('stage_changed', a.id).at(-1)!.payload.outcome, 'restart')
-    done(gate.id, 'принято')
+    await done(gate.id, 'принято')
     assert.equal(task(gate.id).status, 'done', 'решение проверки уже не нужно')
   })
 
-  it('accept и reject на этапе «Работа» при живом воркере — review.notReviewable с названием этапа', () => {
-    const a = workTask('Логин')
-    assert.throws(() => reviewAccept(deps, a.id), (e: unknown) => e instanceof OrcaError && e.key === 'review.notReviewable' && /этапе «Работа»/.test(e.message))
-    assert.throws(() => reviewReject(deps, a.id, 'нет'), (e: unknown) => e instanceof OrcaError && e.key === 'review.notReviewable')
+  it('accept и reject на этапе «Работа» при живом воркере — review.notReviewable с названием этапа', async () => {
+    const a = await workTask('Логин')
+    await assert.rejects(async () => await reviewAccept(deps, a.id), (e: unknown) => e instanceof OrcaError && e.key === 'review.notReviewable' && /этапе «Работа»/.test(e.message))
+    await assert.rejects(async () => await reviewReject(deps, a.id, 'нет'), (e: unknown) => e instanceof OrcaError && e.key === 'review.notReviewable')
     assert.equal(task(a.id).stage?.nodeId, 'work')
   })
 })
@@ -457,16 +458,16 @@ describe('этап «Вопрос человеку» (ask)', () => {
     return q.id
   }
   /** Ответ человека в Инбоксе + доставка событий исполнителю (как подписка в index.ts). */
-  const humanAnswers = (questionId: string, text: string): void => {
+  const humanAnswers = async (questionId: string, text: string): Promise<void> => {
     const before = store.listEvents().length
     const request = store.pendingRequests().find((r) => r.questionId === questionId)!
     store.resolveRequest(request.id, { action: 'answer', text })
-    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    await handleWorkflowEvents(deps, store.listEvents().slice(before))
   }
 
-  it('сквозной: ask первым этапом → вопрос в Инбоксе → ответ → done → «Работа»; роль ask на задачу не переносится', () => {
+  it('сквозной: ask первым этапом → вопрос в Инбоксе → ответ → done → «Работа»; роль ask на задачу не переносится', async () => {
     const run = store.createRun('цель', undefined, askFirst)
-    const a = workTask('Хранилище', run.id)
+    const a = await workTask('Хранилище', run.id)
     // Первый запуск вошёл в граф в ask, а не в work.
     assert.equal(task(a.id).stage?.nodeId, 'ask')
     assert.deepEqual(startedRoles, ['qa'], 'Dispatch.roleId — роль ноды')
@@ -481,32 +482,32 @@ describe('этап «Вопрос человеку» (ask)', () => {
     assert.equal(store.getQuestion(qid)!.nodeId, 'ask')
     assert.equal(task(a.id).status, 'needs_input')
 
-    humanAnswers(qid, 'sqlite')
+    await humanAnswers(qid, 'sqlite')
     assert.equal(store.getQuestion(qid)!.answer, 'sqlite')
     assert.equal(started.length, 1, 'воркер жив и получит ответ через ask: перезапуска нет')
     assert.equal(task(a.id).stage?.nodeId, 'ask')
     assert.equal(task(a.id).status, 'in_progress', 'ответ вернул задачу в работу')
 
-    done(a.id, 'выяснил')
+    await done(a.id, 'выяснил')
     assert.equal(task(a.id).stage?.nodeId, 'work')
     assert.equal(started.length, 2, 'next → «Работа» запущена')
     assert.deepEqual(startedRoles, ['qa', 'developer'], 'следующая «Работа» без своей роли — роль задачи, не опросника')
     assert.equal(task(a.id).roleId, 'developer')
     assert.equal(events('workflow_blocked', a.id).length, 0)
     commit(task(a.id), 'db.ts', 'export {}\n')
-    done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).status, 'done', 'дальше мерж и конец')
     assert.equal(existsSync(path.join(repo, 'db.ts')), true)
   })
 
-  it('агент мёртв к моменту ответа: воркер стартует сам, этап не сброшен, роль ноды, ответ в вопросах задачи', () => {
+  it('агент мёртв к моменту ответа: воркер стартует сам, этап не сброшен, роль ноды, ответ в вопросах задачи', async () => {
     const run = store.createRun('цель', undefined, askFirst)
-    const a = workTask('Хранилище', run.id)
+    const a = await workTask('Хранилище', run.id)
     const qid = askHuman(task(a.id), 'Какую БД?')
     store.ptyExited(task(a.id).dispatchId ? store.getDispatch(task(a.id).dispatchId!)!.ptyId : '', 1)
     assert.equal(task(a.id).status, 'needs_input', 'открытый вопрос держит задачу в «Нужен ответ» вместо эскалации')
 
-    humanAnswers(qid, 'postgres')
+    await humanAnswers(qid, 'postgres')
     assert.equal(started.length, 2, 'автоперезапуск после ответа')
     assert.deepEqual(startedRoles, ['qa', 'qa'])
     assert.equal(task(a.id).stage?.nodeId, 'ask')
@@ -519,29 +520,29 @@ describe('этап «Вопрос человеку» (ask)', () => {
     assert.equal(events('workflow_blocked', a.id).length, 0)
   })
 
-  it('ответ на вопрос обычного воркера на «Работе» ничего не перезапускает — координатор делает worker start', () => {
-    const a = workTask('Логин')
+  it('ответ на вопрос обычного воркера на «Работе» ничего не перезапускает — координатор делает worker start', async () => {
+    const a = await workTask('Логин')
     const q = store.ask({ taskId: a.id, dispatchId: task(a.id).dispatchId, question: '?' }, { coordinatorAlive: true })
     store.ptyExited(store.getDispatch(task(a.id).dispatchId!)!.ptyId, 1)
     const before = store.listEvents().length
     store.answer(q.id, 'да')
-    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    await handleWorkflowEvents(deps, store.listEvents().slice(before))
     assert.equal(started.length, 1, 'на «Работе» воркера после ответа стартует координатор, приложение — нет')
   })
 
-  it('автоперезапуск не сработал — workflow_blocked с командой перезапуска, этап остаётся ask', () => {
+  it('автоперезапуск не сработал — workflow_blocked с командой перезапуска, этап остаётся ask', async () => {
     const run = store.createRun('цель', undefined, askFirst)
-    const a = workTask('Хранилище', run.id)
+    const a = await workTask('Хранилище', run.id)
     const qid = askHuman(task(a.id), 'Какую БД?')
     store.ptyExited(store.getDispatch(task(a.id).dispatchId!)!.ptyId, 1)
     deps.startWorker = () => { throw new Error('агент роли выключен') }
-    humanAnswers(qid, 'sqlite')
+    await humanAnswers(qid, 'sqlite')
     const [blocked] = events('workflow_blocked', a.id)
     assert.match(String(blocked.payload.reason), /агент роли выключен[\s\S]*worker start --task/)
     assert.equal(task(a.id).stage?.nodeId, 'ask')
   })
 
-  it('возврат из reject в ask: этап тот же, ответы прошлого захода остаются вопросами задачи', () => {
+  it('возврат из reject в ask: этап тот же, ответы прошлого захода остаются вопросами задачи', async () => {
     const wf: Workflow = {
       ...askFirst,
       nodes: [...askFirst.nodes, { id: 'pick', type: 'human', x: 0, y: 0 }],
@@ -551,13 +552,13 @@ describe('этап «Вопрос человеку» (ask)', () => {
       )
     }
     const run = store.createRun('цель', undefined, wf)
-    const a = workTask('Хранилище', run.id)
-    humanAnswers(askHuman(task(a.id), 'Какую БД?'), 'sqlite')
-    done(a.id)
-    done(a.id)
+    const a = await workTask('Хранилище', run.id)
+    await humanAnswers(askHuman(task(a.id), 'Какую БД?'), 'sqlite')
+    await done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'pick')
     const request = store.pendingRequests().find((r) => r.kind === 'approval')!
-    resolve(request.id, 'reject', 'спроси ещё про кеш')
+    await resolve(request.id, 'reject', 'спроси ещё про кеш')
     assert.equal(task(a.id).stage?.nodeId, 'ask', 'reject → снова ask, воркер стартовал сразу')
     assert.equal(startedRoles.at(-1), 'qa')
     assert.equal(task(a.id).roleId, 'developer')
@@ -589,17 +590,17 @@ function reviewThenQa(): Workflow {
 }
 
 describe('сценарий: гейт QA после ревью', () => {
-  it('ревью → QA → мерж; отказ QA возвращает в работу, повтор проходит оба гейта заново', () => {
+  it('ревью → QA → мерж; отказ QA возвращает в работу, повтор проходит оба гейта заново', async () => {
     const wf = reviewThenQa()
     assert.deepEqual(structuralErrors(wf), [])
     const run = store.createRun('цель', undefined, wf)
-    const a = workTask('Логин', run.id)
+    const a = await workTask('Логин', run.id)
     commit(a, 'login.ts', 'v1\n')
-    done(a.id)
+    await done(a.id)
     const [review1] = gatesOf(a.id)
     assert.equal(review1.roleId, 'reviewer')
 
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).stage?.nodeId, 'qa')
     assert.equal(task(a.id).status, 'review')
     const qa1 = gatesOf(a.id)[1]
@@ -607,21 +608,21 @@ describe('сценарий: гейт QA после ревью', () => {
     assert.equal(qa1.title, 'QA: Логин')
     assert.equal(started.at(-1), qa1.id, 'воркер QA запущен приложением')
     assert.equal(existsSync(path.join(repo, 'login.ts')), false, 'до QA ветка не слита')
-    done(review1.id, 'принято')
+    await done(review1.id, 'принято')
     assert.equal(task(review1.id).status, 'done')
 
-    reviewReject(deps, a.id, 'падает сценарий входа')
+    await reviewReject(deps, a.id, 'падает сценарий входа')
     assert.equal(task(a.id).stage?.nodeId, 'work')
     assert.equal(task(a.id).feedback, 'падает сценарий входа')
     assert.equal(started.at(-1), a.id)
-    done(qa1.id, 'отклонено')
+    await done(qa1.id, 'отклонено')
     assert.equal(task(qa1.id).status, 'done')
 
     commit(task(a.id), 'login.ts', 'v2\n')
-    done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'review', 'после доработки снова с ревью, не сразу QA')
-    reviewAccept(deps, a.id)
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(readFileSync(path.join(repo, 'login.ts'), 'utf8'), 'v2\n')
     assert.deepEqual(gatesOf(a.id).map((g) => g.roleId), ['reviewer', 'qa', 'reviewer', 'qa'])
@@ -629,7 +630,7 @@ describe('сценарий: гейт QA после ревью', () => {
 })
 
 describe('сценарий: пресет «3 отказа → человек» (addRetryLimit редактора)', () => {
-  it('два отказа — снова работа, третий — запрос человеку; «Вернуть» — ещё круг, следующий отказ — сразу человек; «Принять» — мерж', () => {
+  it('два отказа — снова работа, третий — запрос человеку; «Вернуть» — ещё круг, следующий отказ — сразу человек; «Принять» — мерж', async () => {
     const preset = addRetryLimit(legacyDefaultWorkflow(DEFAULT_ROLES), 3)
     assert.ok('workflow' in preset)
     const wf = preset.workflow
@@ -638,16 +639,16 @@ describe('сценарий: пресет «3 отказа → человек» (
     assert.equal(check.warnings.some((w) => /бесконечно/.test(w.message)), false, 'лимит снимает предупреждение о бесконечном цикле')
 
     const run = store.createRun('цель', undefined, wf)
-    const a = workTask('Логин', run.id)
+    const a = await workTask('Логин', run.id)
     commit(a, 'login.ts', 'x\n')
     for (const n of [1, 2]) {
-      done(a.id)
-      reviewReject(deps, a.id, `замечание ${n}`)
+      await done(a.id)
+      await reviewReject(deps, a.id, `замечание ${n}`)
       assert.equal(task(a.id).stage?.nodeId, 'work', `отказ ${n} — обратно в работу`)
       assert.equal(store.pendingRequests().length, 0)
     }
-    done(a.id)
-    reviewReject(deps, a.id, 'замечание 3')
+    await done(a.id)
+    await reviewReject(deps, a.id, 'замечание 3')
     assert.equal(task(a.id).stage?.nodeId, 'limit_human')
     assert.equal(task(a.id).status, 'needs_input')
     const [limit] = store.pendingRequests()
@@ -655,29 +656,29 @@ describe('сценарий: пресет «3 отказа → человек» (
     assert.equal(limit.title, 'После 3 отказов: Логин')
     assert.match(limit.body ?? '', /лимит \(3\)/)
 
-    resolve(limit.id, 'reject', 'последний шанс')
+    await resolve(limit.id, 'reject', 'последний шанс')
     assert.equal(task(a.id).stage?.nodeId, 'work')
     assert.equal(task(a.id).feedback, 'последний шанс')
     assert.equal(task(a.id).status, 'in_progress')
-    done(a.id)
-    reviewReject(deps, a.id, 'опять не то')
+    await done(a.id)
+    await reviewReject(deps, a.id, 'опять не то')
     const [again] = store.pendingRequests()
     assert.equal(again?.kind, 'approval', 'лимит исчерпан — следующий отказ сразу к человеку')
 
-    resolve(again.id, 'accept')
+    await resolve(again.id, 'accept')
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true, '«Принять» ведёт туда же, куда accept проверки, — в мерж')
   })
 })
 
 describe('сценарий: конфликт мержа после ревью агентом', () => {
-  it('accept ревьюера → конфликт → запрос человеку; «Вернуть» — в работу с замечаниями; после разрешения — мерж', () => {
-    const a = workTask('Логин')
+  it('accept ревьюера → конфликт → запрос человеку; «Вернуть» — в работу с замечаниями; после разрешения — мерж', async () => {
+    const a = await workTask('Логин')
     commit(a, 'README.md', 'из ветки\n')
     writeFileSync(path.join(repo, 'README.md'), 'из master\n')
     git(repo, 'commit', '-qam', 'master')
-    done(a.id)
-    reviewAccept(deps, a.id)
+    await done(a.id)
+    await reviewAccept(deps, a.id)
 
     assert.equal(task(a.id).stage?.nodeId, 'conflict')
     assert.equal(task(a.id).status, 'needs_input')
@@ -686,14 +687,14 @@ describe('сценарий: конфликт мержа после ревью а
     assert.match(conflict.body ?? '', /CONFLICT|конфликт/i)
     assert.equal(readFileSync(path.join(repo, 'README.md'), 'utf8'), 'из master\n', 'master не испорчен')
 
-    resolve(conflict.id, 'reject', 'влей master и разреши конфликт')
+    await resolve(conflict.id, 'reject', 'влей master и разреши конфликт')
     assert.equal(task(a.id).stage?.nodeId, 'work')
     assert.equal(task(a.id).feedback, 'влей master и разреши конфликт')
     assert.equal(started.at(-1), a.id)
 
     git(a.worktree!, 'merge', '-q', 'master', '-X', 'ours', '-m', 'resolve')
-    done(a.id)
-    reviewAccept(deps, a.id)
+    await done(a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(readFileSync(path.join(repo, 'README.md'), 'utf8'), 'из ветки\n')
   })
@@ -731,26 +732,26 @@ describe('сценарии с проектом: правка графа и уд�
     }
   })
 
-  it('граф поменяли посреди прогона — идущая задача живёт на снимке, новый прогон — на новом графе', () => {
+  it('граф поменяли посреди прогона — идущая задача живёт на снимке, новый прогон — на новом графе', async () => {
     const run1 = store.createRun('первая цель', undefined, taskScope(pm.runType(PID)))
-    const a = workTask('A', run1.id)
+    const a = await workTask('A', run1.id)
     commit(a, 'a.ts', 'a\n')
 
     saveWorkflow(noReview)
-    done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'review', 'по снимку — ревью, хотя в проекте его уже нет')
     assert.equal(gatesOf(a.id).length, 1)
 
     const run2 = store.createRun('вторая цель', undefined, taskScope(pm.runType(PID)))
-    const b = workTask('B', run2.id)
+    const b = await workTask('B', run2.id)
     commit(b, 'b.ts', 'b\n')
-    done(b.id)
+    await done(b.id)
     assert.equal(task(b.id).status, 'done', 'новый прогон — без ревью')
     assert.equal(existsSync(path.join(repo, 'b.ts')), true)
 
     // Ещё одна правка (сброс к дефолту) — снимок первого прогона по-прежнему ведёт задачу A.
     saveWorkflow(null)
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'a.ts')), true)
     // Снимок — граф типа, каким его видит движок подзадач (`toTaskScopeWorkflow` от сохранённого графа версии 2).
@@ -758,25 +759,25 @@ describe('сценарии с проектом: правка графа и уд�
     assert.deepEqual(store.getRun(run2.id)!.workflow, toTaskScopeWorkflow(migrateWorkflow(noReview, DEFAULT_ROLES)))
   })
 
-  it('задача без прогона («Входящие») идёт по графу типа проекта по умолчанию', () => {
+  it('задача без прогона («Входящие») идёт по графу типа проекта по умолчанию', async () => {
     saveWorkflow(noReview)
-    const c = workTask('C')
+    const c = await workTask('C')
     commit(c, 'c.ts', 'c\n')
-    done(c.id)
+    await done(c.id)
     assert.equal(task(c.id).status, 'done', 'граф типа — без ревью')
     assert.equal(gatesOf(c.id).length, 0)
   })
 
-  it('роль гейта удалили после сохранения графа — workflow_blocked (уведомление-эскалация), человек решает сам', () => {
+  it('роль гейта удалили после сохранения графа — workflow_blocked (уведомление-эскалация), человек решает сам', async () => {
     const base = legacyDefaultWorkflow(DEFAULT_ROLES)
     saveWorkflow({ ...base, nodes: base.nodes.map((n) => (n.id === 'review' ? { ...n, roleId: 'qa', title: 'QA' } : n)) })
     const run = store.createRun('цель', undefined, taskScope(pm.runType(PID)))
     pm.patchTaskType(pm.projectDefaultTypeId(PID), { roles: DEFAULT_ROLES.filter((r) => r.id !== 'qa') })
     assert.throws(() => saveWorkflow(pm.taskTypeWorkflow(pm.projectDefaultTypeId(PID)).workflow), /нет роли «qa»/, 'граф типа с удалённой ролью больше не сохранить')
 
-    const a = workTask('Логин', run.id)
+    const a = await workTask('Логин', run.id)
     commit(a, 'login.ts', 'x\n')
-    done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(task(a.id).status, 'review')
     assert.equal(gatesOf(a.id).length, 0, 'проверка не создана')
@@ -785,7 +786,7 @@ describe('сценарии с проектом: правка графа и уд�
     assert.equal(blocked.payload.nodeId, 'review')
     assert.equal(describeEvent(blocked, task(a.id), 'P', true)?.kind, 'escalation')
 
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
   })
@@ -813,25 +814,25 @@ describe('сценарий: рестарт приложения посреди �
     restart()
   })
 
-  it('этап «Работа»: запуск закрыт как unknown, задача в ready; новый запуск не считается повтором, done ведёт на ревью', () => {
-    const a = workTask('Логин')
+  it('этап «Работа»: запуск закрыт как unknown, задача в ready; новый запуск не считается повтором, done ведёт на ревью', async () => {
+    const a = await workTask('Логин')
     const dispatchId = task(a.id).dispatchId!
     restart()
     assert.equal(task(a.id).status, 'ready')
     assert.equal(store.getDispatch(dispatchId)!.outcome, 'unknown')
     assert.deepEqual(task(a.id).stage, { nodeId: 'work', visits: { start: 1, work: 1 } })
 
-    deps.startWorker(a.id)
+    await deps.startWorker(a.id)
     assert.deepEqual(task(a.id).stage, { nodeId: 'work', visits: { start: 1, work: 1 } }, 'перезапуск после рестарта — не отказ')
-    done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(gatesOf(a.id).length, 1)
   })
 
-  it('этап проверки: проверка в ready, рабочая задача ждёт на ревью; перезапуск проверки и accept — мерж', () => {
-    const a = workTask('Логин')
+  it('этап проверки: проверка в ready, рабочая задача ждёт на ревью; перезапуск проверки и accept — мерж', async () => {
+    const a = await workTask('Логин')
     commit(a, 'login.ts', 'x\n')
-    done(a.id)
+    await done(a.id)
     const [gate] = gatesOf(a.id)
     restart()
     assert.equal(task(gate.id).status, 'ready')
@@ -839,72 +840,72 @@ describe('сценарий: рестарт приложения посреди �
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(task(a.id).status, 'review')
 
-    deps.startWorker(gate.id)
+    await deps.startWorker(gate.id)
     assert.equal(task(gate.id).stage, undefined, 'проверка в граф не входит')
-    reviewAccept(deps, a.id)
-    done(gate.id, 'принято')
+    await reviewAccept(deps, a.id)
+    await done(gate.id, 'принято')
     assert.equal(task(a.id).status, 'done')
     assert.equal(task(gate.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
   })
 
-  it('этап «человек»: запрос approval переживает рестарт, «Принять» после него сливает ветку', () => {
+  it('этап «человек»: запрос approval переживает рестарт, «Принять» после него сливает ветку', async () => {
     roles = DEFAULT_ROLES.filter((r) => r.id !== 'reviewer')
-    const a = workTask('Логин')
+    const a = await workTask('Логин')
     commit(a, 'login.ts', 'x\n')
-    done(a.id)
+    await done(a.id)
     restart()
     const [request] = store.pendingRequests()
     assert.equal(request?.kind, 'approval')
     assert.equal(task(a.id).status, 'needs_input')
-    resolve(request.id, 'accept')
+    await resolve(request.id, 'accept')
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
   })
 
-  it('снимок графа прогона переживает рестарт: задача идёт по нему, а не по дефолту', () => {
+  it('снимок графа прогона переживает рестарт: задача идёт по нему, а не по дефолту', async () => {
     const run = store.createRun('цель', undefined, noReview)
-    const a = workTask('Логин', run.id)
+    const a = await workTask('Логин', run.id)
     commit(a, 'login.ts', 'x\n')
     restart()
-    deps.startWorker(a.id)
-    done(a.id)
+    await deps.startWorker(a.id)
+    await done(a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(gatesOf(a.id).length, 0)
   })
 
-  it('done сохранён, а worker_done не обработан до выхода: задача в «Ревью» на этапе «Работа», выход — перезапуск воркера', () => {
-    const a = workTask('Логин')
+  it('done сохранён, а worker_done не обработан до выхода: задача в «Ревью» на этапе «Работа», выход — перезапуск воркера', async () => {
+    const a = await workTask('Логин')
     store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
     restart()
     assert.equal(task(a.id).status, 'review')
     assert.equal(task(a.id).stage?.nodeId, 'work')
     // «Принять» делает переход, который не успел сделать `worker_done`: дальше — проверка.
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(gatesOf(a.id).length, 1)
   })
 
-  it('добор при открытии: done без обработанного worker_done доезжает до проверки сам', () => {
-    const a = workTask('Логин')
+  it('добор при открытии: done без обработанного worker_done доезжает до проверки сам', async () => {
+    const a = await workTask('Логин')
     store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
     restart()
-    resumeStuckStages(deps)
+    await resumeStuckStages(deps)
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(gatesOf(a.id).length, 1)
-    resumeStuckStages(deps)
+    await resumeStuckStages(deps)
     assert.equal(gatesOf(a.id).length, 1, 'повторный добор проверку не дублирует')
   })
 
-  it('добор при открытии: этап проверки без задачи-проверки (выход до createGate) — проверка создаётся один раз', () => {
-    const a = workTask('Логин')
+  it('добор при открытии: этап проверки без задачи-проверки (выход до createGate) — проверка создаётся один раз', async () => {
+    const a = await workTask('Логин')
     store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
     store.advanceStage(a.id, 'next', { roleIds: roles.map((r) => r.id) })
     restart()
     assert.equal(task(a.id).stage?.nodeId, 'review')
     assert.equal(gatesOf(a.id).length, 0)
-    resumeStuckStages(deps)
-    resumeStuckStages(deps)
+    await resumeStuckStages(deps)
+    await resumeStuckStages(deps)
     assert.equal(gatesOf(a.id).length, 1)
     assert.equal(started.at(-1), gatesOf(a.id)[0].id)
   })
@@ -923,8 +924,8 @@ describe('остановленный этап подзадачи: мерж не 
   })
 
   /** Задача сдала `done`, граф перешёл на «Мерж», а эффект не выполнился (приложение вышло посреди мержа). */
-  function stuckOnMerge(title: string, runId: string): Task {
-    const a = workTask(title, runId)
+  async function stuckOnMerge(title: string, runId: string): Promise<Task> {
+    const a = await workTask(title, runId)
     commit(a, `${title}.ts`, 'x\n')
     store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
     store.advanceStage(a.id, 'next')
@@ -932,46 +933,46 @@ describe('остановленный этап подзадачи: мерж не 
     return task(a.id)
   }
 
-  it('(1) задача на «Мерже» после краша: «Принять» сливает ветку и закрывает задачу', () => {
+  it('(1) задача на «Мерже» после краша: «Принять» сливает ветку и закрывает задачу', async () => {
     const run = store.createRun('цель', undefined, noReview)
-    const a = stuckOnMerge('login', run.id)
+    const a = await stuckOnMerge('login', run.id)
     assert.equal(a.stage?.nodeId, 'merge')
     assert.equal(a.status, 'review', 'колонка «Ревью» — кнопки «Принять»/«Вернуть» видны')
     assert.equal(a.stageBlock, undefined)
 
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(task(a.id).stage?.nodeId, 'end')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true, 'ветка слита')
     assert.equal(branchExists(`orca/${a.id}`), false)
   })
 
-  it('(2) мерж упал — stageBlock с причиной; снова упал — «Принять» сообщает причину; причину убрали — «Принять» сливает', () => {
+  it('(2) мерж упал — stageBlock с причиной; снова упал — «Принять» сообщает причину; причину убрали — «Принять» сливает', async () => {
     const run = store.createRun('цель', undefined, noReview)
     deps.mergeTarget = () => { throw new Error('ветки фичи нет в репозитории') }
-    const a = workTask('login', run.id)
+    const a = await workTask('login', run.id)
     commit(a, 'login.ts', 'x\n')
-    done(a.id)
+    await done(a.id)
     assert.equal(task(a.id).stage?.nodeId, 'merge')
     assert.equal(task(a.id).stageBlock?.nodeId, 'merge')
     assert.match(task(a.id).stageBlock!.reason, /мерж не выполнен: ветки фичи нет/)
     assert.equal(events('workflow_blocked', a.id).length, 1)
 
-    assert.throws(() => reviewAccept(deps, a.id), (e: unknown) => e instanceof OrcaError && e.key === 'review.stageBlocked' && /ветки фичи нет/.test(e.message))
+    await assert.rejects(async () => await reviewAccept(deps, a.id), (e: unknown) => e instanceof OrcaError && e.key === 'review.stageBlocked' && /ветки фичи нет/.test(e.message))
     assert.equal(task(a.id).stage?.nodeId, 'merge')
     assert.equal(events('workflow_blocked', a.id).length, 2)
 
     delete deps.mergeTarget
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(task(a.id).stageBlock, undefined, 'метка снята')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
   })
 
-  it('(3) «Вернуть» на «Мерже» — замечания в feedback, этап «Работа», воркер запущен', () => {
+  it('(3) «Вернуть» на «Мерже» — замечания в feedback, этап «Работа», воркер запущен', async () => {
     const run = store.createRun('цель', undefined, noReview)
-    const a = stuckOnMerge('login', run.id)
-    reviewReject(deps, a.id, 'сначала почини тесты')
+    const a = await stuckOnMerge('login', run.id)
+    await reviewReject(deps, a.id, 'сначала почини тесты')
     assert.equal(task(a.id).feedback, 'сначала почини тесты')
     assert.equal(task(a.id).stage?.nodeId, 'work')
     assert.equal(task(a.id).stage?.visits.work, 2, 'возврат считается заходом')
@@ -980,19 +981,19 @@ describe('остановленный этап подзадачи: мерж не 
     assert.equal(branchExists(`orca/${a.id}`), true, 'ветка с работой на месте')
   })
 
-  it('(4) добор после запуска: «Мерж» без метки доезжает, с меткой — ждёт человека; повтор ничего не меняет', () => {
+  it('(4) добор после запуска: «Мерж» без метки доезжает, с меткой — ждёт человека; повтор ничего не меняет', async () => {
     const run = store.createRun('цель', undefined, noReview)
-    const a = stuckOnMerge('a', run.id)
-    const b = workTask('b', run.id)
+    const a = await stuckOnMerge('a', run.id)
+    const b = await workTask('b', run.id)
     commit(b, 'b.ts', 'x\n')
     deps.mergeTarget = (t) => { if (t.id === b.id) throw new Error('index.lock занят'); return { cwd: repo, branch: 'master' } }
-    done(b.id)
+    await done(b.id)
     delete deps.mergeTarget
     assert.equal(task(b.id).stageBlock?.nodeId, 'merge')
     restart()
     const blockedBefore = events('workflow_blocked').length
 
-    resumeStuckStages(deps)
+    await resumeStuckStages(deps)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'a.ts')), true)
     assert.equal(task(b.id).stage?.nodeId, 'merge', 'остановленную задачу добор не трогает')
@@ -1000,27 +1001,27 @@ describe('остановленный этап подзадачи: мерж не 
     assert.equal(events('workflow_blocked').length, blockedBefore, 'повторного уведомления нет')
 
     const snapshot = JSON.stringify(store.snapshot())
-    resumeStuckStages(deps)
+    await resumeStuckStages(deps)
     assert.equal(JSON.stringify(store.snapshot()), snapshot, 'идемпотентно')
   })
 
-  it('(5) «Работа» + сданный done + «Ревью» (worker_done потерян) — добор делает переход дальше', () => {
+  it('(5) «Работа» + сданный done + «Ревью» (worker_done потерян) — добор делает переход дальше', async () => {
     const run = store.createRun('цель', undefined, noReview)
-    const a = workTask('login', run.id)
+    const a = await workTask('login', run.id)
     commit(a, 'login.ts', 'x\n')
     store.finishDispatch(task(a.id).dispatchId!, 'сделал', [])
     restart()
     assert.equal(task(a.id).stage?.nodeId, 'work')
-    resumeStuckStages(deps)
+    await resumeStuckStages(deps)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
   })
 
-  it('мерж на «Мерже» без папки worktree (её убрали руками) — «Принять» сливает закоммиченное, без ENOENT', () => {
+  it('мерж на «Мерже» без папки worktree (её убрали руками) — «Принять» сливает закоммиченное, без ENOENT', async () => {
     const run = store.createRun('цель', undefined, noReview)
-    const a = stuckOnMerge('login', run.id)
+    const a = await stuckOnMerge('login', run.id)
     rmSync(a.worktree!, { recursive: true, force: true })
-    reviewAccept(deps, a.id)
+    await reviewAccept(deps, a.id)
     assert.equal(task(a.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'login.ts')), true)
     assert.equal(branchExists(`orca/${a.id}`), false)
@@ -1028,19 +1029,19 @@ describe('остановленный этап подзадачи: мерж не 
 })
 
 describe('сценарий: задача-ответ идёт мимо воркфлоу', () => {
-  it('answerFor human в прогоне со снимком без ревью: запрос answer, этапа нет, ничего не сливается', () => {
+  it('answerFor human в прогоне со снимком без ревью: запрос answer, этапа нет, ничего не сливается', async () => {
     const run = store.createRun('цель', undefined, noReview)
     const t = store.createTask({ title: 'Разберись', answerFor: 'human', runId: run.id })
-    deps.startWorker(t.id)
+    await deps.startWorker(t.id)
     const before = store.listEvents().length
     store.finishDispatch(task(t.id).dispatchId!, 'суть', [], 'подробный ответ')
-    handleWorkflowEvents(deps, store.listEvents().slice(before))
+    await handleWorkflowEvents(deps, store.listEvents().slice(before))
 
     assert.equal(task(t.id).stage, undefined)
     assert.equal(events('stage_changed', t.id).length, 0)
     const [answer] = store.pendingRequests()
     assert.equal(answer.kind, 'answer')
-    resolve(answer.id, 'accept')
+    await resolve(answer.id, 'accept')
     assert.equal(task(t.id).status, 'done')
     assert.equal(events('workflow_blocked').length, 0)
   })

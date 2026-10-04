@@ -8,6 +8,7 @@ export interface AsyncProjectCommandHost<Project, Name extends string> extends P
 }
 export interface AsyncCommandScope {
   isCurrent(): boolean
+  guard(): void
   /** Только синхронные изменения после повторной проверки ownership/policy. */
   commit<T>(operation: () => T): T
 }
@@ -28,7 +29,7 @@ export function createAsyncProjectCommandExecutor<Project, Name extends string>(
         if (!current()) throw new CommandError('command.stale', { projectId: context.projectId })
       }
       const source: StatusSource = context.actor.kind === 'operator' ? 'human' : context.actor.kind === 'agent' ? 'cli' : 'app'
-      const scope: AsyncCommandScope = { isCurrent: () => current() && allowed(), commit: operation => {
+      const scope: AsyncCommandScope = { isCurrent: () => current() && allowed(), guard: assertCurrent, commit: operation => {
         assertCurrent(); return withStatusSource(source, operation)
       } }
       assertCurrent()

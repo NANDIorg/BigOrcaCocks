@@ -67,35 +67,26 @@ Desktop assistantChat send/respond теперь вызывает общий comp
 PTY input/resize auto claim не выполняется для malformed payload, а отказ event
 пишется в logger. Отключение окна освобождает его writer, pending запрос остаётся.
 
-Очередь async Git проекта привязана к canonical commonDir, а не выбранному клиентом
-root; ожидание ответа человека в неё не входит. Долгий Git hook в одной операции
-не блокирует terminal output/event loop и мутации другого repo. Существующие policy
-и registration guards повторяются после ожидания очереди до mutation.
+Review/request effects подключены к общему async runtime: commit/review/merge/cleanup
+занимают одну transaction canonical commonDir queue, preview не удерживает mutation
+queue. Долгий hook не блокирует PTY/другой repo. Ожидание человека остаётся вне Git queue.
+GitProcessService закрывает stdin, ограничивает output, при stop/timeout завершает hooks.
 
-Общий async workflow port позволяет выполнять commit/review/merge/cleanup одной
-Git transaction с guard после await. Read-only preview не занимает mutation queue.
-Ответ человека и ожидание permission не входят в transaction; existing review
-callers переключаются следующим переносом вместе с EffectToken/reconciliation.
+EffectScope проверяет captured project/store/task/run identity, node/visit/lane/dispatch
+и host policy после await до следующего эффекта. Stale/forbidden не пишут feedback и не
+эскалируют новый dispatch. Уже durable решение не откатывается при failed launch; вкладка
+другого клиента не выбирается. Human/cli/app source захватывается до ожидания, graph phases
+пишут workflow; глобальный withStatusSource не удерживается через Promise.
 
-EffectScope после async эффекта проверяет захваченную позицию и dispatch перед
-применением решения. Scope не держит глобальный status source через ожидание;
-параллельные human/workflow записи сохраняют своё авторство. Реальный Git effect
-мог завершиться до отмены: автоматического rollback или повтора здесь нет.
+Вложения ожидают весь async apply. При актуальной позиции файлы без ссылок убираются после отказа; referenced
+feedback/stageInput остаются при ошибке последующего запуска. Request/review commands,
+Desktop adapters и legacy socket ожидают Promise до ответа. Optional entry commit marker
+best-effort при native read error, но policy/position errors не подавляются.
 
-Общий GitProcessService ограничивает stdout/stderr, закрывает stdin и при остановке
-owner завершает принадлежащее ему дерево Git hooks. Отмена отличается от timeout;
-ни один process listener/таймер не удерживается после закрытия. Ожидание человека
-остаётся вне Git service/очереди. Async review effects и reconciliation ещё в B.
-
-Метаданные project Git тоже асинхронны: задержка проверки HEAD не останавливает
-другие команды и PTY. Scope после ожидания повторно проверяет registration/policy;
-отозванный оператор не запускает следующий commit, поздний read не возвращается
-как актуальный после удаления проекта. Сам workflow/review ещё переводится в B.
-
-Подготовка ветки run теперь доступна через async branch port. Параллельные ожидания
-разделяют один Git effect, но каждое имеет собственный domain guard. Устаревший
-результат не записывает новые Git metadata; уже созданный native worktree может
-остаться для reconciliation. Подключение request/review consumers ещё продолжается.
+Подготовка feature run разделяет один Git effect между ожидающими с отдельным domain
+guard каждого. Git metadata не отменяет соседний lane и отдельно проверяется branch port.
+Уже случившийся native effect не откатывается после отмены и может требовать восстановления:
+persistent reconciliation и оставшиеся profile/file Git reads продолжаются в B.
 
 ## Модель
 

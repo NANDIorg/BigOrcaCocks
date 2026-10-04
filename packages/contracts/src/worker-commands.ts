@@ -14,6 +14,6 @@ export interface WorkerStopResult { stopped: string[] }
 
 /** Owner выбирает проект явно; principal устанавливает проверивший соединение host. */
 export interface WorkerCommands {
-  start(context: ProjectCommandContext, taskId: string, input?: WorkerLaunchInput): WorkerLaunchResult
+  start(context: ProjectCommandContext, taskId: string, input?: WorkerLaunchInput): Promise<WorkerLaunchResult>
   stop(context: ProjectCommandContext, taskId: string): WorkerStopResult
 }

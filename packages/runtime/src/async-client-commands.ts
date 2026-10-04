@@ -13,7 +13,7 @@ export function createAsyncClientCommandExecutor<Name extends string>(host: Clie
       assertAllowed()
       const operation = validate()
       const source: StatusSource = context.actor.kind === 'operator' ? 'human' : context.actor.kind === 'agent' ? 'cli' : 'app'
-      const scope: AsyncCommandScope = { isCurrent: allowed, commit: operation => {
+      const scope: AsyncCommandScope = { guard: assertAllowed, isCurrent: allowed, commit: operation => {
         assertAllowed(); return withStatusSource(source, operation)
       } }
       const result = await scope.commit(() => operation(context, scope))

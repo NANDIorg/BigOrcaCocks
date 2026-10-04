@@ -147,24 +147,24 @@ it('package entrypoint запускает общий воркер и workflow п
       const ctx = { socketPath: join(dir, 'orca.sock'), projectId: 'project', roles: DEFAULT_ROLES,
         typeTitle: 'General', permissionMode: 'auto', workflow }
       const deps = { store, repoRoot: repo, run: () => ({ roles: DEFAULT_ROLES, workflow }),
-        startWorker: taskId => { workflows.task.enterWork(deps, taskId); return services.startWorker(store, repo, ctx, taskId) },
+        startWorker: async taskId => { await workflows.task.enterWork(deps, taskId); return services.startWorker(store, repo, ctx, taskId) },
         isAlive: sessions.isAlive, startCoordinator: () => assert.fail('legacy graph needs no coordinator'),
         mergeTarget: task => resources.mergeTarget(store, repo, task) }
       const binding = workflows.forProject(deps)
       const task = store.createTask({ title: 'Headless worker', roleId: 'developer', runId: run.id })
-      const worker = deps.startWorker(task.id)
+      const worker = await deps.startWorker(task.id)
       assert.equal(store.getTask(task.id).status, 'in_progress')
       data('output without window')
       assert.equal(sessions.terminalSnapshots()[0].tail, 'output without window')
       writeFileSync(join(worker.worktree, 'result.txt'), 'Headless result')
       const before = store.listEvents().length
       store.finishDispatch(worker.dispatchId, 'Headless result', [])
-      binding.handleEvents(store.listEvents().slice(before))
+      await binding.handleEvents(store.listEvents().slice(before))
       assert.equal(store.getTask(task.id).stage.nodeId, 'human')
       const request = store.pendingRequests()[0]
       exit({ exitCode: 0 })
       assert.equal(sessions.isAlive(worker.ptyId), false)
-      binding.resolveHumanRequest(request.id, { action: 'accept' })
+      await binding.resolveHumanRequest(request.id, { action: 'accept' })
       const restored = new TaskStore(jsonPersistence(file), () => DEFAULT_COLUMNS)
       assert.equal(restored.getTask(task.id).status, 'done')
       assert.equal(restored.getRequest(request.id).status, 'resolved')

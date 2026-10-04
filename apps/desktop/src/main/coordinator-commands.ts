@@ -10,20 +10,20 @@ export interface DesktopCoordinatorCommandHost<Event> extends DesktopProjectComm
 export function registerDesktopCoordinatorCommands<Event>(handle: DesktopCommandHandle<Event>, host: DesktopCoordinatorCommandHost<Event>): void {
   const { context, invoke } = createDesktopProjectCommandAdapter(host)
   handle('coordinator:start', (event, objective: unknown, cols?: number, rows?: number, images?: AttachmentInput[] | null) =>
-    invoke(() => host.commands.start(context(event), { objective: typeof objective === 'string' ? objective : '', cols, rows, images }).ptyId))
+    invoke(() => host.commands.start(context(event), { objective: typeof objective === 'string' ? objective : '', cols, rows, images }).then(result => result.ptyId)))
   handle('globalTasks:startCoordinator', (event, id: string, cols?: number, rows?: number, images?: AttachmentInput[] | null) =>
-    invoke(() => host.commands.startCoordinator(context(event), id, { cols, rows, images }).ptyId))
+    invoke(() => host.commands.startCoordinator(context(event), id, { cols, rows, images }).then(result => result.ptyId)))
   handle('globalTasks:accept', (event, id: string, decision?: unknown) =>
     invoke(() => host.commands.accept(context(event), id, typeof decision === 'string' ? decision : undefined)))
   handle('globalTasks:returnToWork', (event, id: string, text: unknown, cols?: number, rows?: number, images?: AttachmentInput[] | null) =>
     invoke(() => {
-      try { return host.commands.returnToWork(context(event), id, { text: typeof text === 'string' ? text : '', cols, rows, images }).ptyId }
-      catch (error) {
+      const ctx = context(event)
+      return host.commands.returnToWork(ctx, id, { text: typeof text === 'string' ? text : '', cols, rows, images }).then(result => result.ptyId).catch(error => {
         // Старый returnRunWithImages оборачивал validation reason локализованным attachments.invalid.
         if (error instanceof CommandError && error.code === 'command.invalidInput' && error.details.field === 'images' && error.cause instanceof Error) {
           throw new OrcaError('attachments.invalid', { error: error.cause.message })
         }
         throw error
-      }
+      })
     }))
 }

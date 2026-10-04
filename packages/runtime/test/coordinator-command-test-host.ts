@@ -47,28 +47,28 @@ export function coordinatorFixture(error: (key: 'workflow.runFinished' | 'workfl
     const store = new TaskStore(runtime.jsonPersistence(join(dir, `${id}.json`)), () => DEFAULT_COLUMNS)
     const environment = (): runtime.WorkerEnvContext => ({ socketPath: join(dir, 'orca.sock'), projectId: id,
       roles: DEFAULT_ROLES, permissionMode: 'auto', typeTitle: id })
-    const deps: runtime.RunWorkflowDeps = { store, repoRoot: root, run: () => ({ roles: DEFAULT_ROLES }),
-      isAlive: sessions.isAlive, startCoordinator: runId => { workers.startCoordinator(store, root, environment(), '', undefined, undefined, [], runId) },
-      startWorker: (taskId, opts) => workers.startWorker(store, root, environment(), taskId, undefined, undefined, opts?.roleId),
-      mergeTarget: task => common.mergeTarget(store, root, task) }
-    projects.set(id, { store, root, workflow: deps, environment,
+    const deps: runtime.RunWorkflowDeps = { projectId: id, isCurrent: () => projects.get(id)?.store === store, store, repoRoot: root, run: () => ({ roles: DEFAULT_ROLES }),
+      isAlive: sessions.isAlive, startCoordinator: async runId => { await workers.startCoordinator(store, root, environment(), '', undefined, undefined, [], runId) },
+      startWorker: async (taskId, opts) => (await workers.startWorker(store, root, environment(), taskId, undefined, undefined, opts?.roleId)),
+      mergeTarget: async task => (await common.mergeTarget(store, root, task)) }
+    projects.set(id, { projectId: id, isCurrent: () => projects.get(id)?.store === store, store, root, workflow: deps, environment,
       newRunEnvironment: (typeId = 'default') => {
         if (typeId !== 'default') throw new Error('unknown type')
         return { ...environment(), type: { typeId, snapshot: { id: typeId, title: id, roles: DEFAULT_ROLES }, workflow: runGraph } }
       } })
   }
-  const host: runtime.CoordinatorCommandHost = { workers, workflow: workflow.run, resources: common, messages: { error },
+  const host: runtime.CoordinatorCommandHost = { isCurrent: (project, context) => projects.get(context.projectId) === project, workers, workflow: workflow.run, resources: common, messages: { error },
     authorize: (context, command) => { policy.push({ context, command }); return allowed },
     project: id => { lookups++; return projects.get(id) } }
   const commands = runtime.createCoordinatorCommands(host)
   return { dir, commands, host, common, workflow, sessions, workers, projects, processes, policy, git,
     context: (projectId = 'A', kind: 'operator' | 'agent' | 'system' = 'operator') => ({ projectId, clientId: 'desktop:1', actor: { kind, id: 'local-user' } }),
     counts: () => ({ lookups, spawns: processes.length }), deny: () => { allowed = false }, fail: () => { failSpawn = true },
-    finishWork: (runId: string, projectId = 'A') => {
+    finishWork: async (runId: string, projectId = 'A') => {
       const project = projects.get(projectId)!
       const task = project.store.createTask({ title: 'Finished work', runId, roleId: 'developer' })
       project.store.moveTask(task.id, 'done')
-      workflow.run.finishRunStage(project.workflow, runId)
+      await workflow.run.finishRunStage(project.workflow, runId)
     },
     close: () => { sessions.killAll(); rmSync(dir, { recursive: true, force: true }) } }
 }

@@ -130,7 +130,7 @@ describe('createInitialCommit', () => {
     await createInitialCommit(repo, 'snapshot')
     const store = new TaskStore(undefined, () => DEFAULT_COLUMNS)
     const run = store.createGlobalTask({ title: 'Фича' })
-    const worktree = ensureRunBranch(store, repo, run.id)?.worktree
+    const worktree = (await ensureRunBranch(store, repo, run.id))?.worktree
     assert.ok(worktree)
     assert.equal(existsSync(path.join(worktree, 'a.txt')), true)
   })

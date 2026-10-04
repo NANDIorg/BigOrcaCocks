@@ -15,8 +15,8 @@ export interface CoordinatorLaunchResult { ptyId: string; runId: string }
 
 /** Owner API запуска и human workflow actions. Контекст задаёт host, пути вложений не принимаются. */
 export interface CoordinatorCommands {
-  start(context: ProjectCommandContext, input: CoordinatorStartInput): CoordinatorLaunchResult
-  startCoordinator(context: ProjectCommandContext, globalTaskId: string, input?: CoordinatorLaunchInput): CoordinatorLaunchResult
-  accept(context: ProjectCommandContext, globalTaskId: string, decision?: string): GlobalTask
-  returnToWork(context: ProjectCommandContext, globalTaskId: string, input: CoordinatorReturnInput): CoordinatorLaunchResult
+  start(context: ProjectCommandContext, input: CoordinatorStartInput): Promise<CoordinatorLaunchResult>
+  startCoordinator(context: ProjectCommandContext, globalTaskId: string, input?: CoordinatorLaunchInput): Promise<CoordinatorLaunchResult>
+  accept(context: ProjectCommandContext, globalTaskId: string, decision?: string): Promise<GlobalTask>
+  returnToWork(context: ProjectCommandContext, globalTaskId: string, input: CoordinatorReturnInput): Promise<CoordinatorLaunchResult>
 }

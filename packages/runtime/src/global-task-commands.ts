@@ -2,11 +2,13 @@ import { isTaskPriority, type TaskStore, type RunTypeInput, type AgentInfo } fro
 import type { GlobalTaskCommands, GlobalTaskCommandName, GlobalTaskInput, GlobalTaskPatch, SubtaskInput } from '@orca-board/contracts'
 import type { AgentSelectionServices } from './agent-selection.ts'
 import type { RoleSource } from './launch-policy.ts'
-import { CommandError, createProjectCommandExecutor, type ProjectCommandHost } from './project-commands.ts'
+import { CommandError, createProjectCommandExecutor } from './project-commands.ts'
 import { commandAttachmentsFrom as imagesFrom, commandFields, commandString, commandInputError, taskCreateFrom } from './command-input.ts'
 import { createGlobalTaskRemoval, type GlobalTaskRemovalDeps } from './global-task-removal.ts'
+import { createAsyncProjectCommandExecutor, type AsyncProjectCommandHost } from './async-project-commands.ts'
+import { executionSource, type ExecutionContext } from './execution-context.ts'
 
-export interface GlobalTaskCommandProject {
+export interface GlobalTaskCommandProject extends ExecutionContext {
   store: TaskStore
   root: string
   runType(typeId?: string): RunTypeInput
@@ -14,7 +16,7 @@ export interface GlobalTaskCommandProject {
   agents(): AgentInfo[]
 }
 
-export interface GlobalTaskCommandHost extends ProjectCommandHost<GlobalTaskCommandProject, GlobalTaskCommandName>, GlobalTaskRemovalDeps {
+export interface GlobalTaskCommandHost extends AsyncProjectCommandHost<GlobalTaskCommandProject, GlobalTaskCommandName>, GlobalTaskRemovalDeps {
   selection: AgentSelectionServices
 }
 
@@ -54,6 +56,7 @@ function subtaskFrom(raw: unknown): SubtaskInput {
 /** CRUD и вложения одной глобальной задачи; workflow/PTY запуск живёт в отдельных services. */
 export function createGlobalTaskCommands(host: GlobalTaskCommandHost): GlobalTaskCommands {
   const execute = createProjectCommandExecutor(host)
+  const executeAsync = createAsyncProjectCommandExecutor(host)
   const remove = createGlobalTaskRemoval(host)
   const root = host.resources.runImagesRoot(host.dataDir)
 
@@ -87,11 +90,12 @@ export function createGlobalTaskCommands(host: GlobalTaskCommandHost): GlobalTas
       const status = commandString(raw, 'status')
       return scoped(id, (p, runId) => p.store.moveGlobalTask(runId, status))
     }),
-    remove: (context, rawId, rawOptions) => execute(context, 'globalTasks.remove', () => {
+    remove: (context, rawId, rawOptions) => executeAsync(context, 'globalTasks.remove', () => {
       const options = rawOptions === undefined ? {} : commandFields(rawOptions, ['cascade'])
       if (options.cascade !== undefined && typeof options.cascade !== 'boolean') commandInputError('cascade')
       const cascade = options.cascade === true; const id = commandString(rawId, 'globalTaskId')
-      return (project, ctx) => { existing(project, id); return remove({ ...project, id: ctx.projectId }, id, cascade) }
+      return (project, ctx, scope) => { existing(project, id); return remove({ ...project, id: ctx.projectId,
+        isCurrent: () => { scope.guard(); return true }, source: executionSource(ctx.actor.kind) }, id, cascade) }
     }),
     tasks: (context, id) => execute(context, 'globalTasks.tasks', () => scoped(id, (p, runId) => p.store.listSubtasks(runId))),
     createTask: (context, id, raw) => execute(context, 'globalTasks.createTask', () => {

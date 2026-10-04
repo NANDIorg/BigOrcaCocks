@@ -13,13 +13,13 @@ export function reviewRequestFixture() {
   const policy: Array<{ context: ProjectCommandContext; command: string }> = []
   const projects = new Map<string, runtime.ReviewProject>()
   for (const [id, p] of f.projects) {
-    projects.set(id, { store: p.store, root: p.root, workflow: { ...p.workflow,
-      startCoordinator: runId => { f.workers.startCoordinator(p.store, p.root, p.environment(runId), '', undefined, undefined, [], runId) },
+    projects.set(id, { projectId: id, isCurrent: () => projects.get(id)?.store === p.store, store: p.store, root: p.root, workflow: { ...p.workflow,
+      startCoordinator: async runId => { await f.workers.startCoordinator(p.store, p.root, p.environment(runId), '', undefined, undefined, [], runId) },
       isAlive: f.sessions.isAlive } })
   }
   const operationHost: runtime.ReviewOperationHost = { workflow: f.workflow, resources: f.common,
     lifecycle: f.lifecycle, messages: { error: key => new Error(key) } }
-  const host = { ...operationHost,
+  const host = { ...operationHost, isCurrent: (project: runtime.ReviewProject, context: ProjectCommandContext) => projects.get(context.projectId) === project,
     project: (id: string) => { lookups++; return projects.get(id) },
     authorize: (context: ProjectCommandContext, command: string) => { policy.push({ context, command }); return allowed } }
   return { ...f, projects, policy, host, operations: runtime.createReviewOperations(operationHost),

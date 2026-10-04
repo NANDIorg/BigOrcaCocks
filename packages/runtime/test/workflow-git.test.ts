@@ -42,8 +42,8 @@ beforeEach(() => {
     store,
     repoRoot: repo,
     run: () => ({ roles: DEFAULT_ROLES }),
-    startWorker(taskId, opts) {
-      enterWork(deps, taskId)
+    async startWorker(taskId, opts) {
+      await enterWork(deps, taskId)
       const t = task(taskId)
       // Как startWorker (worker.ts): ветка и worktree, уже назначенные нодой git, — приоритет над orca/<id>.
       const branch = t.branch ?? `orca/${taskId}`
@@ -68,10 +68,10 @@ const events = (type: string, taskId?: string) => store.listEvents().filter((e) 
 const headOf = (worktree: string): string => git(worktree, 'symbolic-ref', '--short', 'HEAD')
 
 /** Рабочая задача в прогоне с графом: задача создана, `worker start` (enterWork → git → воркер) — как координатор. */
-function startTask(wf: Workflow, title = 'Логин через SSO'): Task {
+async function startTask(wf: Workflow, title = 'Логин через SSO'): Promise<Task> {
   const run = store.createRun('цель', undefined, wf)
   const t = store.createTask({ title, roleId: 'developer', runId: run.id })
-  deps.startWorker(t.id)
+  await deps.startWorker(t.id)
   return task(t.id)
 }
 
@@ -102,10 +102,10 @@ function graph(gitNode: Record<string, unknown>, opts: { errorTo?: 'human' | 'wo
 }
 
 /** worker `done` текущего запуска + доставка событий исполнителю (как подписка в index.ts). */
-function done(taskId: string): void {
+async function done(taskId: string): Promise<void> {
   const before = store.listEvents().length
   store.finishDispatch(task(taskId).dispatchId!, 'сделал', [])
-  handleWorkflowEvents(deps, store.listEvents().slice(before))
+  await handleWorkflowEvents(deps, store.listEvents().slice(before))
 }
 
 function commitFile(t: Task, file: string, text: string): void {
@@ -115,8 +115,8 @@ function commitFile(t: Task, file: string, text: string): void {
 }
 
 describe('нода «Git»: create_branch до первой «Работы»', () => {
-  it('worktree создаётся сразу на новой ветке от текущей ветки корня; orca/<id> не заводится; воркер стартует один раз', () => {
-    const t = startTask(graph({ operation: 'create_branch', branch: 'feature/{taskId}-{slug}' }))
+  it('worktree создаётся сразу на новой ветке от текущей ветки корня; orca/<id> не заводится; воркер стартует один раз', async () => {
+    const t = await startTask(graph({ operation: 'create_branch', branch: 'feature/{taskId}-{slug}' }))
     const branch = `feature/${t.id}-login-cherez-sso`
     assert.equal(t.branch, branch)
     assert.equal(t.worktree, taskWorktreePath(repo, t.id))
@@ -128,30 +128,31 @@ describe('нода «Git»: create_branch до первой «Работы»', (
     assert.equal(events('workflow_blocked', t.id).length, 0)
   })
 
-  it('merge после смены ветки сливает актуальную ветку и убирает её; в корне — коммиты задачи', () => {
-    const t = startTask(graph({ operation: 'create_branch', branch: 'feature/{taskId}' }))
+  it('merge после смены ветки сливает актуальную ветку и убирает её; в корне — коммиты задачи', async () => {
+    const t = await startTask(graph({ operation: 'create_branch', branch: 'feature/{taskId}' }))
+    const worktree = t.worktree!
     commitFile(t, 'sso.ts', 'export {}\n')
-    done(t.id)
+    await done(t.id)
     assert.equal(task(t.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'sso.ts')), true)
     assert.equal(branchExists(`feature/${t.id}`), false, 'своя ветка убрана как обычно')
-    assert.equal(existsSync(t.worktree!), false)
+    assert.equal(existsSync(worktree), false)
     assert.equal(task(t.id).branch, undefined)
     assert.match(git(repo, 'log', '--oneline', '-3'), /Merge orca task: Логин через SSO/)
   })
 
-  it('base: ветка создаётся от указанной, а не от текущей ветки корня', () => {
+  it('base: ветка создаётся от указанной, а не от текущей ветки корня', async () => {
     git(repo, 'branch', 'develop')
     git(repo, 'switch', '-q', 'develop')
     writeFileSync(path.join(repo, 'dev.txt'), 'dev\n')
     git(repo, 'add', '-A')
     git(repo, 'commit', '-qm', 'dev')
     git(repo, 'switch', '-q', 'master')
-    const t = startTask(graph({ operation: 'create_branch', branch: 'feature/x', base: 'develop' }))
+    const t = await startTask(graph({ operation: 'create_branch', branch: 'feature/x', base: 'develop' }))
     assert.equal(existsSync(path.join(t.worktree!, 'dev.txt')), true)
   })
 
-  it('без base при ветке глобальной задачи — ветка создаётся от неё, а не от текущей ветки корня', () => {
+  it('без base при ветке глобальной задачи — ветка создаётся от неё, а не от текущей ветки корня', async () => {
     git(repo, 'branch', 'feature/run')
     const runWt = path.join(tmp, 'run-wt')
     git(repo, 'worktree', 'add', '-q', runWt, 'feature/run')
@@ -161,22 +162,22 @@ describe('нода «Git»: create_branch до первой «Работы»', (
     const run = store.createRun('цель', undefined, graph({ operation: 'create_branch', branch: 'feature/{taskId}' }))
     store.setRunGit(run.id, { branch: 'feature/run', base: 'master', worktree: runWt })
     const t = store.createTask({ title: 'Подзадача', roleId: 'developer', runId: run.id })
-    deps.startWorker(t.id)
+    await deps.startWorker(t.id)
     assert.equal(existsSync(path.join(task(t.id).worktree!, 'run.txt')), true)
   })
 
-  it('detached HEAD корня: базой служит его коммит, а не слово HEAD', () => {
+  it('detached HEAD корня: базой служит его коммит, а не слово HEAD', async () => {
     const sha = git(repo, 'rev-parse', 'HEAD')
     git(repo, 'switch', '-q', '--detach')
-    const t = startTask(graph({ operation: 'create_branch', branch: 'feature/detached' }))
+    const t = await startTask(graph({ operation: 'create_branch', branch: 'feature/detached' }))
     assert.equal(git(t.worktree!, 'rev-parse', 'HEAD'), sha)
   })
 
-  it('ветка уже есть → исход error: feedback с текстом, запрос человеку с причиной, воркер не запущен', () => {
+  it('ветка уже есть → исход error: feedback с текстом, запрос человеку с причиной, воркер не запущен', async () => {
     git(repo, 'branch', 'feature/busy')
     const run = store.createRun('цель', undefined, graph({ operation: 'create_branch', branch: 'feature/busy' }))
     const t = store.createTask({ title: 'Занято', roleId: 'developer', runId: run.id })
-    assert.throws(() => deps.startWorker(t.id), /воркер не запущен: до работы задача остановилась на этапе «Не удалось»/)
+    await assert.rejects(async () => await deps.startWorker(t.id), /воркер не запущен: до работы задача остановилась на этапе «Не удалось»/)
     assert.equal(started.length, 0)
     assert.equal(task(t.id).stage?.nodeId, 'human')
     assert.match(task(t.id).feedback ?? '', /ветка «feature\/busy» уже существует/)
@@ -187,19 +188,19 @@ describe('нода «Git»: create_branch до первой «Работы»', (
     assert.equal(task(t.id).worktree, undefined, 'worktree не создан')
   })
 
-  it('error ведёт в «Работу»: воркер стартует на ветке orca/<id>, причина — в feedback (попадёт в промпт)', () => {
+  it('error ведёт в «Работу»: воркер стартует на ветке orca/<id>, причина — в feedback (попадёт в промпт)', async () => {
     git(repo, 'branch', 'feature/busy')
-    const t = startTask(graph({ operation: 'create_branch', branch: 'feature/busy' }, { errorTo: 'work' }))
+    const t = await startTask(graph({ operation: 'create_branch', branch: 'feature/busy' }, { errorTo: 'work' }))
     assert.equal(t.stage?.nodeId, 'work')
     assert.equal(t.branch, `orca/${t.id}`)
     assert.match(t.feedback ?? '', /уже существует/)
   })
 
-  it('нет перехода «error» → workflow_blocked с причиной git по-русски, задача остаётся на ноде', () => {
+  it('нет перехода «error» → workflow_blocked с причиной git по-русски, задача остаётся на ноде', async () => {
     git(repo, 'branch', 'feature/busy')
     const run = store.createRun('цель', undefined, graph({ operation: 'create_branch', branch: 'feature/busy' }, { errorTo: 'none' }))
     const t = store.createTask({ title: 'Занято', roleId: 'developer', runId: run.id })
-    assert.throws(() => deps.startWorker(t.id), /воркер не запущен/)
+    await assert.rejects(async () => await deps.startWorker(t.id), /воркер не запущен/)
     const blocked = events('workflow_blocked', t.id)
     assert.equal(blocked.length, 1)
     assert.match(String(blocked[0].payload.reason), /нет перехода «error»/)
@@ -207,23 +208,23 @@ describe('нода «Git»: create_branch до первой «Работы»', (
     assert.equal(task(t.id).stage?.nodeId, 'git')
   })
 
-  it('недопустимое имя ветки после подстановки — workflow_blocked (настройка), git не запускался', () => {
+  it('недопустимое имя ветки после подстановки — workflow_blocked (настройка), git не запускался', async () => {
     const run = store.createRun('цель', undefined, graph({ operation: 'create_branch', branch: 'feature/{slug}.' }))
     const t = store.createTask({ title: 'Плохое имя', roleId: 'developer', runId: run.id })
-    assert.throws(() => deps.startWorker(t.id), /воркер не запущен/)
+    await assert.rejects(async () => await deps.startWorker(t.id), /воркер не запущен/)
     const blocked = events('workflow_blocked', t.id)
     assert.match(String(blocked[0].payload.reason), /имя ветки «feature\/plohoe-imya\.» после подстановки недопустимо для git/)
     assert.equal(task(t.id).feedback, undefined)
     assert.equal(branchExists('feature/plohoe-imya.'), false)
   })
 
-  it('повторный заход (worker start на возвращённой задаче): create_branch на своей же ветке — не ошибка', () => {
-    const t = startTask(graph({ operation: 'create_branch', branch: 'feature/again' }))
+  it('повторный заход (worker start на возвращённой задаче): create_branch на своей же ветке — не ошибка', async () => {
+    const t = await startTask(graph({ operation: 'create_branch', branch: 'feature/again' }))
     commitFile(t, 'a.ts', 'a\n')
     // Задача ушла на «Работе» в done, воркер перезапущен вручную: этап сбрасывается на первый (git).
     store.finishDispatch(task(t.id).dispatchId!, 'сделал', [])
     store.moveTask(t.id, store.columnId('ready'))
-    const entered = enterWork(deps, t.id)
+    const entered = await enterWork(deps, t.id)
     assert.deepEqual(entered, {})
     assert.equal(task(t.id).stage?.nodeId, 'work')
     assert.equal(task(t.id).branch, 'feature/again')
@@ -233,34 +234,35 @@ describe('нода «Git»: create_branch до первой «Работы»', (
 })
 
 describe('нода «Git»: checkout', () => {
-  it('существующая ветка: worktree на ней, ветка «чужая» — после merge она остаётся, слияние идёт в текущую ветку корня', () => {
+  it('существующая ветка: worktree на ней, ветка «чужая» — после merge она остаётся, слияние идёт в текущую ветку корня', async () => {
     git(repo, 'branch', 'develop')
-    const t = startTask(graph({ operation: 'checkout', branch: 'develop' }))
+    const t = await startTask(graph({ operation: 'checkout', branch: 'develop' }))
     assert.equal(headOf(t.worktree!), 'develop')
     assert.equal(t.branch, 'develop')
     assert.equal(t.branchForeign, true)
     assert.equal(branchExists(`orca/${t.id}`), false)
     commitFile(t, 'on-develop.ts', 'x\n')
-    done(t.id)
+    const worktree = t.worktree!
+    await done(t.id)
     assert.equal(task(t.id).status, 'done')
     assert.equal(existsSync(path.join(repo, 'on-develop.ts')), true, 'влито в master')
     assert.equal(branchExists('develop'), true, 'чужую ветку уборка не удаляет')
-    assert.equal(existsSync(t.worktree!), false)
+    assert.equal(existsSync(worktree), false)
     assert.equal(task(t.id).branchForeign, undefined)
     assert.equal(task(t.id).branch, undefined)
   })
 
-  it('ветки нет → error', () => {
+  it('ветки нет → error', async () => {
     const run = store.createRun('цель', undefined, graph({ operation: 'checkout', branch: 'nope' }))
     const t = store.createTask({ title: 'Нет ветки', roleId: 'developer', runId: run.id })
-    assert.throws(() => deps.startWorker(t.id), /воркер не запущен/)
+    await assert.rejects(async () => await deps.startWorker(t.id), /воркер не запущен/)
     assert.match(task(t.id).feedback ?? '', /ветки «nope» нет/)
   })
 
-  it('ветка занята другим worktree (текущая ветка корня) → error, а не тихое переключение', () => {
+  it('ветка занята другим worktree (текущая ветка корня) → error, а не тихое переключение', async () => {
     const run = store.createRun('цель', undefined, graph({ operation: 'checkout', branch: 'master' }))
     const t = store.createTask({ title: 'Занято корнем', roleId: 'developer', runId: run.id })
-    assert.throws(() => deps.startWorker(t.id), /воркер не запущен/)
+    await assert.rejects(async () => await deps.startWorker(t.id), /воркер не запущен/)
     assert.match(task(t.id).feedback ?? '', /^git worktree add .*master/)
     assert.equal(task(t.id).branchForeign, undefined)
   })
@@ -290,23 +292,23 @@ describe('нода «Git»: commit и push в середине графа', () =
     ]
   })
 
-  it('пушит коммит на remote и выставляет upstream; конец без мержа сохраняет ветку', () => {
+  it('пушит коммит на remote и выставляет upstream; конец без мержа сохраняет ветку', async () => {
     const remote = path.join(tmp, 'remote.git')
     execFileSync('git', ['init', '-q', '--bare', remote])
     git(repo, 'remote', 'add', 'origin', remote)
-    const t = startTask(pushGraph())
+    const t = await startTask(pushGraph())
     writeFileSync(path.join(t.worktree!, 'draft.ts'), 'draft\n')
-    done(t.id)
+    await done(t.id)
     assert.equal(task(t.id).status, 'done')
     assert.match(git(remote, 'log', '--format=%s', `orca/${t.id}`), /feat: Логин через SSO \(task_/)
     assert.equal(git(repo, 'config', `branch.orca/${t.id}.remote`), 'origin', 'upstream выставлен')
     assert.equal(branchExists(`orca/${t.id}`), true)
   })
 
-  it('нет remote → error: запрос человеку с текстом git; «Принять» после исправления повторяет push', () => {
-    const t = startTask(pushGraph())
+  it('нет remote → error: запрос человеку с текстом git; «Принять» после исправления повторяет push', async () => {
+    const t = await startTask(pushGraph())
     commitFile(t, 'a.ts', 'a\n')
-    done(t.id)
+    await done(t.id)
     assert.equal(task(t.id).stage?.nodeId, 'human')
     const request = store.pendingRequests().find((r) => r.taskId === t.id)!
     assert.match(request.body ?? '', /Git-операция «push» не удалась/)
@@ -316,13 +318,13 @@ describe('нода «Git»: commit и push в середине графа', () =
     const remote = path.join(tmp, 'remote.git')
     execFileSync('git', ['init', '-q', '--bare', remote])
     git(repo, 'remote', 'add', 'origin', remote)
-    resolveHumanRequest(store, repo, request.id, { action: 'accept' }, deps.startWorker, (r) => approvalResolved(deps, r))
+    await resolveHumanRequest(store, repo, request.id, { action: 'accept' }, deps.startWorker, async (r) => await approvalResolved(deps, r))
     assert.equal(task(t.id).status, 'done')
     assert.match(git(remote, 'log', '--format=%s', `orca/${t.id}`), /add a.ts/)
   })
 
-  it('commit: нечего коммитить — тоже ok; изменения коммитятся от orca-board', () => {
-    const t = startTask(pushGraph('origin'))
+  it('commit: нечего коммитить — тоже ok; изменения коммитятся от orca-board', async () => {
+    const t = await startTask(pushGraph('origin'))
     assert.equal(git(t.worktree!, 'status', '--porcelain'), '')
     const before = git(t.worktree!, 'rev-list', '--count', 'HEAD')
     gitCommit(t.worktree!, 'noop')
@@ -332,7 +334,7 @@ describe('нода «Git»: commit и push в середине графа', () =
     assert.equal(git(t.worktree!, 'log', '--format=%an %s', '-1'), 'orca-board feat: b')
   })
 
-  it('push до создания ветки (нода первой): error «нет ветки», а не падение', () => {
+  it('push до создания ветки (нода первой): error «нет ветки», а не падение', async () => {
     const wf: Workflow = {
       version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [node({ id: 'start', type: 'start' }), node({ id: 'push', type: 'git', operation: 'push' } as never), node({ id: 'work', type: 'work' }), node({ id: 'human', type: 'human' })],
@@ -344,13 +346,13 @@ describe('нода «Git»: commit и push в середине графа', () =
     }
     const run = store.createRun('цель', undefined, wf)
     const t = store.createTask({ title: 'Рано', roleId: 'developer', runId: run.id })
-    assert.throws(() => deps.startWorker(t.id), /воркер не запущен/)
+    await assert.rejects(async () => await deps.startWorker(t.id), /воркер не запущен/)
     assert.match(task(t.id).feedback ?? '', /у задачи нет ветки/)
   })
 })
 
 describe('нода «Git»: смена ветки посреди работы и защита данных', () => {
-  it('create_branch на грязном worktree → error, ветка не переключена, правки на месте', () => {
+  it('create_branch на грязном worktree → error, ветка не переключена, правки на месте', async () => {
     const wf: Workflow = {
       version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
@@ -367,10 +369,10 @@ describe('нода «Git»: смена ветки посреди работы и
     }
     const run = store.createRun('цель', undefined, wf)
     const t0 = store.createTask({ title: 'Поздно', roleId: 'developer', runId: run.id })
-    deps.startWorker(t0.id)
+    await deps.startWorker(t0.id)
     const t = task(t0.id)
     writeFileSync(path.join(t.worktree!, 'wip.ts'), 'wip\n')
-    done(t.id)
+    await done(t.id)
     assert.equal(task(t.id).stage?.nodeId, 'human')
     assert.match(task(t.id).feedback ?? '', /незакоммиченные изменения/)
     assert.equal(headOf(t.worktree!), `orca/${t.id}`)
@@ -378,7 +380,7 @@ describe('нода «Git»: смена ветки посреди работы и
     assert.equal(task(t.id).branch, `orca/${t.id}`)
   })
 
-  it('create_branch посреди работы на чистом worktree: Task.branch обновлена, дальше review/merge идут по ней', () => {
+  it('create_branch посреди работы на чистом worktree: Task.branch обновлена, дальше review/merge идут по ней', async () => {
     const wf: Workflow = {
       version: WORKFLOW_VERSION_TASK_SCOPE,
       nodes: [
@@ -396,9 +398,9 @@ describe('нода «Git»: смена ветки посреди работы и
     }
     const run = store.createRun('цель', undefined, wf)
     const t0 = store.createTask({ title: 'Середина', roleId: 'developer', runId: run.id })
-    deps.startWorker(t0.id)
+    await deps.startWorker(t0.id)
     commitFile(task(t0.id), 'mid.ts', 'x\n')
-    done(t0.id)
+    await done(t0.id)
     assert.equal(task(t0.id).status, 'done')
     // Без `base` ветвимся от места, где стоит worktree: коммит с orca/<id> уехал в release/<id> и слит.
     assert.equal(existsSync(path.join(repo, 'mid.ts')), true)

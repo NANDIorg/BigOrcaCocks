@@ -92,10 +92,10 @@ Git-операции также находятся в runtime: `createGitOperati
 `main/git.ts` сохраняет прежние OrcaError и именованные exports для Desktop.
 MergeError/GitOpError общие, поэтому существующие проверки `instanceof` работают.
 
-Это перенос реализации, а не новый async service: синхронные Git-операции workflow
-и очередь fetch/pull/checkout по переданному root пока сохранены. До серверной
-готовности требуется async Git, сериализация по canonical commonDir и EffectToken
-после await. Runtime не задаёт язык клиентов и не импортирует Desktop dictionaries.
+Git effects workflow, веток прогона и project mutations выполняются асинхронно через
+общий process service и очередь canonical commonDir. EffectScope проверяет исходную
+позицию после await; серверная готовность дополнительно требует persistent reconciliation
+и headless composition. Runtime не задаёт язык клиентов и не импортирует Desktop dictionaries.
 
 Границы runtime проверяются `test/import-boundaries.test.ts`: AST проходит все
 production modules и транзитивные общие зависимости, включая type-only и dynamic
@@ -216,8 +216,9 @@ source workflow; прямые изменения legacy scope — human/cli/app 
 Возврат run scope решает approval и идёт по reject, сохраняя живого координатора;
 legacy task scope закрывает прежний PTY и запускает новый. Если решение уже durable,
 failed launch сохраняет feedback/referenced attachments; до решения файлы удаляются
-по прежнему rollback. Неоднозначный fork approval не меняет lanes. Это синхронный
-application API, без transaction/effect tokens/reconciliation и очереди async Git.
+по прежнему rollback. Неоднозначный fork approval не меняет lanes. Effect methods
+application API возвращают Promise; workflow и сокет ожидают их до ответа. Stop/read-only
+core methods остаются синхронными. Persistent reconciliation ещё не завершена.
 
 Desktop `main/coordinator-commands.ts` использует общий project adapter: проверенный
 caller прежде единственного capture activeId, старые четыре IPC signatures/defaults
@@ -248,9 +249,8 @@ Desktop предоставляет реальные isAlive/killPty, native back
 
 `main/worker-commands.ts` сохраняет один worker:start IPC и его DTO/defaults;
 caller проверяется раньше единственного capture activeId. Main оставляет project
-ports, legacy selection и lifecycle subscriptions, socket использует общий sync
-перед ответом человеку. Это ещё синхронные операции: async Git/queues/effect tokens,
-remote PTY leases и полный headless host идут дальше.
+ports, legacy selection и lifecycle subscriptions; socket ожидает общий WorkerOperations
+перед ответом человеку. Writer leases уже общие, полный headless host следует дальше.
 
 ### Общие команды review и запросов человека
 
@@ -380,37 +380,37 @@ POSIX использует detached group, Windows — taskkill дерева с�
 идемпотентен, новые вызовы отклоняются; отмена сохраняется отдельно от Git timeout.
 Composition может передать service третьим аргументом `createGitOperations`.
 
-Весь путь ProjectGitCommands теперь использует async metadata: `projectBranchInfoAsync`
-и `hasCommitsAsync`, включая проверки до mutation и формирование результата после неё.
-Scope guard повторяется после ожидания и перед следующим Git effect; отмена process
-не превращается в «не репозиторий»/«нет upstream»/timeout. В Desktop старые sync exports
-сохранены для ещё не перенесённых workflow callers; отдельного Git owner не создаётся.
+ProjectGitCommands использует async metadata (`projectBranchInfoAsync`/`hasCommitsAsync`)
+до и после mutation. GitWorkflowService даёт scoped `transaction`/`read` на том же
+GitProcessService/commonDir queue; многошаговые commit/review/merge/cleanup занимают
+очередь один раз. Закрытый port и обращения к чужому repo отклоняются. Ошибка review diff
+(например, несвязанная история) не маскируется как отсутствие refs или пустой review.
 
-`GitWorkflowService.transaction` даёт scoped async port для последовательности
-branch/worktree/commit/review/merge/cleanup, на том же executor и commonDir queue.
-Методы внутри callback не занимают очередь повторно; guard проверяется после каждого
-subprocess и перед следующим effect. Scoped port закрывается при завершении callback
-и отклоняет обращение к другому repo. `read` не удерживает mutation queue. Review
-проверяет отсутствие refs отдельно: ошибка diff (например, несвязанная история)
-не превращается в пустой список коммитов с возможной потерей ветки при cleanup. Desktop
-экспортирует `workflowGit` из прежнего singleton; переключение legacy consumers и
-EffectToken/reconciliation продолжаются в B.
+EffectScope захватывает project/store/run/task identity и immutable node/visit/lane/
+forkVisit/dispatch. После await scope повторно проверяет registration/policy и позицию;
+синхронный commit задаёт собственный status source. Stop task/run отменяет подготовку
+до первого dispatch и закрывает принадлежащие ей Git hooks. Соседний lane не отменяет
+актуальный путь. Token описывает позицию, полномочия заново проверяет host.
 
-`createEffectScopeService` захватывает project/store/run/task identity и значения
-node/visit/lane/forkVisit/dispatch отдельно от изменяемых объектов core. Scope
-проверяет позицию перед/после await, а store/native commit выполняет синхронно с
-собственным status source. Явная отмена task/run и owner stop abort-ят scoped Git;
-смена соседнего lane не отменяет текущий. Token — только immutable описание, не
-полномочие. Git transaction/read используют тот же service/queue. Legacy consumer
-перенос и persistent reconciliation продолжаются следующим шагом B.
+Общий async RunBranchServices готовит/восстанавливает feature worktree, выполняет merge
+и nonforce cleanup. Root branch, detached base, dirty worktree и feature ref после
+конфликта сохраняются. Параллельные подготовки одного run объединены с индивидуальными
+domain guards; run.git отдельно защищает branch port. RunBranchSync пропускает живые/
+возобновлённые прогоны и защищён от observer reentry. Прежний sync run-branch алгоритм удалён.
 
-`createAsyncRunBranchServices` использует этот же scoped port для feature preparation,
-restore, merge и nonforce cleanup. Проверенные алгоритмы сохраняют root branch,
-detached base, dirty worktree и feature ref после конфликта. Параллельная подготовка
-одного run объединяется, но каждый caller проверяет свой domain token. Run Git metadata
-имеет отдельный guard: инициализация общей ветки не отменяет актуальный соседний lane.
-`RunBranchSync` пропускает живые/возобновлённые прогоны и защищён от observer reentry.
-Это готовый private async port; legacy consumers подключаются следующим шагом.
+Workers, coordinator, review, Task/Run workflow, attachments и их commands используют эти
+async services. Desktop IPC adapters и agent socket ожидают Promise до проекции DTO/ответа.
+Явный context берётся до await; workflow сохраняет `workflow`, прямое решение — автора
+вызова. Отложенные события и таймеры обрабатывают rejection и пропускают устаревшие ошибки.
+Новые RunAction scopes захватываются до возврата Promise и до ожидания соседнего пути;
+idle settlement заранее читает HEAD и фильтрует изменившиеся позиции синхронным predicate.
+Entry commit marker остаётся best-effort только при native Git-read error, после guard.
+
+Вложения ожидают весь apply, включая async запуск после durable решения: при актуальной
+позиции папка без ссылок удаляется при отказе; referenced feedback/stageInput сохраняются. Удаление global
+после durable core phase отменяет run и ожидает queued nonforce cleanup; повторно созданный
+run не убирается. Уже случившийся native effect при отмене не откатывается. Persistent
+reconciliation и оставшиеся sync Git reads profile/files — следующая часть B.
 
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи
@@ -584,7 +584,8 @@ common.none/role.missing.* остаются сообщениями для пер
 при отказе. Явный role override проверяется до входа, включая Git. Без override
 Git может определить роль исходом ok/error: операция и её записи сохраняются,
 но фактическая роль проверяется до перехода к work/ask. Альтернативные агенты
-не проверяются заранее; асинхронная подготовка с EffectToken ещё предстоит.
+не проверяются заранее. Асинхронная подготовка проверяет EffectScope до запуска;
+синхронный onPrepared захватывает конечную позицию до возврата Promise вызывающему.
 
 Desktop `main/agents.ts` создаёт singleton discovery/selection без overrides,
 сохраняет прежние exports и assertion signature. AgentInfo/supportsExtraArgs,
@@ -751,7 +752,9 @@ Electron main ───── node-pty ───── PTY: claude (коорди
     | `workflow` | `execute` и `handleWorkflowEvents` в `src/main/workflow.ts`, `advanceRun`, `handleRunWorkflowEvents`, `handleRunRequest` в `src/main/workflow-run.ts` — колонку двигает граф |
     | `app` | всё остальное: `promoteReady` (backlog → ready), автозакрытие в `commit`, смерть PTY, миграции |
 
-    Ограничение: источник действует только в синхронной части вызова — смены статуса после `await` пишутся как `app`.
+    Источник действует только в синхронной части вызова. Общие async operations захватывают автора
+    до ожидания и задают его заново внутри guarded store phase; переходы графа используют `workflow`.
+    `withStatusSource` не удерживается через Promise, поэтому соседние вызовы не наследуют чужого автора.
     Миграция `migrateStatusHistory` (первой в конструкторе, чтобы переходы остальных миграций легли после неё):
     задаче и прогону без истории — одна запись текущей колонки с `migrated: true` и `at = updatedAt`. Прошлые
     переходы не восстановить, а пустая история читалась бы как «статус не менялся»; прогон без `status` получает
@@ -1322,7 +1325,8 @@ Store хранит позицию и решает, куда задача пер�
   операции убирает поля, которых у новой операции нет (иначе невидимое значение давало бы предупреждение
   `gitParamIgnored`), пустое необязательное поле удаляет, пустое обязательное оставляет строкой — его подсветит
   валидация. Порты `ok`/`error`: `ok` подписан «выполнено» (`wfOutcomeLabel`, у мержа тот же `ok` — «слито»), `error`
-  красный, как `reject`/`conflict`. Поля «Колонка» нет (`hasColumn`): git выполняется синхронно, задача на ноде не стоит.
+  красный, как `reject`/`conflict`. Поля «Колонка» нет (`hasColumn`): после async Git исполнитель
+  идёт по исходу, при отказе задача остаётся на ноде с `workflow_blocked`.
   Подпись на холсте — «операция: ветка/сообщение/remote» (`gitNodeSubtitle`). Пилюля этапа на карточке (`stageLabel`) —
   название ноды, как у остальных этапов.
 - **«Решение ИИ» в редакторе**: `decision` — в палитре и select «Тип», в пути подзадачи нет (`WF_SUBTASK_FORBIDDEN_TYPES`). Новая нода —
@@ -2534,8 +2538,8 @@ IPC `workflowAssistant.save` сохраняет Promise<void>.
   `git.notRepo`, `git.dirtyTree` (checkout), `git.notFastForward` и `git.noUpstream` (pull), `git.branchBusy` (ветка в другом worktree), `git.workersActive` (checkout при живых
   воркерах/координаторах проекта), `git.branchNotFound`, `git.opFailed` (прочее: сеть, конфликт; параметры `command`, `error` — stderr git, таймаут — «не ответил за N с»).
   Реализация — `src/main/git.ts` («git корня проекта»): все вызовы через `execFile('git', [...])` без shell, **асинхронные** (`fetch` идёт до 120 с,
-  синхронный вызов заморозил бы окно и терминалы), `GIT_TERMINAL_PROMPT=0`, таймаут 120 с для сети и 30 с для локальных команд; операции над одним
-  корнем идут по очереди (`serial`). `projectBranches` — `for-each-ref` (локальные, `refs/remotes` без `*/HEAD`), `worktree list --porcelain`
+  синхронный вызов заморозил бы окно и терминалы), `GIT_TERMINAL_PROMPT=0`, таймаут 120 с для сети и 30 с для локальных команд; операции связанных worktree идут по общей
+  очереди canonical commonDir (`serial`), независимые репозитории выполняются параллельно. `projectBranches` — `for-each-ref` (локальные, `refs/remotes` без `*/HEAD`), `worktree list --porcelain`
   (`busy`), `for-each-ref %(upstream:short/track)` + `rev-list --left-right --count` (upstream, ahead/behind, `[gone]`), `status --porcelain` (`dirty`).
   `projectPull` — не голый `git pull`, а `fetch <remote upstream>` + `merge --ff-only`: `git.notFastForward` определяется по факту (HEAD — не предок
   upstream), а не по тексту git, зависящему от локали; правки в дереве, мешающие обновлению, дают `git.opFailed`. `checkoutProjectBranch` проверяет по порядку:
@@ -3771,7 +3775,7 @@ electron (`net.fetch` учитывает системный прокси). `macU
 | Уведомления | — | `app.setAppUserModelId('orca-board')` | `src/main/index.ts` |
 | Системное меню | macOS: меню приложения, службы, скрытие, стандартные роли окон; значок Dock | настройки и выход в «Файл», «О приложении» в справке; значок окна | `applicationMenuTemplate()` — `src/main/app-menu.ts`; `src/main/index.ts` |
 | Пути картинок и файлов к замечаниям | `path.join`, абсолютные пути в промпте | то же: разделители `\`, пробелы — путь в обратных кавычках; имя файла — ASCII-слаг ≤ 40 (`MAX_PATH`, кодировка консоли); до 8 путей в стартовом промпте (system prompt координатора — в файле, тест с запасом ≥ 2 КБ в `attachments.test.ts`) | `saveReturnImages` — `src/main/attachments.ts` |
-| Git process | async `spawn('git', args, {shell:false, detached:true})`; отмена/таймаут завершают собственную process group | `git.exe` по PATH без shell; taskkill `/PID /T /F` завершает owned дерево hooks | `packages/runtime/src/git-process.ts`; старые sync workflow calls пока в `git.ts` |
+| Git process | async `spawn('git', args, {shell:false, detached:true})`; отмена/таймаут завершают собственную process group | `git.exe` по PATH без shell; taskkill `/PID /T /F` завершает owned дерево hooks | `packages/runtime/src/git-process.ts`; workflow использует scoped `git-workflow.ts` |
 | Каталог файлов (`files:*`, резолвер путей `docs:*`) | путь от renderer — только `/`; `\` в сегменте — отказ | то же, плюс отказ на `:` (`C:x`, потоки NTFS); `.git` без учёта регистра и хвостовых точек/пробелов (`.git.`); junction — `Dirent.isSymbolicLink()`, не раскрывается; путь > 260 знаков — `files.readFailed`. На живой Windows не проверялось | `splitSafeSegments()`, `listProjectDir()` — `src/main/project-files.ts` |
 | Обновление приложения | свой установщик: zip из GitHub Releases по `latest-mac.yml`, sha512 + `codesign`, detached `/bin/sh`-скрипт подменяет `.app` (Squirrel.Mac не работает с ad-hoc подписью); в dmg, App Translocation и без права записи — `manual-download` | NSIS — electron-updater (`quitAndInstall`); portable (`PORTABLE_EXECUTABLE_FILE`) — `manual-download`: проверка релиза по GitHub API, скачивает человек | `createPlatformUpdater()` — `src/main/updaterBackend.ts`; `src/main/macUpdater.ts`, `src/main/macUpdateLogic.ts`, `src/main/winUpdater.ts`; раздел «Обновление» |
 | Попап `<select>` | нативное меню ОС, CSS опций почти не влияет | рисует Chromium по CSS: фон попапа — computed background select (прозрачный → системный белый), цвета — от `option`; без `color-scheme` схема светлая | `color-scheme: dark` на `:root`, фон и цвет `option`/`optgroup` выпадающих select (не `multiple`/`size`) токенами темы — `renderer/src/styles.css` |
@@ -3996,8 +4000,8 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
     run.stage.visits}` и пишет счётчики обратно (`moveLane`). Коллизий нет только потому, что валидатор держит области путей
     непересекающимися (`forkSharedNode`); отдельные `visits` на путь разошлись бы с `Task.stageOf.visit` и `condition attempts`.
 - **Git-worktree ветки глобальной задачи — один на все пути разветвления** (`RunGit.worktree`, `run-branch.ts`). Слияния
-  подзадач разных путей не гоняются за index только потому, что git в main синхронный (`execFileSync`, один процесс);
-  асинхронный мерж (раздел «Ограничения» `docs/workflow.md`) потребует блокировки по ветке прогона. `gate` внутри пути видит в
+  подзадач разных путей сериализует общая canonical commonDir queue; compound merge/cleanup занимает её один раз.
+  Native Git не блокирует event loop main. `gate` внутри пути видит в
   ветке коммиты соседнего пути — отсюда раздел «Путь разветвления» в спеке проверки («работу соседних путей не оценивай»), а
   смысловые конфликты ловит `gate` после `join`. Дифф этапа пути (`StageChange.commit..HEAD`) не изолирован.
 
@@ -4228,10 +4232,10 @@ agent/model/effort его `coordinator`, нет и её — `DEFAULT_ASSISTANT_S
   панелями, идущие позже, перекрывают бэкдроп (так диалог создания группы оказался «ниже» глобальных задач).
   Диалоги, вызываемые из вложенных компонентов, рисуй порталом в `body` (`createPortal`, как `PopupMenu` и
   `GroupDialogs.tsx`) и задавай бэкдропу явный `z-index` (группы — 40: выше меню 30 и входящих 21, ниже тоста 50).
-- Нода `git` выполняет git синхронно в main (`execFileSync`), как и остальной git приложения. `push` может идти до 120 с
-  (`PUSH_TIMEOUT_MS` в `git.ts`) — всё это время main не отвечает; `GIT_TERMINAL_PROMPT=0` не даёт git ждать пароль в
-  терминале, которого нет. Ssh-ключ с passphrase без агента даст `error`, а не запрос. Асинхронный `push` потребует
-  переделать `executeSteps` в async — пока не делали.
+- Нода `git` выполняется асинхронно через общий scoped port. `push` может идти до 120 с,
+  сохраняя работу event loop и независимых repo. `GIT_TERMINAL_PROMPT=0` запрещает ожидание пароля:
+  SSH-ключ с passphrase без агента даст `error`. После subprocess guard проверяется до следующего эффекта;
+  stale/forbidden не превращаются в feedback или блокировку нового захода.
 - Ветку задачи не выводи из `orca/${task.id}`: нода `git` меняет `Task.branch`, а `startWorker`, `review`, гейты и `merge`
   читают её из задачи. Удаляя ветку при уборке, смотри на `Task.branchForeign`.
 

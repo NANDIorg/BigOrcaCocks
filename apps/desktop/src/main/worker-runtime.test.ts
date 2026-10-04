@@ -67,16 +67,16 @@ async function nativeScenario(): Promise<void> {
     ...messages, text: key => key, displayError: error => error instanceof Error ? error.message : String(error)
   } })
   const deps: RunWorkflowDeps = { store, repoRoot: repo, run: () => ({ roles: DEFAULT_ROLES, workflow }),
-    startWorker(taskId) { workflows.task.enterWork(deps, taskId); return services.startWorker(store, repo, ctx, taskId) },
-    isAlive: sessions.isAlive, startCoordinator: runId => { services.startCoordinator(store, repo, ctx, '', undefined, undefined, [], runId) },
-    mergeTarget: task => resources.mergeTarget(store, repo, task) }
+    async startWorker(taskId) { await workflows.task.enterWork(deps, taskId); return await services.startWorker(store, repo, ctx, taskId) },
+    isAlive: sessions.isAlive, startCoordinator: async runId => { await services.startCoordinator(store, repo, ctx, '', undefined, undefined, [], runId) },
+    mergeTarget: async task => await resources.mergeTarget(store, repo, task) }
   const binding = workflows.forProject(deps)
   try {
-    const coordinator = services.startCoordinator(store, repo, ctx, 'Native feature')
+    const coordinator = await services.startCoordinator(store, repo, ctx, 'Native feature')
     await waitFor(() => sessions.ptyTail(coordinator.ptyId).includes('ROLE:coordinator'))
     const task = store.createTask({ title: 'Native task', roleId: 'developer', runId: coordinator.runId })
-    workflows.task.enterWork(deps, task.id)
-    const worker = services.startWorker(store, repo, ctx, task.id)
+    await workflows.task.enterWork(deps, task.id)
+    const worker = await services.startWorker(store, repo, ctx, task.id)
     await waitFor(() => sessions.ptyTail(worker.ptyId).includes(`TASK:${task.id}`))
     assert.equal(store.getTask(task.id)?.status, 'in_progress')
     let observations = 0
@@ -88,18 +88,18 @@ async function nativeScenario(): Promise<void> {
     git(worker.worktree, 'add', 'result.md'); git(worker.worktree, 'commit', '-qm', 'result')
     const before = store.listEvents().length
     store.finishDispatch(worker.dispatchId, 'Completed', ['result.md'])
-    binding.handleEvents(store.listEvents().slice(before))
+    await binding.handleEvents(store.listEvents().slice(before))
     assert.equal(store.getTask(task.id)?.stage?.nodeId, 'human')
     const request = store.pendingRequests().find(r => r.taskId === task.id)!
     assert.ok(request)
     assert.equal(store.getTask(task.id)?.status, 'needs_input')
-    const review = workflows.review.getReview(store, repo, task.id)
+    const review = await workflows.review.getReview(store, repo, task.id)
     assert.equal(review.base, store.getRun(coordinator.runId)?.git?.branch)
     assert.match(review.stat, /result\.md/)
     sessions.writePty(worker.ptyId, 'finish\r')
     await waitFor(() => !sessions.isAlive(worker.ptyId))
     assert.equal(store.snapshot().dispatches.find(d => d.id === worker.dispatchId)?.outcome, 'done')
-    binding.resolveHumanRequest(request.id, { action: 'accept' })
+    await binding.resolveHumanRequest(request.id, { action: 'accept' })
     assert.equal(store.getRequest(request.id)?.status, 'resolved')
     assert.equal(store.getTask(task.id)?.status, 'done')
     assert.equal(readFileSync(join(store.getRun(coordinator.runId)!.git!.worktree!, 'result.md'), 'utf8'), 'native result\n')

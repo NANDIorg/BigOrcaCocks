@@ -3,7 +3,13 @@ import { CommandError } from './project-commands.ts'
 import type { GitWorkflowReadRepository, GitWorkflowRepository, GitWorkflowService } from './git-workflow.ts'
 
 export interface EffectProject { id: string; root: string; store: TaskStore; isCurrent?: () => boolean }
-export interface EffectTarget { taskId?: string; runId?: string; nodeId?: string; laneId?: string }
+export interface EffectTarget {
+  taskId?: string; runId?: string; nodeId?: string; laneId?: string
+  /** Уборка уже завершённой служебной задачи после перехода родителя: её dispatch остаётся обязательным. */
+  parentPosition?: false
+  /** Делегированный launcher меняет только Git-ресурсы; позиция и dispatch по-прежнему обязательны. */
+  taskResources?: false
+}
 export interface EffectOptions { signal?: AbortSignal; source?: StatusSource }
 /** Описание позиции не даёт полномочий: guard принадлежит захватившему её owner scope. */
 export interface EffectToken {
@@ -34,8 +40,8 @@ export interface EffectScopeService {
   stop(): void
 }
 
-function taskState(task: Task): string {
-  return JSON.stringify([task.status, task.runId, task.dispatchId, task.worktree, task.branch, task.branchForeign,
+function taskState(task: Task, bindResources = true): string {
+  return JSON.stringify([task.status, task.runId, task.dispatchId, ...(bindResources ? [task.worktree, task.branch, task.branchForeign] : []),
     task.stage?.nodeId, task.stage ? task.stage.visits[task.stage.nodeId] ?? 1 : undefined,
     task.stageOf?.nodeId, task.stageOf?.visit])
 }
@@ -78,9 +84,10 @@ export function createEffectScopeService(): EffectScopeService {
       if (task && target.nodeId !== undefined && task.stage?.nodeId !== target.nodeId) throw new CommandError('command.conflict', { reason: 'Этап задачи изменился' })
       if (!run && target.laneId !== undefined) throw new CommandError('command.conflict', { reason: 'У задачи нет пути прогона' })
       if (!task && !run && target.nodeId !== undefined) throw new CommandError('command.conflict', { reason: 'У эффекта нет этапа' })
-      const position = run ? selectPosition(run, task ? task.stageOf?.nodeId : target.nodeId, target.laneId) : undefined
+      const bindPosition = !task || target.parentPosition !== false
+      const position = run && bindPosition ? selectPosition(run, task ? task.stageOf?.nodeId : target.nodeId, target.laneId) : undefined
       const lane = position?.lane ? run?.lanes?.find(l => l.id === position.lane) : undefined
-      const taskSnapshot = task ? taskState(task) : undefined
+      const taskSnapshot = task ? taskState(task, target.taskResources !== false) : undefined
       const runSnapshot = run ? runState(run, position) : undefined
       const controller = new AbortController()
       const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal
@@ -94,8 +101,8 @@ export function createEffectScopeService(): EffectScopeService {
       const guard = () => {
         if (!open || stopped || signal.aborted || project.id !== projectId || project.root !== repoRoot || project.store !== store
           || project.isCurrent?.() === false) stale(projectId)
-        if (task && (store.getTask(task.id) !== task || taskState(task) !== taskSnapshot)) stale(projectId)
-        if (run && (store.getRun(run.id) !== run || runState(run, positionAt(run, position?.lane)) !== runSnapshot)) stale(projectId)
+        if (task && (store.getTask(task.id) !== task || taskState(task, target.taskResources !== false) !== taskSnapshot)) stale(projectId)
+        if (run && (store.getRun(run.id) !== run || runState(run, bindPosition ? positionAt(run, position?.lane) : undefined) !== runSnapshot)) stale(projectId)
       }
       async function wait<T>(operation: () => Promise<T>): Promise<T> {
         guard(); let value!: T; let failure: unknown; let failed = false

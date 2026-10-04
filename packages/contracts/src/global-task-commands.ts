@@ -14,7 +14,7 @@ export interface GlobalTaskCommands {
   update(context: ProjectCommandContext, globalTaskId: string, patch: GlobalTaskPatch): GlobalTask
   changeType(context: ProjectCommandContext, globalTaskId: string, typeId: string): GlobalTask
   move(context: ProjectCommandContext, globalTaskId: string, status: string): GlobalTask
-  remove(context: ProjectCommandContext, globalTaskId: string, options?: { cascade?: boolean }): { deleted: string; tasks: string[] }
+  remove(context: ProjectCommandContext, globalTaskId: string, options?: { cascade?: boolean }): Promise<{ deleted: string; tasks: string[] }>
   tasks(context: ProjectCommandContext, globalTaskId: string): Task[]
   createTask(context: ProjectCommandContext, globalTaskId: string, input: SubtaskInput): Task
   addImages(context: ProjectCommandContext, globalTaskId: string, images?: AttachmentInput[] | null): GlobalTask

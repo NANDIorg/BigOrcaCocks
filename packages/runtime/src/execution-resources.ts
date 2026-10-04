@@ -1,7 +1,6 @@
 import type { createGitOperations } from './git.ts'
 import type { ExecutionLogger, ExecutionMessages } from './execution-messages.ts'
 import { createEffectScopeService } from './effect-scope.ts'
-import { createAsyncRunBranchServices } from './run-branch-async.ts'
 import { createRunBranchServices } from './run-branch.ts'
 import { createCoordinatorResumeServices } from './coordinator-resume.ts'
 import { createAttachmentServices } from './attachments.ts'
@@ -16,15 +15,14 @@ export interface ExecutionResourceDeps {
 
 /** Ресурсы одного owner; factories сохраняют прежние алгоритмы и guards. */
 export function createExecutionResources(deps: ExecutionResourceDeps) {
-  const branches = createRunBranchServices(deps)
   const effects = createEffectScopeService()
-  const asyncBranches = createAsyncRunBranchServices({ ...deps, effects })
+  const branches = createRunBranchServices({ ...deps, effects })
   return {
-    git: deps.git, effects, asyncBranches,
+    git: deps.git, effects,
     logger: deps.logger,
     ...branches,
     ...createCoordinatorResumeServices(deps),
-    ...createAttachmentServices({ ...deps, branches }),
+    ...createAttachmentServices({ ...deps, branches, effects }),
     ...createRunImageServices(deps),
     ...createLaunchPolicy(deps.messages)
   }

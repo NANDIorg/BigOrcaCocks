@@ -1703,7 +1703,8 @@ export class TaskStore {
    */
   settleIdleStages(
     isAlive: (ptyId: string) => boolean,
-    fallback: (run: Run) => RunStageOptions = () => ({})
+    fallback: (run: Run) => RunStageOptions = () => ({}),
+    shouldSettle: (run: Run) => boolean = () => true
   ): Array<{ runId: string; action: WfAction; actions: RunAction[] }> {
     const settled: Array<{ runId: string; action: WfAction; actions: RunAction[] }> = []
     for (const run of [...this.runs.values()]) {
@@ -1711,6 +1712,7 @@ export class TaskStore {
       const due = runPositions(run).filter((p) => p.tasksDoneAt !== undefined && !p.arrived).map((p) => p.nodeId)
       if (due.length === 0) continue
       if (run.coordinatorPtyId && isAlive(run.coordinatorPtyId)) continue
+      if (!shouldSettle(run)) continue
       const opts = fallback(run)
       const wf = this.runWorkflow(run.id, opts)
       const actions: RunAction[] = []

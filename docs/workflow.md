@@ -32,7 +32,7 @@ Project Git commands проверяют registration/policy внутри оче�
 изменением после await. Checkout повторяет guard живых агентов перед сменой root;
 начальный empty commit сохраняет staged/index пользователя. Собственный unborn root
 не считается чужим busy worktree при первом tracking checkout. Это не заменяет
-EffectToken run/node/visit/lane/dispatch: общий async workflow Git — следующий этап.
+EffectToken run/node/visit/lane/dispatch: его отдельно проверяет общий async workflow executor.
 Девять старых Desktop IPC теперь вызывают common commands; private Git root helper
 удалён, process count передаётся как callback общей операции checkout.
 
@@ -50,39 +50,34 @@ Desktop session/assistant каналы подключены к common commands �
 окна освобождает только leases. Внутренний worker answer nudge остаётся owner effect,
 а ввод из UI проверяет principal/payload и writer до native write.
 
-Первый шаг async рубежа: project fetch/pull/checkout/initialCommit используют commonDir
-очередь вместо строки root. Canonical lookup асинхронен; реальный блокирующий commit
-hook не останавливает heartbeat/PTY/другой repo. Workflow Git effects и их token/
-restart reconciliation остаются следующим переносом, существующий executor пока sync.
+Git effects Task/Run workflow и веток прогона используют общий async GitProcessService
+и canonical commonDir queue. Составные commit/review/merge/cleanup занимают очередь один
+раз; независимые репозитории продолжают работать во время чужого hook. Stop/timeout
+завершают принадлежащее owner дерево процессов, отмена не маскируется domain ошибкой.
 
-Async project Git/check-ignore/commonDir используют общий GitProcessService с
-owned процессами, bounded stdout/stderr, закрытым stdin и AbortSignal/stop. Stop
-ждёт окончания дерева hooks и запрещает новые вызовы. Legacy workflow Git пока
-sync; перенос его на этот же service и проверку EffectToken продолжается в B.
+EffectScope сохраняет project/store/task/run identity, node/visit, точный lane/forkVisit
+и dispatch до ожидания. Guard выполняется после await и перед store/native эффектом;
+обычная правка текста и продвижение соседа не отменяют текущую позицию. Смена поколения,
+registration или policy запрещает следующий spawn/переход и запись stale failure.
+Все действия перехода Run захватывают позиции до Promise handoff/ожидания первого пути.
+После deliberate store phase используется новый scope. Cleanup завершённой service-task
+проверяет её dispatch и живость run, отдельно от уже продвинутого родительского этапа.
 
-Async project Git path теперь не содержит sync HEAD/branch checks: проверка repo,
-unborn/ветки, результата fetch/pull/checkout/initialCommit проходит общий process
-service. Перед следующей mutation guard повторяется после await; отозванная policy
-не маскируется Git domain error. Это ещё не завершает перенос workflow effects.
+Task/Run workflow, workers, coordinator, review и attachments возвращают Promise; Desktop
+и socket ожидают завершение. Автор захватывается до await и задаётся только на синхронную
+store phase: `workflow` для графа, human/cli/app для прямого решения. Native attachments
+сохраняются после durable reference даже при failed launch. Event/timer rejection обработан.
+Stage options читают HEAD асинхронно; idle settlement фильтрует изменившиеся кандидаты до
+core transition. Отказ native чтения optional entry marker сохраняет прежний best-effort,
+но authority/position errors не подавляются.
 
-Общий scoped async Git port готов: compound branch/commit/review/merge/cleanup
-выполняются одной transaction без вложенного ожидания очереди. Guard после каждого
-subprocess не разрешает следующий шаг устаревшего вызова, даже если native commit
-уже произошёл. Legacy workflow callers ещё не переключены; EffectToken и restart
-reconciliation остаются следующим переносом B.
-
-EffectScope общий для async шагов: task/run identity, node/visit, dispatch и точный
-lane/forkVisit проверяются после await до перехода/store/process effect. Изменение
-обычного текста карточки scope не отменяет. Commit задаёт status source только
-на синхронную запись; явный stop отменяет подготовку даже до первого dispatch.
-Consumer integration и durable reconciliation ещё не завершены.
-
-Async branch port использует тот же owner для feature preparation/restore, merge
-в checked-out или временный base worktree и nonforce cleanup. Отсутствующая feature
-ветка не создаётся заново из другой истории; detached base сохраняется как SHA.
-При observer reentry уборка не входит повторно в ту же очередь. Domain token не
-включает run.git; сам branch port проверяет captured metadata перед записью. Эти
-алгоритмы проверены реальными Git effects, подключение consumers продолжается.
+Async RunBranchServices готовит/восстанавливает feature worktree и выполняет merge/nonforce
+cleanup тем же Git owner. Отсутствующая feature не создаётся из другой истории; root branch,
+detached base, dirty worktree и feature ref после конфликта сохраняются. Одновременные
+подготовки объединены с отдельным guard каждого caller. Run Git metadata проверяются отдельно
+от domain token, поэтому подготовка соседа не отменяет lane. Persistent reconciliation и
+оставшиеся sync profile/file Git reads продолжаются в B: native effect до отмены может
+остаться, автоматического rollback и безопасного повтора после crash пока не обещаем.
 
 ## Создание и правка графа через ассистента
 
@@ -757,8 +752,8 @@ worktree задачи, агент не запускается, человек н
 
 - Действие — `WfAction {type: 'git', nodeId, operation, branch?, base?, message?, remote?}` (`stageAction`). Шаблоны в нём
   **не подставлены**: `runGitNode` вызывает `renderGitTemplate(x, wfGitVars(task))`. У `push` `remote` уже с умолчанием.
-  Событий воркера нет: `executeSteps` выполняет git синхронно и сразу вызывает `advance(…, 'ok' | 'error')` — цепочка
-  `git → git → …` идёт за один вызов (лимит 50 переходов подряд общий).
+  Событий воркера нет: `executeSteps` ожидает async Git, проверяет исходную позицию и вызывает `advance(…, 'ok' | 'error')`.
+  Цепочка `git → git → …` идёт за один async вызов (лимит 50 переходов подряд общий).
 - **Имя ветки** после подстановки проверяется дважды: упрощённо (`isValidGitBranchName`) и настоящим `git check-ref-format
   --branch` (`isBranchNameAcceptedByGit`). Недопустимое — `workflow_blocked` «имя ветки «…» после подстановки недопустимо»:
   git не запускался, это ошибка настройки, а не отказ git. Пустое сообщение коммита после подстановки — тоже `blocked`.
@@ -796,7 +791,7 @@ worktree задачи, агент не запускается, человек н
 - `push` отправляет только закоммиченное: нужны изменения — поставьте `commit` перед ним. Ветка после `merge` удаляется
   локально, на remote остаётся; для «запушить без мержа» граф идёт `… → git(push) → end` (конец без мержа сохраняет ветку).
   Git запускается с `GIT_TERMINAL_PROMPT=0` (без запроса пароля в несуществующем терминале), а `push` ещё и с таймаутом
-  120 с — **синхронно в main**: пока идёт push, приложение не отвечает; зависший remote даёт `error` «не ответил за 120 с».
+  120 с — асинхронно, main продолжает отвечать; зависший remote даёт `error` «не ответил за 120 с».
 - Запрещено намеренно (противоречит модели «worktree на ветку задачи, слияние — нода `merge`»): `merge`, `rebase`, `reset`,
   `checkout` файлов, удаление веток, `push --force`, произвольная команда. Слияние — `merge`; ветки удаляет уборка.
 
@@ -1111,7 +1106,7 @@ HELP `check` не меняются.
 | Путь без «Работы» | допустим: `fork` сразу в `join` — `forkEmptyBranch`, путь только из проверок — `forkBranchNoWork` (предупреждения) |
 | Закрытие прогона посреди разветвления | как посреди графа: `closedAt` есть, позиции остаются, эффектов нет |
 
-Git: ветка и worktree прогона **одни на все пути**. Слияния подзадач разных путей сериализует синхронный git main,
+Git: ветка и worktree прогона **одни на все пути**. Слияния подзадач разных путей сериализует commonDir queue runtime,
 конфликты ловит нода `conflict` пути подзадачи; смысловые конфликты путей видны только на общей ветке — `gate` ставьте
 после `join`. `StageChange.commit` у путей накладывается по времени: дифф этапа пути не изолирован.
 
@@ -1378,8 +1373,8 @@ server paths; legacy resolution.images отбрасываются. Workflow engi
 уже слита — сливать нечего, остаётся уборка (`git worktree prune` для убранной руками папки). Конфликт — только когда в индексе
 есть незаслитые пути (`git diff --name-only --diff-filter=U`, `MergeError.conflict` из `mergeBranch`): это нода `conflict`.
 Прочие отказы `git merge` (занятый `index.lock`, незакоммиченное в цели, таймаут) — исключение → `workflow_blocked` с текстом git,
-а не ложный «Конфликт мержа». git в main синхронный, поэтому у `merge`, `commit`, `worktree remove` таймаут 120 с,
-`GIT_TERMINAL_PROMPT=0` и `GIT_EDITOR=true` (`main/git.ts`).
+а не ложный «Конфликт мержа». Async Git использует таймауты общего process service,
+`GIT_TERMINAL_PROMPT=0` и `GIT_EDITOR=true` (`packages/runtime/src/git-workflow.ts`).
 
 ## CLI и сокет
 
@@ -1396,8 +1391,8 @@ Settings/types/templates IPC подключены к тому же manager, UI/p
 `StatsCommands` считает прежние метрики по отделённому snapshot, без исполнения
 сохранённых tool calls или workflow. Запись session id после чтения транскрипта
 проверяет текущую identity проекта и dispatch; async executor сохраняет авторство
-только внутри синхронного commit. Это не перенос workflow Git effects: очередь
-по commonDir и их EffectToken реализуются следующим рубежом.
+только внутри синхронного commit. Workflow Git использует ту же commonDir queue;
+актуальность его task/run/lane позиции защищает отдельный EffectScope.
 Desktop и socket уже используют общий rules service; прежние stats IPC вызывают
 scoped commands, которые отклоняют поздний результат удалённого проекта.
 
@@ -1434,7 +1429,8 @@ orca-board request resolve --request <id> --option <id|метка> [--text "..."
   создаётся; на `human` без ждущего approval — запрос. Идемпотентен. Остановленные задачи (`stageBlock`) ждут человека — иначе
   каждый запуск заново слал бы `workflow_blocked`. Живые запуски после рестарта закрываются как `unknown`, задача
   (и проверка) — в ready на своём этапе; повторный запуск повтором не считается (`visits` не растут).
-- Мерж синхронный: пока идёт `git merge` с хуками, main занят (таймаут 120 с). Асинхронный мерж — отдельная задача.
+- Async Git не блокирует main; queue сериализует связанные worktree. После crash native effect
+  может уже существовать без store metadata: persistent reconciliation ещё не завершена.
 - Решение человека (`human` → «Вернуть» → работа) останавливает цикл так же, как `attempts`: предупреждение
   валидации о бесконечных отказах такие циклы не учитывает.
 - Условие `files` не поддерживается. Параллельные этапы — только разветвлением `fork`/`join` графа глобальной задачи
@@ -1446,7 +1442,7 @@ orca-board request resolve --request <id> --option <id|метка> [--text "..."
 тем же движком, что записывающие методы. Они не меняют этап, stageBlock, историю,
 события, pending requests и persistence. Preview не является резервированием:
 вызывающий код должен применить проверку и переход в одном синхронном вызове;
-будущие асинхронные effects требуют отдельного контроля актуальности.
+асинхронные effects отдельно проверяют EffectScope после ожидания.
 
 Runtime `enterWork` принимает optional `validateRole` и role override. Прямой
 запуск/перезапуск проверяет выбранную роль до записи; роль ask остаётся временной,

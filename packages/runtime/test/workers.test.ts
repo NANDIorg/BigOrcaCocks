@@ -61,10 +61,10 @@ function argsOf(process: ReturnType<typeof fixture>['processes'][number]): strin
   assert.ok(Array.isArray(process.args)); return process.args
 }
 
-it('воркер сохраняет dispatch, ветку, session id и явное окружение проекта', () => {
+it('воркер сохраняет dispatch, ветку, session id и явное окружение проекта', async () => {
   const f = fixture(); const run = f.store.createGlobalTask({ title: 'Feature' })
   const task = f.store.createTask({ title: 'Implement', spec: 'Fix login', roleId: 'developer', runId: run.id })
-  const result = f.services.startWorker(f.store, repo, f.ctx, task.id, 100, 40)
+  const result = await f.services.startWorker(f.store, repo, f.ctx, task.id, 100, 40)
   assert.equal(f.store.getTask(task.id)?.status, 'in_progress')
   assert.equal(result.branch, `orca/${task.id}`)
   assert.equal(git(result.worktree, 'branch', '--show-current'), result.branch)
@@ -86,43 +86,43 @@ it('воркер сохраняет dispatch, ветку, session id и явно
   assert.ok(f.store.snapshot().dispatches.find(d => d.id === result.dispatchId)?.endedAt)
 })
 
-it('нет роли и испорченные флаги отвергаются до Git, dispatch и нового прогона', () => {
+it('нет роли и испорченные флаги отвергаются до Git, dispatch и нового прогона', async () => {
   const f = fixture(); const task = f.store.createTask({ title: 'Task', roleId: 'developer' })
   const before = f.store.snapshot()
-  assert.throws(() => f.services.startWorker(f.store, repo, { ...f.ctx, roles: [] }, task.id), e => e instanceof HostError && e.key === 'worker.cannotStart')
+  await assert.rejects(async () => await f.services.startWorker(f.store, repo, { ...f.ctx, roles: [] }, task.id), e => e instanceof HostError && e.key === 'worker.cannotStart')
   const badRoles = f.ctx.roles.map(role => ({ ...role, extraArgs: '--name "unfinished' }))
-  assert.throws(() => f.services.startWorker(f.store, repo, { ...f.ctx, roles: badRoles }, task.id), e => e instanceof HostError && e.key === 'worker.cannotStart')
-  assert.throws(() => f.services.startCoordinator(f.store, repo, { ...f.ctx, roles: [] }, 'goal'), e => e instanceof HostError && e.key === 'coordinator.cannotStart')
-  assert.throws(() => f.services.startCoordinator(f.store, repo, { ...f.ctx, roles: badRoles }, 'goal'), e => e instanceof HostError && e.key === 'coordinator.cannotStart')
+  await assert.rejects(async () => await f.services.startWorker(f.store, repo, { ...f.ctx, roles: badRoles }, task.id), e => e instanceof HostError && e.key === 'worker.cannotStart')
+  await assert.rejects(async () => await f.services.startCoordinator(f.store, repo, { ...f.ctx, roles: [] }, 'goal'), e => e instanceof HostError && e.key === 'coordinator.cannotStart')
+  await assert.rejects(async () => await f.services.startCoordinator(f.store, repo, { ...f.ctx, roles: badRoles }, 'goal'), e => e instanceof HostError && e.key === 'coordinator.cannotStart')
   assert.deepEqual(f.store.snapshot(), before)
   assert.equal(existsSync(join(dir, '.orca-worktrees')), false)
   assert.equal(f.processes.length, 0)
 })
 
-it('роль отдельного этапа меняет запуск, сохраняя роль и агента карточки', () => {
+it('роль отдельного этапа меняет запуск, сохраняя роль и агента карточки', async () => {
   const f = fixture()
   const roles: Role[] = [{ id: 'developer', title: 'Dev', agent: 'codex' }, { id: 'reviewer', title: 'Reviewer', agent: 'claude', model: 'review-model', extraArgs: '--verbose' }]
   const task = f.store.createTask({ title: 'Question', roleId: 'developer', agent: 'codex' })
-  const result = f.services.startWorker(f.store, repo, { ...f.ctx, roles }, task.id, 80, 24, 'reviewer')
+  const result = await f.services.startWorker(f.store, repo, { ...f.ctx, roles }, task.id, 80, 24, 'reviewer')
   assert.equal(f.store.getTask(task.id)?.roleId, 'developer'); assert.equal(f.store.getTask(task.id)?.agent, 'codex')
   const dispatch = f.store.snapshot().dispatches.find(d => d.id === result.dispatchId)!
   assert.equal(dispatch.roleId, 'reviewer'); assert.equal(dispatch.agent, 'claude'); assert.equal(dispatch.model, 'review-model')
   assert.ok(argsOf(f.processes[0]).includes('--verbose'))
 })
 
-it('повторный воркер получает прошлый ответ и уточнение человека', () => {
+it('повторный воркер получает прошлый ответ и уточнение человека', async () => {
   const f = fixture(); const task = f.store.createTask({ title: 'Task', roleId: 'developer', answerFor: 'coordinator' })
   const old = f.store.startDispatch(task.id, 'pty_old'); f.store.finishDispatch(old.id, 'done', [], 'PREVIOUS_RESULT')
   f.store.reopenTask(task.id, 'HUMAN_FEEDBACK')
-  f.services.startWorker(f.store, repo, f.ctx, task.id)
+  await f.services.startWorker(f.store, repo, f.ctx, task.id)
   const prompt = argsOf(f.processes[0]).join('\n')
   assert.match(prompt, /PREVIOUS_RESULT/); assert.match(prompt, /HUMAN_FEEDBACK/)
 })
 
-it('отписка observer сохраняет воркер, вывод и обработку exit', () => {
+it('отписка observer сохраняет воркер, вывод и обработку exit', async () => {
   const f = fixture(); const task = f.store.createTask({ title: 'Task', roleId: 'developer' })
   let seen = 0; const off = f.sessions.subscribe(() => { seen++ })
-  const result = f.services.startWorker(f.store, repo, f.ctx, task.id)
+  const result = await f.services.startWorker(f.store, repo, f.ctx, task.id)
   off(); const detachedCount = seen
   f.processes[0].proc.data('continued offline')
   assert.equal(f.sessions.isAlive(result.ptyId), true)
@@ -157,12 +157,12 @@ it('Windows PATH из переданного Path читается без учё
   assert.equal(f.services.workerPath(), 'C:\\orca\\cli;C:\\node;C:\\tools;C:\\agents')
 })
 
-it('Windows setup выполняется отдельным before и не теряет команду агента', () => {
+it('Windows setup выполняется отдельным before и не теряет команду агента', async () => {
   const f = fixture({ platform: 'win32' })
   writeFileSync(join(repo, 'package.json'), '{}'); writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0')
   git(repo, 'add', 'package.json', 'pnpm-lock.yaml'); git(repo, 'commit', '-qm', 'deps')
   const task = f.store.createTask({ title: 'Task', roleId: 'developer' })
-  const result = f.services.startWorker(f.store, repo, f.ctx, task.id)
+  const result = await f.services.startWorker(f.store, repo, f.ctx, task.id)
   assert.equal(f.processes[0].command, 'cmd.exe')
   assert.match(String(f.processes[0].args), /pnpm install/)
   assert.equal(f.store.getTask(task.id)?.status, 'in_progress')
@@ -173,24 +173,24 @@ it('Windows setup выполняется отдельным before и не те�
   assert.equal(f.sessions.isAlive(result.ptyId), true)
 })
 
-it('Unix setup сохраняет аргументы агента с пробелом и одинарной кавычкой', () => {
+it('Unix setup сохраняет аргументы агента с пробелом и одинарной кавычкой', async () => {
   const f = fixture({ platform: 'linux' })
   writeFileSync(join(repo, 'package.json'), '{}'); writeFileSync(join(repo, 'package-lock.json'), '{}')
   git(repo, 'add', 'package.json', 'package-lock.json'); git(repo, 'commit', '-qm', 'deps')
   const roles = f.ctx.roles.map(role => ({ ...role, extraArgs: '--name "two words" --label "it\'s"' }))
   const task = f.store.createTask({ title: 'Task', roleId: 'developer' })
-  f.services.startWorker(f.store, repo, { ...f.ctx, roles }, task.id)
+  await f.services.startWorker(f.store, repo, { ...f.ctx, roles }, task.id)
   assert.equal(f.processes[0].command, '/bin/sh')
   const command = argsOf(f.processes[0])[1]
   assert.match(command, /npm ci/); assert.match(command, /'two words'/); assert.match(command, /'it'\\''s'/)
 })
 
-it('координатор получает сохранённые вложения первыми, новые следом', () => {
+it('координатор получает сохранённые вложения первыми, новые следом', async () => {
   const f = fixture(); const root = runtime.runImagesRoot(f.host.dataDir)
   const saved = validateAttachments([{ name: 'saved.txt', data: new TextEncoder().encode('saved') }])
   const pasted = validateAttachments([{ name: 'pasted.pdf', data: new TextEncoder().encode('pasted') }])
   const run = f.common.createTaskWithImages(f.store, root, f.ctx.projectId, { title: 'Goal' }, saved)
-  const result = f.services.startCoordinator(f.store, repo, { ...f.ctx, runImagesRoot: root }, '', 90, 25, pasted, run.id)
+  const result = await f.services.startCoordinator(f.store, repo, { ...f.ctx, runImagesRoot: root }, '', 90, 25, pasted, run.id)
   assert.equal(result.runId, run.id); assert.equal(f.store.listRuns().length, 1)
   const cwd = f.processes[0].options.cwd!
   const first = join(cwd, '.orca-attachments', run.id, 'file-1-saved.txt')
@@ -203,16 +203,16 @@ it('координатор получает сохранённые вложен�
   assert.equal(f.store.getRun(run.id)?.coordinatorPtyId, result.ptyId)
 })
 
-it('второй координатор существующего прогона отвергается до эффектов', () => {
-  const f = fixture(); const first = f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
+it('второй координатор существующего прогона отвергается до эффектов', async () => {
+  const f = fixture(); const first = await f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
   const before = f.store.snapshot()
-  assert.throws(() => f.services.startCoordinator(f.store, repo, f.ctx, '', 80, 24, [], first.runId), e => e instanceof HostError && e.key === 'coordinator.alreadyRunning')
+  await assert.rejects(async () => await f.services.startCoordinator(f.store, repo, f.ctx, '', 80, 24, [], first.runId), e => e instanceof HostError && e.key === 'coordinator.alreadyRunning')
   assert.deepEqual(f.store.snapshot(), before); assert.equal(f.processes.length, 1)
   assert.equal(f.sessions.isAlive(first.ptyId), true)
 })
 
-it('выход координатора передаёт его открытый вопрос человеку', () => {
-  const f = fixture(); const coordinator = f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
+it('выход координатора передаёт его открытый вопрос человеку', async () => {
+  const f = fixture(); const coordinator = await f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
   const task = f.store.createTask({ title: 'Question', roleId: 'developer', runId: coordinator.runId })
   const question = f.store.ask({ taskId: task.id, question: 'Which option?' }, { coordinatorAlive: true })
   assert.equal(f.store.pendingRequests().length, 0)
@@ -222,38 +222,38 @@ it('выход координатора передаёт его открытый
   assert.equal(f.sessions.isAlive(coordinator.ptyId), false)
 })
 
-it('отказ native spawn закрывает новый прогон и удаляет его стартовые файлы', () => {
+it('отказ native spawn закрывает новый прогон и удаляет его стартовые файлы', async () => {
   const f = fixture(); f.fail()
   const files = validateAttachments([{ name: 'start.txt', data: new TextEncoder().encode('start') }])
-  assert.throws(() => f.services.startCoordinator(f.store, repo, f.ctx, 'Goal', 80, 24, files), /native spawn failed/)
+  await assert.rejects(async () => await f.services.startCoordinator(f.store, repo, f.ctx, 'Goal', 80, 24, files), /native spawn failed/)
   const run = f.store.listRuns()[0]
   assert.ok(run.closedAt); assert.equal(f.sessions.listTerminals().length, 0)
   assert.equal(existsSync(join(run.git!.worktree!, '.orca-attachments', run.id)), false)
 })
 
-it('отказ повторного запуска сохраняет существующий прогон и вложения возврата', () => {
+it('отказ повторного запуска сохраняет существующий прогон и вложения возврата', async () => {
   const f = fixture(); const run = f.store.createGlobalTask({ title: 'Existing' })
   f.store.moveGlobalTask(run.id, 'review')
-  const paths = f.common.returnRunWithImages(f.store, repo, run.id, [{ name: 'return.txt', data: new TextEncoder().encode('return') }], 'Fix', saved => {
+  const paths = await f.common.returnRunWithImages(f.store, repo, run.id, [{ name: 'return.txt', data: new TextEncoder().encode('return') }], 'Fix', saved => {
     f.store.returnGlobalTask(run.id, 'Fix', saved); return saved
   })
   f.fail()
   const fresh = validateAttachments([{ name: 'start.txt', data: new TextEncoder().encode('start') }])
-  assert.throws(() => f.services.startCoordinator(f.store, repo, f.ctx, '', 80, 24, fresh, run.id), /native spawn failed/)
+  await assert.rejects(async () => await f.services.startCoordinator(f.store, repo, f.ctx, '', 80, 24, fresh, run.id), /native spawn failed/)
   assert.equal(f.store.getRun(run.id)?.closedAt, undefined)
   assert.equal(readFileSync(paths[0], 'utf8'), 'return')
   assert.equal(existsSync(join(f.store.getRun(run.id)!.git!.worktree!, '.orca-attachments', run.id, 'file-1-start.txt')), false)
 })
 
 for (const invalidRole of ['missing', 'extraArgs'] as const) {
-  it(`возврат в работу при ${invalidRole} сохраняет состояние и живого координатора`, () => {
-    const f = fixture(); const first = f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
+  it(`возврат в работу при ${invalidRole} сохраняет состояние и живого координатора`, async () => {
+    const f = fixture(); const first = await f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
     f.store.moveGlobalTask(first.runId, 'review')
     const before = structuredClone(f.store.snapshot())
     const roles = invalidRole === 'missing'
       ? f.ctx.roles.filter(role => role.id !== 'coordinator')
       : f.ctx.roles.map(role => role.id === 'coordinator' ? { ...role, extraArgs: '--name "unfinished' } : role)
-    assert.throws(() => f.services.returnToWork(f.store, repo, { ...f.ctx, roles }, first.runId, 'FIX_THIS'),
+    await assert.rejects(async () => await f.services.returnToWork(f.store, repo, { ...f.ctx, roles }, first.runId, 'FIX_THIS'),
       e => e instanceof HostError && e.key === 'coordinator.cannotStart')
     assert.deepEqual(f.store.snapshot(), before)
     assert.equal(f.sessions.isAlive(first.ptyId), true)
@@ -262,10 +262,10 @@ for (const invalidRole of ['missing', 'extraArgs'] as const) {
   })
 }
 
-it('возврат в работу останавливает старый терминал и продолжает тот же прогон', () => {
-  const f = fixture(); const first = f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
+it('возврат в работу останавливает старый терминал и продолжает тот же прогон', async () => {
+  const f = fixture(); const first = await f.services.startCoordinator(f.store, repo, f.ctx, 'Goal')
   f.store.moveGlobalTask(first.runId, 'review')
-  const resumed = f.services.returnToWork(f.store, repo, f.ctx, first.runId, 'FIX_THIS')
+  const resumed = await f.services.returnToWork(f.store, repo, f.ctx, first.runId, 'FIX_THIS')
   assert.equal(resumed.runId, first.runId); assert.notEqual(resumed.ptyId, first.ptyId)
   assert.equal(f.sessions.isAlive(first.ptyId), false); assert.equal(f.processes[0].proc.killed, true)
   assert.equal(f.sessions.isAlive(resumed.ptyId), true)
@@ -273,18 +273,18 @@ it('возврат в работу останавливает старый те�
 })
 
 for (const kind of ['worker', 'coordinator', 'assistant'] as const) {
-  function launch(f: ReturnType<typeof fixture>, agent: AgentKind) {
+  async function launch(f: ReturnType<typeof fixture>, agent: AgentKind) {
     const ctx = { ...f.ctx, roles: f.ctx.roles.map(role => ({ ...role, agent, extraArgs: '--label "two words"' })) }
     if (kind === 'assistant') return f.services.startAssistant({ socketPath: f.ctx.socketPath, settings: { agent, extraArgs: '--label "two words"' } })
-    if (kind === 'coordinator') return f.services.startCoordinator(f.store, repo, ctx, 'Goal')
+    if (kind === 'coordinator') return await f.services.startCoordinator(f.store, repo, ctx, 'Goal')
     const task = f.store.createTask({ title: 'Task', roleId: 'developer', agent })
-    return f.services.startWorker(f.store, repo, ctx, task.id)
+    return await f.services.startWorker(f.store, repo, ctx, task.id)
   }
 
-  it(`${kind}: язык читается на каждом запуске, флаги и cleanup настроек Amp сохраняются`, () => {
+  it(`${kind}: язык читается на каждом запуске, флаги и cleanup настроек Amp сохраняются`, async () => {
     let language: 'ru' | 'en' = 'ru'
     const f = fixture({ platform: 'linux', language: () => language })
-    const first = launch(f, 'amp')
+    const first = await launch(f, 'amp')
     const args = argsOf(f.processes[0])
     assert.ok(args.includes('--label')); assert.ok(args.includes('two words'))
     assert.ok(args.every(arg => !arg.includes('The person uses the app in English')))
@@ -294,14 +294,14 @@ for (const kind of ['worker', 'coordinator', 'assistant'] as const) {
     f.sessions.killPty(first.ptyId)
     assert.equal(existsSync(settings), false)
     language = 'en'
-    launch(f, 'amp')
+    await launch(f, 'amp')
     assert.ok(argsOf(f.processes.at(-1)!).some(arg => arg.includes('The person uses the app in English')))
     f.sessions.killAll(); f.launcher.dispose()
   })
 
-  it(`${kind}: окружение permissions OpenCode проходит через launcher в PTY`, () => {
+  it(`${kind}: окружение permissions OpenCode проходит через launcher в PTY`, async () => {
     const f = fixture({ platform: 'linux' })
-    launch(f, 'opencode')
+    await launch(f, 'opencode')
     const env = f.processes[0].options.env
     const permissions = JSON.parse(env.OPENCODE_PERMISSION) as { edit: Record<string, string>; bash: Record<string, string> }
     assert.equal(permissions.edit['*'], 'ask')

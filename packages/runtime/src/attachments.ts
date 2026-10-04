@@ -3,6 +3,8 @@ import { basename, dirname, join } from 'node:path'
 import { ATTACHMENT_LIMITS, DEFAULT_ATTACHMENT_OBJECTIVE, attachmentFileName, validateAttachments, type Attachment, type RequestResolution, type Task, type TaskStore } from '@orca-board/core'
 import type { AttachmentCapabilities } from '@orca-board/contracts'
 import type { ExecutionMessages, ExecutionLogger } from './execution-messages.ts'
+import { executionProject, type ExecutionContext } from './execution-context.ts'
+import type { EffectScope, EffectScopeService, EffectTarget } from './effect-scope.ts'
 import type { createRunBranchServices } from './run-branch.ts'
 
 export type PtyAlive = (ptyId: string) => boolean
@@ -14,8 +16,10 @@ export interface ReturnImagesPlace {
 }
 
 /** Экземпляр общих ресурсов без глобального состояния Desktop. */
-export function createAttachmentServices({ messages, logger, branches }: { messages: ExecutionMessages; logger: ExecutionLogger; branches: Pick<ReturnType<typeof createRunBranchServices>, 'ensureRunBranch'> }) {
+export function createAttachmentServices({ messages, logger, branches, effects }: { messages: ExecutionMessages; logger: ExecutionLogger; branches: Pick<ReturnType<typeof createRunBranchServices>, 'ensureRunBranch'>; effects: EffectScopeService }) {
   const { ensureRunBranch } = branches
+  const capture = (store: TaskStore, root: string, target: EffectTarget, context?: ExecutionContext) =>
+    () => effects.capture(executionProject(store, root, context), target, { source: context?.source })
 
   /**
    * Файлы (картинки и любые другие), приложенные человеком: к цели координатора (`startCoordinator`) и к замечаниям при возврате в
@@ -196,8 +200,8 @@ export function createAttachmentServices({ messages, logger, branches }: { messa
    * Координатор читает вложения в своём cwd: worktree ветки глобальной задачи, а без неё — корень репозитория
    * (то же считает `startCoordinator`). `ensureRunBranch` идемпотентен: убранный worktree восстанавливает.
    */
-  function coordinatorImagesPlace(store: TaskStore, repoRoot: string, runId: string): ReturnImagesPlace {
-    const cwd = ensureRunBranch(store, repoRoot, runId)?.worktree ?? repoRoot
+  async function coordinatorImagesPlace(store: TaskStore, repoRoot: string, runId: string, context?: ExecutionContext): Promise<ReturnImagesPlace> {
+    const cwd = (await ensureRunBranch(store, repoRoot, runId, context))?.worktree ?? repoRoot
     return { cwd, ownerId: runId, subdir: RETURNS_DIR }
   }
 
@@ -207,13 +211,14 @@ export function createAttachmentServices({ messages, logger, branches }: { messa
    * не создаются. Упал `apply`, и store не успел сослаться на файлы (`imagesReferenced`), — папка этого возврата удаляется,
    * текст остаётся в форме. Вложения без текста замечаний не принимаются: текст — то, к чему они приложены, и он обязателен.
    */
-  function withReturnImages<T>(
+  async function withReturnImages<T>(
     store: TaskStore,
-    place: () => ReturnImagesPlace,
+    place: () => ReturnImagesPlace | Promise<ReturnImagesPlace>,
     input: unknown,
     text: string | undefined,
-    apply: (paths: string[]) => T
-  ): T {
+    apply: (paths: string[]) => T | Promise<T>,
+    captureScope?: () => EffectScope
+  ): Promise<T> {
     let images: Attachment[]
     try {
       images = validateAttachments(input)
@@ -222,14 +227,19 @@ export function createAttachmentServices({ messages, logger, branches }: { messa
     }
     if (images.length === 0) return apply([])
     if (!text?.trim()) throw messages.error('attachments.needText')
-    const at = place()
-    const paths = saveReturnImages(at.cwd, at.ownerId, at.subdir, images)
+    const scope = captureScope?.()
     try {
-      return apply(paths)
-    } catch (e) {
-      if (!imagesReferenced(store, paths)) discardReturnImages(paths)
-      throw e
-    }
+      const at = scope ? await scope.wait(() => Promise.resolve(place())) : await place()
+      scope?.guard()
+      const paths = saveReturnImages(at.cwd, at.ownerId, at.subdir, images)
+      try {
+        scope?.guard()
+        return await apply(paths)
+      } catch (e) {
+        if (!imagesReferenced(store, paths)) { scope?.guard(); discardReturnImages(paths) }
+        throw e
+      }
+    } finally { scope?.close() }
   }
 
   /** Чужие пути в решении: renderer и сокет присылают `resolution.images`, но пути ставит только main после записи файлов. */
@@ -250,50 +260,54 @@ export function createAttachmentServices({ messages, logger, branches }: { messa
    * воркер (её worktree), «Вернуть» по approval прогона (без задачи) — координатор. Вложения к другим действиям — ошибка.
    * Запроса нет или он уже решён — обычная ошибка `run`: до записи файлов на диск.
    */
-  function resolveWithImages<T>(
+  async function resolveWithImages<T>(
     store: TaskStore,
     repoRoot: string,
     id: string,
     resolution: RequestResolution,
     images: unknown,
-    run: (resolution: RequestResolution) => T
-  ): T {
+    run: (resolution: RequestResolution) => T | Promise<T>,
+    context?: ExecutionContext
+  ): Promise<T> {
     const clean = stripResolutionImages(resolution)
     const request = store.getRequest(id)
     if (!hasImageInput(images) || request?.status !== 'pending') return run(clean)
     if (clean.action !== 'clarify' && clean.action !== 'reject') throw messages.error('attachments.notForAction')
-    const place = (): ReturnImagesPlace => (request.taskId !== undefined ? workerImagesPlace(store.getTask(request.taskId)) : coordinatorImagesPlace(store, repoRoot, request.runId))
-    return withReturnImages(store, place, images, clean.text, (paths) => run(paths.length > 0 ? { ...clean, images: paths } : clean))
+    const place = (): ReturnImagesPlace | Promise<ReturnImagesPlace> => (request.taskId !== undefined ? workerImagesPlace(store.getTask(request.taskId)) : coordinatorImagesPlace(store, repoRoot, request.runId, context))
+    return withReturnImages(store, place, images, clean.text, (paths) => run(paths.length > 0 ? { ...clean, images: paths } : clean),
+      capture(store, repoRoot, request.taskId !== undefined ? { taskId: request.taskId } : { runId: request.runId }, context))
   }
 
   /**
    * «Вернуть» задачи из ревью с вложениями (IPC `review:reject`). Проверка ветки глобальной задачи — замечания читает координатор
    * (cwd прогона), остальные задачи — воркер в своём worktree. `run` получает пути сохранённых файлов (пусто — без вложений).
    */
-  function rejectWithImages<T>(
+  async function rejectWithImages<T>(
     store: TaskStore,
     repoRoot: string,
     taskId: string,
     images: unknown,
     text: string,
-    run: (paths: string[]) => T
-  ): T {
+    run: (paths: string[]) => T | Promise<T>,
+    context?: ExecutionContext
+  ): Promise<T> {
     const task = store.getTask(taskId)
     const runId = task?.gateFor?.runId
-    const place = (): ReturnImagesPlace => (runId !== undefined ? coordinatorImagesPlace(store, repoRoot, runId) : workerImagesPlace(task))
-    return withReturnImages(store, place, images, text, run)
+    const place = (): ReturnImagesPlace | Promise<ReturnImagesPlace> => (runId !== undefined ? coordinatorImagesPlace(store, repoRoot, runId, context) : workerImagesPlace(task))
+    return withReturnImages(store, place, images, text, run, capture(store, repoRoot, { taskId }, context))
   }
 
   /** «Вернуть в работу» глобальной задачи с вложениями (IPC `globalTasks:returnToWork`): читает координатор в cwd прогона. */
-  function returnRunWithImages<T>(
+  async function returnRunWithImages<T>(
     store: TaskStore,
     repoRoot: string,
     runId: string,
     images: unknown,
     text: string,
-    run: (paths: string[]) => T
-  ): T {
-    return withReturnImages(store, () => coordinatorImagesPlace(store, repoRoot, runId), images, text, run)
+    run: (paths: string[]) => T | Promise<T>,
+    context?: ExecutionContext
+  ): Promise<T> {
+    return withReturnImages(store, () => coordinatorImagesPlace(store, repoRoot, runId, context), images, text, run, capture(store, repoRoot, { runId }, context))
   }
 
   return { ATTACHMENTS_DIR, attachmentCapabilities, coordinatorObjective, attachmentsRoot, pruneAttachments, writeAttachments, clearStartImages, saveReturnImages, discardReturnImages, imagesReferenced, workerImagesPlace, coordinatorImagesPlace, withReturnImages, stripResolutionImages, hasImageInput, resolveWithImages, rejectWithImages, returnRunWithImages }

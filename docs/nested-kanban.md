@@ -39,36 +39,27 @@ adapter, что CRUD глобальной задачи. OS получает то
 file guard; чужой frame не читает selection/store. PTY ввод Desktop использует
 common writer lease; закрытие окна не завершает координаторов и воркеров.
 
-Async Git проекта использует owner queue общего commonDir, включая linked worktree
-и symlink. Независимые репозитории не ждут друг друга, failure не отравляет следующий
-job. Sync ветвление/merge global task и worker ещё переводятся на ту же очередь;
-готовность всего async рубежа этим шагом не объявляется.
+Git effects global/worker теперь асинхронны: общий GitProcessService и очередь canonical
+commonDir сериализуют root, linked worktree и symlink; независимые repo не ждут друг друга.
+Compound branch/commit/review/merge/cleanup занимает очередь один раз. Stop/timeout
+завершает также hooks; failure не отравляет следующий job, закрытый port недоступен.
 
-Async RunBranchServices уже готовит/восстанавливает feature worktree и сливает ветку
-прогона через общий scoped Git port. Одновременные подготовки одного run объединены,
-каждый ожидающий проверяет свою актуальность. Git metadata проверяются отдельно от
-domain lane token: подготовка соседа не отменяет актуальный этап. Nonforce уборка
-пропускает живые/возобновлённые прогоны и сохраняет dirty worktree. Consumer integration
-этого порта с Desktop/workflow остаётся следующим шагом.
+Async RunBranchServices подключён к Desktop/workflow/coordinator/review. Одновременные
+подготовки feature одного run объединяются с индивидуальным guard каждого ожидающего.
+Git metadata отдельно защищает branch port: инициализация ветки соседом не отменяет
+актуальный lane. Nonforce уборка пропускает живые/возобновлённые прогоны и dirty worktree.
 
-Scoped `workflowGit` использует ту же commonDir queue для многошагового Git effect,
-не повторяя enqueue из helper. После закрытия transaction port больше не запускает
-Git; foreign repo нельзя изменить из другой очереди. Реальные tests проверяют refs,
-worktree, conflict abort и push. Перенос global-task callers продолжается в B.
+EffectScope проверяет immutable позицию конкретного lane и поколение fork после await.
+Все RunAction scopes захватываются до первого ожидания, включая соседние пути. Новый
+заход с тем же node/lane не принимает старый result; устаревший failure не блокирует его.
+CancelRun действует только на scopes этого project/run, pending start отменяется до dispatch.
+Global remove ожидает nonforce уборку после durable deletion и не убирает повторно созданный run.
 
-EffectScope для позиции global task учитывает конкретный lane и поколение fork,
-а не только неизменный trunk на fork. Соседний путь может идти дальше независимо;
-новое поколение с тем же lane id делает старый результат устаревшим. CancelRun
-закрывает только scopes данного project/run; Git queue освобождается при отмене.
-
-Async Git subprocess теперь принадлежат общему GitProcessService: stop/отмена и
-таймаут завершают также hooks, а не только родителя. Успех внешнего effect при
-отмене не предполагается и не откатывается автоматически; EffectToken и restart
-reconciliation ветвления/merge остаются следующей частью B.
-
-Project branch/list/initialCommit/fetch/pull/checkout больше не вызывают sync Git для
-проверок HEAD до/после mutation. Отзыв policy или удаление registration во время
-проверки блокирует дальнейший effect; выбор проекта другого клиента не меняется.
+Project branch/list/initialCommit/fetch/pull/checkout используют async HEAD metadata;
+отзыв policy или удаление registration запрещает следующий effect. Авторство store phases
+захватывается до await, выбор проекта другого клиента не меняется. Persistent reconciliation
+и оставшиеся sync Git reads profile/files продолжаются в B. Native effect после отмены
+может остаться без metadata; автоматический rollback не выполняется.
 
 ## Модель: глобальная задача = прогон (`Run`)
 
@@ -100,8 +91,8 @@ Desktop profile adapter передаёт explicit id при настройке �
 Статистика прогона имеет общий `StatsCommands.global` с явным проектом; builder
 по-прежнему включает координатора и подзадачи выбранного run. Async чтение
 транскриптов работает с detached snapshot; найденный session id не применяется
-после удаления проекта или замены dispatch. Полноценные async Git effects остаются
-следующим рубежом, существующий workflow engine не заменён.
+после удаления проекта или замены dispatch. Workflow engine использует общий async Git;
+смысл графов, live/snapshot правила и диффы общей ветки сохранены.
 Desktop stats:global вызывает этот общий API с explicit project id; shared deps
 сохраняют названия ролей из снимка удалённого типа и не выбирают соседнюю доску.
 

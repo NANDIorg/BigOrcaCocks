@@ -60,11 +60,11 @@ interface Harness {
   launches: Launch[]
   task(id: string): Task
   /** Рабочая задача, запущенная приложением (`worker start`). */
-  work(title: string, roleId: string, runId?: string): Task
+  work(title: string, roleId: string, runId?: string): Promise<Task>
   /** Коммит в ветке задачи. */
   commit(taskId: string, file: string): void
   /** `orca-board done` текущего запуска и доставка событий исполнителю (подписка в index.ts). */
-  done(taskId: string): void
+  done(taskId: string): Promise<void>
   gates(taskId: string): Task[]
   lastLaunch(taskId: string): Launch
 }
@@ -81,12 +81,12 @@ function harness(store: TaskStore, typeOf: TypeOf): Harness {
     repoRoot: repo,
     run: typeOf,
     // Как runWorker + startWorker: роль задачи — из типа её прогона, иначе ошибка; enterWork; worktree; dispatch.
-    startWorker(taskId) {
+    async startWorker(taskId) {
       const t0 = task(taskId)
       if (store.columnKind(t0.status) === 'in_progress') throw new Error(`task already in progress: ${taskId}`)
       const type0 = typeOf(t0.runId)
       if (!type0.roles.some((r) => r.id === t0.roleId)) throw new Error(`воркер не запустится: ${missingRoleMessage(t0.roleId, type0)}`)
-      enterWork(deps, taskId)
+      await enterWork(deps, taskId)
       const t = task(taskId)
       const role = typeOf(t.runId).roles.find((r) => r.id === t.roleId)
       if (!role) throw new Error(`воркер не запустится: ${missingRoleMessage(t.roleId, typeOf(t.runId))}`)
@@ -107,9 +107,9 @@ function harness(store: TaskStore, typeOf: TypeOf): Harness {
     deps,
     launches,
     task,
-    work(title, roleId, runId) {
+    async work(title, roleId, runId) {
       const t = store.createTask({ title, roleId, ...(runId ? { runId } : {}) })
-      deps.startWorker(t.id)
+      await deps.startWorker(t.id)
       return task(t.id)
     },
     commit(taskId, file) {
@@ -118,10 +118,10 @@ function harness(store: TaskStore, typeOf: TypeOf): Harness {
       git(wt, 'add', '-A')
       git(wt, 'commit', '-qm', file)
     },
-    done(taskId) {
+    async done(taskId) {
       const before = store.listEvents().length
       store.finishDispatch(task(taskId).dispatchId!, 'сделал', [])
-      handleWorkflowEvents(deps, store.listEvents().slice(before))
+      await handleWorkflowEvents(deps, store.listEvents().slice(before))
     },
     gates: (taskId) => store.listTasks().filter((t) => t.gateFor?.taskId === taskId),
     lastLaunch(taskId) {
@@ -214,23 +214,23 @@ function writeLegacyProjects(): string {
 }
 
 describe('сценарий 1: старый projects.json и доска со старыми прогонами после обновления', () => {
-  it('миграция без потерь: открытый dispatch, задача на гейте, прогон без графа и «Входящие» доходят до мержа по ролям типа «repo»', () => {
+  it('миграция без потерь: открытый dispatch, задача на гейте, прогон без графа и «Входящие» доходят до мержа по ролям типа «repo»', async () => {
     // --- Старая версия приложения: доска проекта. ---
     const old = legacyBoard()
     // Прогон A снят, когда граф проекта был дефолтным (гейт reviewer); потом человек поменял граф проекта на гейт QA.
     const runA = old.store.createRun('Прогон A', undefined, legacyDefaultWorkflow(LEGACY_ROLES)).id
     const runB = old.store.createRun('Прогон B (до воркфлоу)').id
     assert.equal(old.store.getRun(runB)?.workflow, undefined)
-    const a1 = old.work('A1: в работе', 'developer', runA)
+    const a1 = await old.work('A1: в работе', 'developer', runA)
     old.commit(a1.id, 'a1.txt')
-    const a2 = old.work('A2: на гейте', 'developer', runA)
+    const a2 = await old.work('A2: на гейте', 'developer', runA)
     old.commit(a2.id, 'a2.txt')
-    old.done(a2.id)
+    await old.done(a2.id)
     assert.equal(old.task(a2.id).status, 'review')
     const [oldGate] = old.gates(a2.id)
     assert.equal(oldGate.agent, 'codex', 'старый гейт — ревьюер проекта')
     // Вопрос воркера ждёт живого координатора — после рестарта координаторов нет.
-    const a3 = old.work('A3: с вопросом', 'developer', runA)
+    const a3 = await old.work('A3: с вопросом', 'developer', runA)
     const q = old.store.ask({ taskId: a3.id, dispatchId: old.task(a3.id).dispatchId, question: 'Какой вариант?' }, { coordinatorAlive: true })
     const b1 = old.store.createTask({ title: 'B1: готова', roleId: 'developer', runId: runB })
     const i1 = old.store.createTask({ title: 'Входящая', roleId: 'developer' })
@@ -276,42 +276,42 @@ describe('сценарий 1: старый projects.json и доска со ст
     assert.ok(h.store.pendingRequests().some((r) => r.questionId === q.id), 'вопрос без координатора — запрос человеку')
 
     // Открытый dispatch: done → гейт по снимку графа прогона A (reviewer) с ревьюером типа → accept → мерж.
-    h.done(a1.id)
+    await h.done(a1.id)
     const [gateA1] = h.gates(a1.id)
     assert.equal(gateA1.roleId, 'reviewer')
     assert.deepEqual(brief(h.lastLaunch(gateA1.id)), { roleId: 'reviewer', agent: 'codex', model: 'gpt-5-codex' })
-    reviewAccept(h.deps, a1.id)
+    await reviewAccept(h.deps, a1.id)
     assert.equal(h.task(a1.id).status, 'done')
     assert.ok(merged('a1.txt'), 'a1 слита')
-    h.done(gateA1.id)
+    await h.done(gateA1.id)
     assert.equal(h.task(gateA1.id).status, 'done')
 
     // Задача на гейте со старой проверкой: accept → мерж, старая проверка закрывается своим done.
-    reviewAccept(h.deps, a2.id)
+    await reviewAccept(h.deps, a2.id)
     assert.equal(h.task(a2.id).status, 'done')
     assert.ok(merged('a2.txt'), 'a2 слита')
-    h.done(oldGate.id)
+    await h.done(oldGate.id)
     assert.equal(h.task(oldGate.id).status, 'done')
 
     // Прогон без снимка графа — граф типа «repo» (гейт QA на sonnet).
-    h.deps.startWorker(b1.id)
+    await h.deps.startWorker(b1.id)
     assert.deepEqual(brief(h.lastLaunch(b1.id)), { roleId: 'developer', agent: 'claude' })
     h.commit(b1.id, 'b1.txt')
-    h.done(b1.id)
+    await h.done(b1.id)
     const [gateB1] = h.gates(b1.id)
     assert.equal(gateB1.roleId, 'qa')
     assert.deepEqual(brief(h.lastLaunch(gateB1.id)), { roleId: 'qa', agent: 'claude', model: 'sonnet' })
-    reviewAccept(h.deps, b1.id)
+    await reviewAccept(h.deps, b1.id)
     assert.equal(h.task(b1.id).status, 'done')
     assert.ok(merged('b1.txt'))
 
     // «Входящие» — тип проекта по умолчанию, то есть тот же «repo» и его граф (изменение поведения, docs).
     assert.equal(pm.resolveRun(PID, inboxId).typeId, LEGACY_TID)
-    h.deps.startWorker(i1.id)
+    await h.deps.startWorker(i1.id)
     h.commit(i1.id, 'i1.txt')
-    h.done(i1.id)
+    await h.done(i1.id)
     assert.equal(h.gates(i1.id)[0]?.roleId, 'qa')
-    reviewAccept(h.deps, i1.id)
+    await reviewAccept(h.deps, i1.id)
     assert.ok(merged('i1.txt'))
 
     // Повторный старт: миграция не повторяется, файл не переписывается, типы прогонов те же.
@@ -325,7 +325,7 @@ describe('сценарий 1: старый projects.json и доска со ст
 })
 
 describe('сценарий 2: один проект, две глобальные задачи разных типов', () => {
-  it('«Документация» и «Бэкенд»: у координаторов и воркеров свои агенты и модели, у задач свои графы', () => {
+  it('«Документация» и «Бэкенд»: у координаторов и воркеров свои агенты и модели, у задач свои графы', async () => {
     const pm = newProjectManager()
     const pid = pm.add(repo).id
     // Исполнителя встроенного типа меняют на месте, без копии.
@@ -361,29 +361,29 @@ describe('сценарий 2: один проект, две глобальные
 
     // Роли — только типа своего прогона: программиста у «Документации» нет.
     const stray = h.store.createTask({ title: 'Код в доках', roleId: 'developer', runId: runD })
-    assert.throws(() => h.deps.startWorker(stray.id), /роли «developer» нет/)
+    await assert.rejects(async () => h.deps.startWorker(stray.id), /роли «developer» нет/)
     assert.equal(h.task(stray.id).status, stray.status, 'воркер не стартовал, задача не сдвинулась')
     assert.equal(h.task(stray.id).dispatchId, undefined)
 
-    const d1 = h.work('Страница API', 'writer', runD)
-    const b1 = h.work('Ручка /users', 'developer', runB)
+    const d1 = await h.work('Страница API', 'writer', runD)
+    const b1 = await h.work('Ручка /users', 'developer', runB)
     assert.deepEqual(brief(h.lastLaunch(d1.id)), { roleId: 'writer', agent: 'claude', model: 'haiku' })
     assert.deepEqual(brief(h.lastLaunch(b1.id)), { roleId: 'developer', agent: 'claude' })
     assert.equal(pm.resolveRun(pid, runB).agentRules, backend.settings.agentRules, 'правила агентов — типа прогона')
     assert.equal(pm.resolveRun(pid, runD).agentRules, docs.settings.agentRules)
     h.commit(d1.id, 'api.md')
     h.commit(b1.id, 'users.ts')
-    h.done(d1.id)
-    h.done(b1.id)
+    await h.done(d1.id)
+    await h.done(b1.id)
 
     // «Документация»: техническая проверка, затем читатель; подготовку одиночная задача не проходит.
     assert.equal(h.task(d1.id).stage?.nodeId, 'facts')
     assert.deepEqual(h.gates(d1.id).map((g) => g.roleId), ['reviewer'])
-    reviewAccept(h.deps, d1.id)
+    await reviewAccept(h.deps, d1.id)
     assert.equal(h.task(d1.id).stage?.nodeId, 'review')
     const approval = h.store.pendingRequests().find((r) => r.taskId === d1.id && r.kind === 'approval')
     assert.ok(approval, 'запрос человеку на ревью')
-    resolveHumanRequest(h.store, repo, approval.id, { action: 'accept' }, h.deps.startWorker, (r) => approvalResolved(h.deps, r))
+    await resolveHumanRequest(h.store, repo, approval.id, { action: 'accept' }, h.deps.startWorker, (r) => approvalResolved(h.deps, r))
     assert.equal(h.task(d1.id).status, 'done')
     assert.ok(merged('api.md'))
 
@@ -391,16 +391,16 @@ describe('сценарий 2: один проект, две глобальные
     assert.equal(h.store.pendingRequests().some((r) => r.taskId === b1.id), false)
     const [review] = h.gates(b1.id)
     assert.deepEqual(brief(h.lastLaunch(review.id)), { roleId: 'reviewer', agent: 'claude', model: 'opus' })
-    reviewAccept(h.deps, b1.id)
+    await reviewAccept(h.deps, b1.id)
     assert.equal(h.task(b1.id).stage?.nodeId, 'tests')
     const tests = h.gates(b1.id).at(-1)!
     assert.equal(tests.roleId, 'qa')
-    reviewAccept(h.deps, b1.id)
+    await reviewAccept(h.deps, b1.id)
     assert.equal(h.task(b1.id).status, 'done')
     assert.ok(merged('users.ts'))
   })
 
-  it('гейт берёт проверяющего из типа прогона: два одновременных прогона, ревьюеры на разных агентах и моделях', () => {
+  it('гейт берёт проверяющего из типа прогона: два одновременных прогона, ревьюеры на разных агентах и моделях', async () => {
     const pm = newProjectManager()
     const pid = pm.add(repo).id
     const withReviewer = (patch: Partial<Role>): Role[] => DEFAULT_ROLES.map((r) => (r.id === 'reviewer' ? { ...r, ...patch } : { ...r }))
@@ -410,13 +410,13 @@ describe('сценарий 2: один проект, две глобальные
     const runA = h.store.createGlobalTask({ title: 'A', type: taskScope(pm.runType(pid, ta.id)) }).id
     const runB = h.store.createGlobalTask({ title: 'B', type: taskScope(pm.runType(pid, tb.id)) }).id
 
-    const a = h.work('Задача A', 'developer', runA)
-    const b = h.work('Задача B', 'developer', runB)
+    const a = await h.work('Задача A', 'developer', runA)
+    const b = await h.work('Задача B', 'developer', runB)
     h.commit(a.id, 'a.txt')
     h.commit(b.id, 'b.txt')
     // Вперемешку: B сдаёт первой, A — второй, пока проверка B ещё идёт.
-    h.done(b.id)
-    h.done(a.id)
+    await h.done(b.id)
+    await h.done(a.id)
     const [gateA] = h.gates(a.id)
     const [gateB] = h.gates(b.id)
     assert.equal(gateA.agent, 'claude')
@@ -426,23 +426,23 @@ describe('сценарий 2: один проект, две глобальные
 
     // Роли живые: смена модели ревьюера типа B действует на следующую проверку B и не трогает A.
     pm.patchTaskType(tb.id, { roles: withReviewer({ agent: 'codex', model: 'gpt-5.5-mini' }) })
-    reviewReject(h.deps, b.id, 'нет тестов')
-    h.done(gateB.id)
+    await reviewReject(h.deps, b.id, 'нет тестов')
+    await h.done(gateB.id)
     h.commit(b.id, 'b-test.txt')
-    h.done(b.id)
+    await h.done(b.id)
     const gateB2 = h.gates(b.id).at(-1)!
     assert.notEqual(gateB2.id, gateB.id)
     assert.deepEqual(brief(h.lastLaunch(gateB2.id)), { roleId: 'reviewer', agent: 'codex', model: 'gpt-5.5-mini' })
     assert.equal(pm.resolveRun(pid, runA).roles.find((r) => r.id === 'reviewer')?.model, 'opus')
 
-    reviewAccept(h.deps, a.id)
-    reviewAccept(h.deps, b.id)
+    await reviewAccept(h.deps, a.id)
+    await reviewAccept(h.deps, b.id)
     assert.ok(merged('a.txt') && merged('b.txt') && merged('b-test.txt'))
   })
 })
 
 describe('сценарий 3: тип удалён посреди прогона', () => {
-  it('воркер, проверка и координатор стартуют по снимку типа; граф — снимок прогона', () => {
+  it('воркер, проверка и координатор стартуют по снимку типа; граф — снимок прогона', async () => {
     const pm = newProjectManager()
     const pid = pm.add(repo).id
     const roles = DEFAULT_ROLES.map((r) =>
@@ -450,7 +450,7 @@ describe('сценарий 3: тип удалён посреди прогона'
     const t = pm.saveTaskType({ title: 'Временный', settings: { roles, workflow: qaWorkflow(roles), agentRules: 'правила типа', permissionMode: 'acceptEdits' } })
     const h = appHarness(pm, pid)
     const runId = startCoordinator(pm, h, pid, 'Цель', t.id)
-    const t1 = h.work('Первая', 'developer', runId)
+    const t1 = await h.work('Первая', 'developer', runId)
     assert.deepEqual(brief(h.lastLaunch(t1.id)), { roleId: 'developer', agent: 'codex', model: 'gpt-5-codex' })
 
     pm.deleteTaskType(t.id)
@@ -463,13 +463,13 @@ describe('сценарий 3: тип удалён посреди прогона'
     assert.equal(h.store.getGlobalTask(runId).typeTitle, 'Временный')
     assert.equal(coordinatorOf(pm, pid, runId)?.model, 'opus', 'повторный запуск координатора — по снимку')
 
-    const t2 = h.work('Вторая', 'developer', runId)
+    const t2 = await h.work('Вторая', 'developer', runId)
     assert.deepEqual(brief(h.lastLaunch(t2.id)), { roleId: 'developer', agent: 'codex', model: 'gpt-5-codex' })
     h.commit(t1.id, 't1.txt')
-    h.done(t1.id)
+    await h.done(t1.id)
     const [gate] = h.gates(t1.id)
     assert.equal(gate?.roleId, 'qa', 'граф — снимок прогона (гейт QA), а не дефолтный по ролям')
-    reviewAccept(h.deps, t1.id)
+    await reviewAccept(h.deps, t1.id)
     assert.equal(h.task(t1.id).status, 'done')
     assert.ok(merged('t1.txt'))
 
@@ -517,7 +517,7 @@ describe('сценарий 3а: заготовку типа изменили и 
 })
 
 describe('сценарий 4: тип проекта по умолчанию сменили до первой загрузки доски', () => {
-  it('старые прогоны всё равно получают тип «repo» (legacyTypeId), «Входящие» — новый тип по умолчанию', () => {
+  it('старые прогоны всё равно получают тип «repo» (legacyTypeId), «Входящие» — новый тип по умолчанию', async () => {
     const old = legacyBoard()
     const runId = old.store.createRun('Старый прогон', undefined, legacyDefaultWorkflow(LEGACY_ROLES)).id
     const t = old.store.createTask({ title: 'Старая задача', roleId: 'developer', runId })
@@ -534,13 +534,13 @@ describe('сценарий 4: тип проекта по умолчанию см
     assert.equal(h.store.getRun(runId)?.typeId, LEGACY_TID)
     assert.equal(pm.resolveRun(PID, runId).roles.find((r) => r.id === 'reviewer')?.agent, 'codex', 'роли — бывшие роли проекта')
     assert.equal(pm.resolveRun(PID, inboxId).typeId, 'docs')
-    h.deps.startWorker(t.id)
+    await h.deps.startWorker(t.id)
     assert.deepEqual(brief(h.lastLaunch(t.id)), { roleId: 'developer', agent: 'claude' })
-    h.deps.startWorker(i.id)
+    await h.deps.startWorker(i.id)
     assert.deepEqual(brief(h.lastLaunch(i.id)), { roleId: 'writer', agent: 'claude', model: 'sonnet' })
   })
 
-  it('тип «repo» удалили до первой загрузки доски: старые прогоны сохраняют роли проекта', () => {
+  it('тип «repo» удалили до первой загрузки доски: старые прогоны сохраняют роли проекта', async () => {
     const old = legacyBoard()
     const runId = old.store.createRun('Старый прогон', undefined, legacyDefaultWorkflow(LEGACY_ROLES)).id
     const t = old.store.createTask({ title: 'Старая задача', roleId: 'developer', runId })
@@ -553,7 +553,7 @@ describe('сценарий 4: тип проекта по умолчанию см
     // Прогон помечен типом «repo» со снимком (как прогон удалённого типа) и идёт по ролям проекта.
     assert.equal(h.store.getRun(runId)?.typeId, LEGACY_TID)
     assert.equal(pm.resolveRun(PID, runId).roles.find((r) => r.id === 'reviewer')?.agent, 'codex')
-    assert.doesNotThrow(() => h.deps.startWorker(t.id))
+    await assert.doesNotReject(async () => h.deps.startWorker(t.id))
   })
 
   it('тип «repo» изменили до первой загрузки доски: снимок старых прогонов — до правки, как у прогона, созданного до неё', () => {

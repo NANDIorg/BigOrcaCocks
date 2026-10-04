@@ -1,9 +1,11 @@
+import { createAsyncProjectCommandExecutor, type AsyncProjectCommandHost } from './async-project-commands.ts'
+import { executionSource } from './execution-context.ts'
 import type { HumanRequestCommands, HumanRequestCommandName, HumanResolutionInput, RequestListOptions } from '@orca-board/contracts'
-import { CommandError, createProjectCommandExecutor, type ProjectCommandHost } from './project-commands.ts'
+import { CommandError, createProjectCommandExecutor } from './project-commands.ts'
 import { commandAttachmentsFrom, commandFields, commandInputError, commandString } from './command-input.ts'
 import { createReviewOperations, type ReviewOperationHost, type ReviewProject } from './review-operations.ts'
 
-export interface HumanRequestCommandHost extends ReviewOperationHost, ProjectCommandHost<ReviewProject, HumanRequestCommandName> {}
+export interface HumanRequestCommandHost extends ReviewOperationHost, AsyncProjectCommandHost<ReviewProject, HumanRequestCommandName> {}
 
 function resolutionFrom(raw: unknown): HumanResolutionInput {
   const input = commandFields(raw, ['action', 'text', 'optionId'])
@@ -16,6 +18,7 @@ function resolutionFrom(raw: unknown): HumanResolutionInput {
 
 export function createHumanRequestCommands(host: HumanRequestCommandHost): HumanRequestCommands {
   const execute = createProjectCommandExecutor(host)
+  const executeAsync = createAsyncProjectCommandExecutor(host)
   const operations = createReviewOperations(host)
   return {
     list: (context, raw) => execute(context, 'requests.list', () => {
@@ -26,13 +29,14 @@ export function createHumanRequestCommands(host: HumanRequestCommandHost): Human
       return project => project.store.listRequests().filter(request =>
         (!options.runId || request.runId === options.runId) && (!options.pending || request.status === 'pending'))
     }),
-    resolve: (context, rawId, raw, rawImages) => execute(context, 'requests.resolve', () => {
+    resolve: (context, rawId, raw, rawImages) => executeAsync(context, 'requests.resolve', () => {
       const id = commandString(rawId, 'requestId')
       const resolution = resolutionFrom(raw)
       const images = commandAttachmentsFrom(rawImages)
-      return project => {
+      return (project, context, scope) => {
+        const scoped = { ...project, projectId: context.projectId, isCurrent: () => { scope.guard(); return true }, source: executionSource(context.actor.kind) }
         if (!project.store.getRequest(id)) throw new CommandError('command.requestNotFound', { requestId: id })
-        return operations.resolve(project, id, resolution, images)
+        return operations.resolve(scoped, id, resolution, images)
       }
     }),
     answer: (context, rawId, rawAnswer) => execute(context, 'questions.answer', () => {

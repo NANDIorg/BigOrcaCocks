@@ -18,23 +18,23 @@ export function createWorkflowServices(deps: WorkflowServiceDeps) {
 
   function forProject(project: RunWorkflowDeps) {
     return {
-      handleEvents(events: readonly OrcaEvent[]): void {
-        task.handleWorkflowEvents(project, events)
-        run.handleRunWorkflowEvents(project, events)
+      async handleEvents(events: readonly OrcaEvent[]): Promise<void> {
+        await task.handleWorkflowEvents(project, events)
+        await run.handleRunWorkflowEvents(project, events)
       },
-      resumeStuckStages(): void {
-        task.resumeStuckStages(project)
+      resumeStuckStages(): Promise<void> {
+        return task.resumeStuckStages(project)
       },
-      resolveHumanRequest(id: string, resolution: RequestResolution): ResolveOutcome {
-        return review.resolveHumanRequest(project.store, project.repoRoot, id, resolution, project.startWorker, request => {
-          if (!run.handleRunRequest(project, request)) task.approvalResolved(project, request)
-        }, project.mergeTarget)
+      async resolveHumanRequest(id: string, resolution: RequestResolution): Promise<ResolveOutcome> {
+        return review.resolveHumanRequest(project.store, project.repoRoot, id, resolution, project.startWorker, async request => {
+          if (!await run.handleRunRequest(project, request)) await task.approvalResolved(project, request)
+        }, project.mergeTarget, project)
       },
-      reviewDecision(taskId: string, outcome: 'accept' | 'reject', text?: string, images?: string[]): Task | undefined {
+      async reviewDecision(taskId: string, outcome: 'accept' | 'reject', text?: string, images?: string[]): Promise<Task | undefined> {
         if (run.isRunGate(project.store.getTask(taskId))) {
-          run.runGateDecision(project, taskId, outcome, text, images)
+          await run.runGateDecision(project, taskId, outcome, text, images)
         } else if (outcome === 'accept') {
-          task.reviewAccept(project, taskId, text)
+          await task.reviewAccept(project, taskId, text)
         } else {
           return task.reviewReject(project, taskId, text ?? '', images)
         }

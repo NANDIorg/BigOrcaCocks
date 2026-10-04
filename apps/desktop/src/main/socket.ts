@@ -21,9 +21,11 @@ import { createTaskWorkerLifecycle, answerQuestionWithLiveness, listRunsWithCoun
  * одна строка JSON-ответа. `check --wait` и `ask` держат соединение до события.
  * `check --follow` — стрим: по строке `{id, ok, result: {event}}` на событие, пока клиент не закроет сокет.
  */
+type EffectResult<T> = T | Promise<T>
+
 export interface ProjectDeps {
   store: TaskStore
-  startWorker(taskId: string): { ptyId: string; dispatchId: string; worktree: string; branch: string }
+  startWorker(taskId: string): EffectResult<{ ptyId: string; dispatchId: string; worktree: string; branch: string }>
   /**
    * Остановить воркеров задачи: dispatch'и закрываются как unknown без эскалации, PTY убиваются;
    * задача из in_progress — в ready. Возвращает id закрытых dispatch'ей.
@@ -31,7 +33,7 @@ export interface ProjectDeps {
   stopWorker(taskId: string): { stopped: string[] }
   review(taskId: string): unknown
   /** `review accept`: на этапе проверки — исход accept по воркфлоу, иначе прежняя приёмка (src/main/workflow.ts). */
-  accept(taskId: string, decision?: string): void
+  accept(taskId: string, decision?: string): unknown
   /** `review reject`: на этапе проверки — исход reject по воркфлоу, иначе ready с замечаниями. */
   reject(taskId: string, feedback: string): unknown
   /**
@@ -39,13 +41,13 @@ export interface ProjectDeps {
    * Только через него: store делает лишь переход, а проверку, запрос человеку, мерж и конец создаёт движок прогона.
    * `nodeId` — какой этап закрыть (`--stage`, пути разветвления); нет — единственный открытый.
    */
-  finishStage(runId: string, summary?: string, nodeId?: string): { run: Run; action: WfAction }
+  finishStage(runId: string, summary?: string, nodeId?: string): EffectResult<{ run: Run; action: WfAction }>
   /**
    * `decision choose`: агент выбрал вариант ноды «Решение ИИ» — граф идёт по ребру варианта, решение с `by: 'agent'`
    * пишется в историю (`runDecision` в workflow-run.ts). `option` — как ввёл агент (id или метка): сопоставляет с
    * вариантами и проверяет задачу-решатель движок. Нет метода — движка решений в main нет, команда отвечает ошибкой.
    */
-  decide?(taskId: string, option: string, reason: string): { runId: string; nodeId: string; optionId: string; label: string; to: string }
+  decide?(taskId: string, option: string, reason: string): EffectResult<{ runId: string; nodeId: string; optionId: string; label: string; to: string }>
   /** `decision escalate`: передать решение человеку — запрос `decision` с теми же вариантами; повтор возвращает тот же. */
   escalateDecision?(taskId: string, reason: string): { requestId: string }
   /** Решение запроса к человеку (review.ts resolveHumanRequest): accept с git-частью, clarify/restart со стартом воркера. */
@@ -54,9 +56,9 @@ export interface ProjectDeps {
    * Без runId — новый прогон (глобальная задача) типа `typeId` (нет — типа проекта по умолчанию; недоступный
    * проекту — ошибка); с runId — повторный запуск на существующей.
    */
-  startCoordinator(objective: string, runId?: string, typeId?: string): string
+  startCoordinator(objective: string, runId?: string, typeId?: string): EffectResult<string>
   /** Удалить глобальную задачу: живой координатор — ошибка, терминалы подзадач закрываются. */
-  deleteGlobalTask(runId: string, cascade: boolean): { deleted: string; tasks: string[] }
+  deleteGlobalTask(runId: string, cascade: boolean): EffectResult<{ deleted: string; tasks: string[] }>
   /**
    * Снимок показа для `worker.done` (`showcase-snapshot.ts`): файлы `--show` из worktree задачи запуска — во временную
    * папку в userData. Ошибка — текст агенту, запуск не закрывается. `files` — точки входа после раскрытия папок;
@@ -539,7 +541,7 @@ const handlers: Record<string, Handler> = {
     return { ...deps.stopWorker(id), task: store.getTask(id) }
   },
   // stop + (feedback) + start: работает и на задаче в работе, где worker start падает.
-  'worker.restart': (r, deps, store) => {
+  'worker.restart': async (r, deps, store) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')
     if (r.params.feedback === true) throw new Error('--feedback требует текста')
@@ -555,10 +557,10 @@ const handlers: Record<string, Handler> = {
     const { stopped } = deps.stopWorker(id)
     const feedback = str(r.params.feedback)?.trim()
     if (feedback) store.updateTask(id, { feedback })
-    return { stopped, ...deps.startWorker(id) }
+    return { stopped, ...await deps.startWorker(id) }
   },
   // Переоткрыть задачу в ready (feedback — по желанию); --start — сразу запустить воркера.
-  'task.reopen': (r, deps, store) => {
+  'task.reopen': async (r, deps, store) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')
     if (r.params.feedback === true) throw new Error('--feedback требует текста')
@@ -566,19 +568,19 @@ const handlers: Record<string, Handler> = {
     if (r.params.start === true && existing) assertRoleUsable(deps.resolveRun(existing.runId), deps.agents(), existing.roleId)
     const task = store.reopenTask(id, str(r.params.feedback))
     if (r.params.start !== true) return task
-    return { task, worker: deps.startWorker(id) }
+    return { task, worker: await deps.startWorker(id) }
   },
-  'coordinator.start': (r, deps) => {
+  'coordinator.start': async (r, deps) => {
     // --global — повторный запуск на существующей глобальной задаче (цель — её описание).
     const run = str(r.params.global)
     const typeId = typeParam(r)
     if (run) {
       if (typeId !== undefined) throw new Error('--type задаётся только новой глобальной задаче: у существующей тип уже выбран')
-      return { ptyId: deps.startCoordinator('', run) }
+      return { ptyId: await deps.startCoordinator('', run) }
     }
     const objective = str(r.params.objective)
     if (!objective) throw new Error('--objective обязателен')
-    return { ptyId: deps.startCoordinator(objective, undefined, typeId) }
+    return { ptyId: await deps.startCoordinator(objective, undefined, typeId) }
   },
   'worker.read': (r, _d, store) => {
     const id = str(r.params.dispatch)
@@ -712,10 +714,10 @@ const handlers: Record<string, Handler> = {
     if (!id) throw new Error('--task обязателен')
     return deps.review(id)
   },
-  'review.accept': (r, deps, store) => {
+  'review.accept': async (r, deps, store) => {
     const id = str(r.params.task)
     if (!id) throw new Error('--task обязателен')
-    deps.accept(id, str(r.params.decision))
+    await deps.accept(id, str(r.params.decision))
     return store.getTask(id)
   },
   'review.reject': (r, deps) => {
@@ -958,7 +960,7 @@ const handlers: Record<string, Handler> = {
   // Координатор набрал агентов на этапе «Работа» и закрывает его: граф идёт дальше исходом next. Переход делает
   // store (`finishStage`), эффекты новой ноды — проверка, запрос человеку, мерж — движок прогона: сокет зовёт его
   // `finishStage` из deps, а не store напрямую (`stage_changed` эффектов не запускает).
-  'stage.finish': (r, deps, store) => {
+  'stage.finish': async (r, deps, store) => {
     const id = str(r.params.run)
     if (!id) throw new Error('--run обязателен')
     if (r.params.summary === true) throw new Error('--summary требует текста сводки')
@@ -968,7 +970,7 @@ const handlers: Record<string, Handler> = {
     // store ответит ошибкой со списком), иначе основная позиция, как раньше.
     const open = before?.lanes?.length ? store.runStages(id).filter((s) => s.type === 'work' && !s.arrived) : []
     const from = stageId ?? (open.length === 1 ? open[0].nodeId : before?.stage?.nodeId)
-    const { run, action } = deps.finishStage(id, str(r.params.summary), stageId)
+    const { run, action } = await deps.finishStage(id, str(r.params.summary), stageId)
     return {
       run: id,
       finished: from,

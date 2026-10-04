@@ -21,39 +21,39 @@ beforeEach(() => {
 })
 afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
-it('параллельные прогоны получают разные ветки и не переключают корень', () => {
+it('параллельные прогоны получают разные ветки и не переключают корень', async () => {
   const services = resources(); const board = store()
   const a = board.createGlobalTask({ title: 'First' }); const b = board.createGlobalTask({ title: 'Second' })
-  const ga = services.ensureRunBranch(board, repo, a.id)!
-  const gb = services.ensureRunBranch(board, repo, b.id)!
+  const ga = (await services.ensureRunBranch(board, repo, a.id))!
+  const gb = (await services.ensureRunBranch(board, repo, b.id))!
   assert.equal(ga.branch, `feature/${a.id}-first`)
   assert.equal(gb.branch, `feature/${b.id}-second`)
   assert.equal(git(repo, 'branch', '--show-current'), 'master')
   writeFileSync(join(ga.worktree!, 'first.txt'), 'first')
   assert.equal(existsSync(join(gb.worktree!, 'first.txt')), false)
-  assert.deepEqual(services.mergeTarget(board, repo, { runId: a.id }), { cwd: ga.worktree, branch: ga.branch })
+  assert.deepEqual(await services.mergeTarget(board, repo, { runId: a.id }), { cwd: ga.worktree, branch: ga.branch })
   assert.throws(() => git(ga.worktree!, 'rev-parse', '--abbrev-ref', '@{u}'))
 })
 
-it('исчезнувший worktree восстанавливается на прежней ветке с сохранённым коммитом', () => {
+it('исчезнувший worktree восстанавливается на прежней ветке с сохранённым коммитом', async () => {
   const services = resources(); const board = store()
   const run = board.createGlobalTask({ title: 'Restore' })
-  const first = services.ensureRunBranch(board, repo, run.id)!
+  const first = (await services.ensureRunBranch(board, repo, run.id))!
   writeFileSync(join(first.worktree!, 'result.md'), 'result')
   git(first.worktree!, 'add', 'result.md'); git(first.worktree!, 'commit', '-qm', 'result')
   rmSync(first.worktree!, { recursive: true, force: true })
-  const restored = services.ensureRunBranch(board, repo, run.id)!
+  const restored = (await services.ensureRunBranch(board, repo, run.id))!
   assert.equal(restored.branch, first.branch)
   assert.equal(readFileSync(join(restored.worktree!, 'result.md'), 'utf8'), 'result')
 })
 
-it('старый прогон с dispatch без своей ветки продолжает работать в корне', () => {
+it('старый прогон с dispatch без своей ветки продолжает работать в корне', async () => {
   const services = resources(); const board = store()
   const run = board.createGlobalTask({ title: 'Legacy' })
   const task = board.createTask({ title: 'Started', runId: run.id, roleId: 'developer' })
   board.startDispatch(task.id, 'pty_old')
-  assert.equal(services.ensureRunBranch(board, repo, run.id), undefined)
-  assert.deepEqual(services.mergeTarget(board, repo, task), { cwd: repo, branch: 'master' })
+  assert.equal(await services.ensureRunBranch(board, repo, run.id), undefined)
+  assert.deepEqual(await services.mergeTarget(board, repo, task), { cwd: repo, branch: 'master' })
 })
 
 it('негодные флаги роли возвращают вложенные codes ошибки хоста', () => {
@@ -92,11 +92,11 @@ it('частичная запись вложений откатывает тол
   assert.equal(readFileSync(join(runDir, 'file-2-second.txt'), 'utf8'), 'existing')
 })
 
-it('отказ после сохранённого возврата не удаляет файлы, на которые ссылается store', () => {
+it('отказ после сохранённого возврата не удаляет файлы, на которые ссылается store', async () => {
   const services = resources(); const board = store()
   const run = board.createGlobalTask({ title: 'Return' }); board.moveGlobalTask(run.id, 'review')
   let saved: string[] = []
-  assert.throws(() => services.returnRunWithImages(board, repo, run.id, [{ name: 'fix.txt', data: new TextEncoder().encode('fix') }], 'fix', paths => {
+  await assert.rejects(async () => await services.returnRunWithImages(board, repo, run.id, [{ name: 'fix.txt', data: new TextEncoder().encode('fix') }], 'fix', paths => {
     saved = paths; board.returnGlobalTask(run.id, 'fix', paths); throw new Error('spawn failed')
   }), /spawn failed/)
   assert.equal(saved.length, 1)

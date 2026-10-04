@@ -152,33 +152,33 @@ describe('withReturnImages', () => {
   const place = (): ReturnType<typeof workerImagesPlace> => ({ cwd: tmp, ownerId: 'o1', subdir: '' })
   const dirs = (): string[] => returnDirs(path.join(tmp, ATTACHMENTS_DIR, 'o1'))
 
-  it('без картинок — apply([]), файлы не создаются, место не вычисляется', () => {
+  it('без картинок — apply([]), файлы не создаются, место не вычисляется', async () => {
     let placed = false
-    const out = withReturnImages(store, () => { placed = true; return place() }, undefined, 'текст', (paths) => paths.length)
+    const out = await withReturnImages(store, () => { placed = true; return place() }, undefined, 'текст', (paths) => paths.length)
     assert.equal(out, 0)
     assert.equal(placed, false)
     assert.equal(existsSync(path.join(tmp, ATTACHMENTS_DIR)), false)
-    assert.equal(withReturnImages(store, place, [], 'текст', (paths) => paths.length), 0)
+    assert.equal(await withReturnImages(store, place, [], 'текст', (paths) => paths.length), 0)
   })
 
-  it('вложения без текста, не массив, пустой файл, слишком много — понятные ошибки до записи файлов', () => {
+  it('вложения без текста, не массив, пустой файл, слишком много — понятные ошибки до записи файлов', async () => {
     const key = (input: unknown, text: string | undefined) =>
-      (() => withReturnImages(store, place, input, text, () => 1))
-    assert.throws(key([png()], '  '), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
-    assert.throws(key([png()], undefined), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
-    assert.throws(key('картинка', 'т'), (e) => e instanceof OrcaError && e.key === 'attachments.invalid')
-    assert.throws(key([{ mime: 'text/plain', data: new Uint8Array(0), name: 'empty.txt' }], 'т'), (e) => e instanceof OrcaError && e.key === 'attachments.invalid')
-    assert.throws(key([{ mime: 'application/pdf', data: new Uint8Array(ATTACHMENT_LIMITS.maxBytes + 1) }], 'т'), /больше 25 МБ/)
-    assert.throws(key(Array.from({ length: 9 }, () => png()), 'т'), /не больше 8/)
+      (async () => await withReturnImages(store, place, input, text, () => 1))
+    await assert.rejects(async () => await (key([png()], '  '))(), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
+    await assert.rejects(async () => await (key([png()], undefined))(), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
+    await assert.rejects(async () => await (key('картинка', 'т'))(), (e) => e instanceof OrcaError && e.key === 'attachments.invalid')
+    await assert.rejects(async () => await (key([{ mime: 'text/plain', data: new Uint8Array(0), name: 'empty.txt' }], 'т'))(), (e) => e instanceof OrcaError && e.key === 'attachments.invalid')
+    await assert.rejects(async () => await (key([{ mime: 'application/pdf', data: new Uint8Array(ATTACHMENT_LIMITS.maxBytes + 1) }], 'т'))(), /больше 25 МБ/)
+    await assert.rejects(async () => await (key(Array.from({ length: 9 }, () => png()), 'т'))(), /не больше 8/)
     assert.equal(existsSync(path.join(tmp, ATTACHMENTS_DIR)), false, 'ничего не записано')
   })
 
-  it('apply упал, store не сослался на файлы — папка возврата удалена; сослался — файлы остаются', () => {
-    assert.throws(() => withReturnImages(store, place, [png()], 'т', () => { throw new Error('store отказал') }), /store отказал/)
+  it('apply упал, store не сослался на файлы — папка возврата удалена; сослался — файлы остаются', async () => {
+    await assert.rejects(async () => await withReturnImages(store, place, [png()], 'т', () => { throw new Error('store отказал') }), /store отказал/)
     assert.equal(dirs().length, 0)
 
     const task = store.createTask({ title: 'T' })
-    assert.throws(() => withReturnImages(store, place, [png()], 'т', (paths) => {
+    await assert.rejects(async () => await withReturnImages(store, place, [png()], 'т', (paths) => {
       store.rejectReview(task.id, 'т', paths)
       throw new Error('запуск воркера упал')
     }), /запуск воркера упал/)
@@ -196,21 +196,21 @@ describe('workerImagesPlace / coordinatorImagesPlace', () => {
     assert.throws(() => workerImagesPlace(undefined), (e) => e instanceof OrcaError && e.key === 'attachments.noWorktree')
   })
 
-  it('координатор: worktree ветки глобальной задачи; прогон без ветки (работал в корне) — корень репозитория', () => {
+  it('координатор: worktree ветки глобальной задачи; прогон без ветки (работал в корне) — корень репозитория', async () => {
     const { run, runTree } = setup()
-    assert.deepEqual(coordinatorImagesPlace(store, repo, run.id), { cwd: runTree, ownerId: run.id, subdir: 'returns' })
+    assert.deepEqual(await coordinatorImagesPlace(store, repo, run.id), { cwd: runTree, ownerId: run.id, subdir: 'returns' })
     const legacy = store.createGlobalTask({ title: 'старая' })
     const t = store.createTask({ title: 'x', runId: legacy.id })
     store.startDispatch(t.id, 'pty_x')
-    assert.equal(coordinatorImagesPlace(store, repo, legacy.id).cwd, repo, 'воркеры уже работали в корне — ветку не заводим')
+    assert.equal((await coordinatorImagesPlace(store, repo, legacy.id)).cwd, repo, 'воркеры уже работали в корне — ветку не заводим')
   })
 })
 
 describe('resolveWithImages: «Уточнить» и «Вернуть» запроса', () => {
-  it('«Уточнить» ответа: файлы в worktree воркера, в решении — пути; воркер увидит их в промпте', () => {
+  it('«Уточнить» ответа: файлы в worktree воркера, в решении — пути; воркер увидит их в промпте', async () => {
     const { task, taskTree } = setup({ answerFor: 'human' })
     const req = store.pendingRequests().find((r) => r.kind === 'answer')!
-    resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'глубже, см. скриншот' }, [png(), jpg], (r) => store.resolveRequest(req.id, r))
+    await resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'глубже, см. скриншот' }, [png(), jpg], (r) => store.resolveRequest(req.id, r))
     const images = store.getTask(task.id)!.feedbackImages!
     assert.equal(images.length, 2)
     assert.ok(images.every((p) => p.startsWith(path.join(taskTree, ATTACHMENTS_DIR, task.id, 'ret_'))))
@@ -220,46 +220,46 @@ describe('resolveWithImages: «Уточнить» и «Вернуть» запр
     assert.ok(images.every((p) => existsSync(p)))
   })
 
-  it('пути из resolution.images, присланные renderer-ом или сокетом, вырезаются — с картинками и без них', () => {
+  it('пути из resolution.images, присланные renderer-ом или сокетом, вырезаются — с картинками и без них', async () => {
     const { task } = setup({ answerFor: 'human' })
     const forged = ['/etc/passwd']
     const req = store.pendingRequests().find((r) => r.kind === 'answer')!
-    resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'подробнее', images: forged }, undefined, (r) => store.resolveRequest(req.id, r))
+    await resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'подробнее', images: forged }, undefined, (r) => store.resolveRequest(req.id, r))
     assert.equal(store.getTask(task.id)!.feedbackImages, undefined)
     assert.equal(store.getRequest(req.id)!.resolution?.images, undefined)
 
     const again = setup({ answerFor: 'human' })
     const req2 = store.pendingRequests().find((r) => r.taskId === again.task.id)!
-    resolveWithImages(store, repo, req2.id, { action: 'clarify', text: 'ещё', images: forged }, [png()], (r) => store.resolveRequest(req2.id, r))
+    await resolveWithImages(store, repo, req2.id, { action: 'clarify', text: 'ещё', images: forged }, [png()], (r) => store.resolveRequest(req2.id, r))
     const got = store.getTask(again.task.id)!.feedbackImages!
     assert.equal(got.length, 1)
     assert.ok(!got.includes(forged[0]))
     assert.deepEqual(stripResolutionImages({ action: 'accept' as const, images: forged }), { action: 'accept' })
   })
 
-  it('«Вернуть» approval прогона (без задачи) — файлы в cwd координатора, подпапка returns; «Вернуть» approval задачи — worktree воркера', () => {
+  it('«Вернуть» approval прогона (без задачи) — файлы в cwd координатора, подпапка returns; «Вернуть» approval задачи — worktree воркера', async () => {
     const { run, runTree, task, taskTree } = setup({ scope: 'run' })
     const runReq = store.requestRunApproval(run.id, { nodeId: 'check', title: 'Проверка' })
-    resolveWithImages(store, repo, runReq.id, { action: 'reject', text: 'не так' }, [png()], (r) => store.resolveRequest(runReq.id, r))
+    await resolveWithImages(store, repo, runReq.id, { action: 'reject', text: 'не так' }, [png()], (r) => store.resolveRequest(runReq.id, r))
     const [c] = store.getRequest(runReq.id)!.resolution!.images!
     assert.ok(c.startsWith(path.join(runTree, ATTACHMENTS_DIR, run.id, 'returns', 'ret_')), c)
 
     const taskReq = store.requestApproval(task.id, { nodeId: 'review', title: 'Ревью' })
-    resolveWithImages(store, repo, taskReq.id, { action: 'reject', text: 'поправь' }, [jpg], (r) => store.resolveRequest(taskReq.id, r))
+    await resolveWithImages(store, repo, taskReq.id, { action: 'reject', text: 'поправь' }, [jpg], (r) => store.resolveRequest(taskReq.id, r))
     const [w] = store.getTask(task.id)!.feedbackImages!
     assert.ok(w.startsWith(path.join(taskTree, ATTACHMENTS_DIR, task.id, 'ret_')), w)
   })
 
-  it('картинки к «Принять»/«Ответить» — ошибка, запрос остаётся ждать; нет worktree — ошибка до записи в store', () => {
+  it('картинки к «Принять»/«Ответить» — ошибка, запрос остаётся ждать; нет worktree — ошибка до записи в store', async () => {
     const { run, task, taskTree } = setup({ answerFor: 'human' })
     const req = store.pendingRequests().find((r) => r.kind === 'answer')!
-    assert.throws(
-      () => resolveWithImages(store, repo, req.id, { action: 'accept', text: 'ок' }, [png()], (r) => store.resolveRequest(req.id, r)),
+    await assert.rejects(
+      async () => await resolveWithImages(store, repo, req.id, { action: 'accept', text: 'ок' }, [png()], (r) => store.resolveRequest(req.id, r)),
       (e) => e instanceof OrcaError && e.key === 'attachments.notForAction'
     )
     rmSync(taskTree, { recursive: true })
-    assert.throws(
-      () => resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'подробнее' }, [png()], (r) => store.resolveRequest(req.id, r)),
+    await assert.rejects(
+      async () => await resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'подробнее' }, [png()], (r) => store.resolveRequest(req.id, r)),
       (e) => e instanceof OrcaError && e.key === 'attachments.noWorktree'
     )
     assert.equal(store.getRequest(req.id)!.status, 'pending', 'текст остаётся в форме, запрос не решён')
@@ -267,10 +267,10 @@ describe('resolveWithImages: «Уточнить» и «Вернуть» запр
     assert.ok(store.getRun(run.id))
   })
 
-  it('решённый или несуществующий запрос: обычная ошибка store, файлы не пишутся', () => {
+  it('решённый или несуществующий запрос: обычная ошибка store, файлы не пишутся', async () => {
     const { taskTree } = setup({ answerFor: 'human' })
-    assert.throws(
-      () => resolveWithImages(store, repo, 'req_нет', { action: 'clarify', text: 'т' }, [png()], (r) => store.resolveRequest('req_нет', r)),
+    await assert.rejects(
+      async () => await resolveWithImages(store, repo, 'req_нет', { action: 'clarify', text: 'т' }, [png()], (r) => store.resolveRequest('req_нет', r)),
       /request not found/
     )
     assert.equal(existsSync(path.join(taskTree, ATTACHMENTS_DIR)), false)
@@ -278,33 +278,33 @@ describe('resolveWithImages: «Уточнить» и «Вернуть» запр
 })
 
 describe('rejectWithImages: «Вернуть» задачи из ревью', () => {
-  it('обычная задача: воркер, worktree задачи; пути — в feedbackImages и в промпте воркера', () => {
+  it('обычная задача: воркер, worktree задачи; пути — в feedbackImages и в промпте воркера', async () => {
     const { task, taskTree } = setup()
-    rejectWithImages(store, repo, task.id, [png()], 'кнопка не там', (paths) => store.rejectReview(task.id, 'кнопка не там', paths))
+    await rejectWithImages(store, repo, task.id, [png()], 'кнопка не там', (paths) => store.rejectReview(task.id, 'кнопка не там', paths))
     const [p] = store.getTask(task.id)!.feedbackImages!
     assert.ok(p.startsWith(path.join(taskTree, ATTACHMENTS_DIR, task.id, 'ret_')))
     assert.ok(workerTaskPrompt(store.getTask(task.id)!).includes(`\`${p}\``))
   })
 
-  it('проверка ветки глобальной задачи (gate): читает координатор — cwd прогона, подпапка returns', () => {
+  it('проверка ветки глобальной задачи (gate): читает координатор — cwd прогона, подпапка returns', async () => {
     const { run, runTree } = setup({ scope: 'run' })
     const gate = store.createTask({ title: 'Проверка ветки', runId: run.id, gateFor: { runId: run.id, nodeId: 'review' } })
     let got: string[] = []
-    rejectWithImages(store, repo, gate.id, [png()], 'замечание', (paths) => { got = paths })
+    await rejectWithImages(store, repo, gate.id, [png()], 'замечание', (paths) => { got = paths })
     assert.equal(got.length, 1)
     assert.ok(got[0].startsWith(path.join(runTree, ATTACHMENTS_DIR, run.id, 'returns', 'ret_')), got[0])
   })
 
-  it('без картинок — apply([]) и никаких файлов', () => {
+  it('без картинок — apply([]) и никаких файлов', async () => {
     const { task, taskTree } = setup()
-    rejectWithImages(store, repo, task.id, undefined, 'просто текст', (paths) => store.rejectReview(task.id, 'просто текст', paths))
+    await rejectWithImages(store, repo, task.id, undefined, 'просто текст', (paths) => store.rejectReview(task.id, 'просто текст', paths))
     assert.equal(store.getTask(task.id)!.feedbackImages, undefined)
     assert.equal(existsSync(path.join(taskTree, ATTACHMENTS_DIR)), false)
   })
 })
 
 describe('returnRunWithImages: «Вернуть в работу» глобальной задачи', () => {
-  it('старый формат: пути в Run.returns и в цели повторного запуска координатора', () => {
+  it('старый формат: пути в Run.returns и в цели повторного запуска координатора', async () => {
     const run = store.createRun('Сделать логин')
     store.setRunPty(run.id, 'pty_c', 'claude')
     const runTree = path.join(tmp, 'legacy-tree')
@@ -315,7 +315,7 @@ describe('returnRunWithImages: «Вернуть в работу» глобаль
     store.moveTask(t.id, 'done')
     store.finishRun(run.id, 'готово')
 
-    returnRunWithImages(store, repo, run.id, [png(), jpg], 'Поправь по скриншотам', (paths) => store.returnGlobalTask(run.id, 'Поправь по скриншотам', paths))
+    await returnRunWithImages(store, repo, run.id, [png(), jpg], 'Поправь по скриншотам', (paths) => store.returnGlobalTask(run.id, 'Поправь по скриншотам', paths))
     const returned = store.getRun(run.id)!.returns!.at(-1)!
     assert.equal(returned.images!.length, 2)
     assert.ok(returned.images!.every((p) => p.startsWith(path.join(runTree, ATTACHMENTS_DIR, run.id, 'returns', 'ret_')) && existsSync(p)))
@@ -324,14 +324,14 @@ describe('returnRunWithImages: «Вернуть в работу» глобаль
     assert.match(objective, /Воркеры этих файлов не видят/)
   })
 
-  it('пустой текст — ошибка store, файлы удалены (ссылок на них нет)', () => {
+  it('пустой текст — ошибка store, файлы удалены (ссылок на них нет)', async () => {
     const run = store.createRun('цель')
     const runTree = path.join(tmp, 'empty-tree')
     mkdirSync(runTree)
     store.setRunGit(run.id, { branch: 'feature/e', base: 'master', worktree: runTree })
-    assert.throws(() => returnRunWithImages(store, repo, run.id, [png()], ' ', () => 1), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
+    await assert.rejects(async () => await returnRunWithImages(store, repo, run.id, [png()], ' ', () => 1), (e) => e instanceof OrcaError && e.key === 'attachments.needText')
     assert.equal(existsSync(path.join(runTree, ATTACHMENTS_DIR, run.id)), false)
-    assert.throws(() => returnRunWithImages(store, repo, run.id, [png()], 'т', (paths) => store.returnGlobalTask(run.id, ' ', paths)), /напиши, что доделать/)
+    await assert.rejects(async () => await returnRunWithImages(store, repo, run.id, [png()], 'т', (paths) => store.returnGlobalTask(run.id, ' ', paths)), /напиши, что доделать/)
     assert.equal(returnDirs(path.join(runTree, ATTACHMENTS_DIR, run.id, 'returns')).length, 0)
   })
 })
@@ -374,31 +374,31 @@ describe('вложения любых файлов', () => {
     assert.ok(existsSync(ret) && path.basename(ret) === 'file-1-fix.patch')
   })
 
-  it('откат при падении apply: папка возврата с файлами удаляется', () => {
+  it('откат при падении apply: папка возврата с файлами удаляется', async () => {
     const place = (): ReturnType<typeof workerImagesPlace> => ({ cwd: tmp, ownerId: 'o2', subdir: '' })
-    assert.throws(() => withReturnImages(store, place, [file('log.txt'), png()], 'т', (paths) => {
+    await assert.rejects(async () => await withReturnImages(store, place, [file('log.txt'), png()], 'т', (paths) => {
       assert.ok(paths.every((p) => existsSync(p)))
       throw new Error('store отказал')
     }), /store отказал/)
     assert.equal(returnDirs(path.join(tmp, ATTACHMENTS_DIR, 'o2')).length, 0)
   })
 
-  it('весь путь: файл из IPC → .orca-attachments координатора → Run.stageInput.images → промпт координатора', () => {
+  it('весь путь: файл из IPC → .orca-attachments координатора → Run.stageInput.images → промпт координатора', async () => {
     const run = store.createGlobalTask({ title: 'G', type: runTypeInput(presetTaskType('general')!) })
     const runTree = mkdtempSync(path.join(tmp, 'run-tree-'))
     store.setRunGit(run.id, { branch: 'feature/g', base: 'master', worktree: runTree })
     const pdf = file('spec.pdf', '%PDF-1.7 текст', 'application/pdf')
-    returnRunWithImages(store, repo, run.id, [pdf, png()], 'см. спеку', (paths) => store.enterRunStage(run.id, { feedback: 'см. спеку', images: paths }))
+    await returnRunWithImages(store, repo, run.id, [pdf, png()], 'см. спеку', (paths) => store.enterRunStage(run.id, { feedback: 'см. спеку', images: paths }))
     const images = store.getRun(run.id)!.stageInput!.images!
     assert.deepEqual(images.map((p) => path.basename(p)), ['file-1-spec.pdf', 'image-2.png'])
     assert.ok(images.every((p) => p.startsWith(path.join(runTree, ATTACHMENTS_DIR, run.id, 'returns', 'ret_')) && existsSync(p)))
     assert.equal(readFileSync(images[0], 'utf8'), '%PDF-1.7 текст')
   })
 
-  it('пути из resolution.images вырезаются и для файлов; «Уточнить» с файлом — путь в промпте воркера', () => {
+  it('пути из resolution.images вырезаются и для файлов; «Уточнить» с файлом — путь в промпте воркера', async () => {
     const { task, taskTree } = setup({ answerFor: 'human' })
     const req = store.pendingRequests().find((r) => r.kind === 'answer')!
-    resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'лог', images: ['/etc/passwd'] }, [file('trace.log')], (r) => store.resolveRequest(req.id, r))
+    await resolveWithImages(store, repo, req.id, { action: 'clarify', text: 'лог', images: ['/etc/passwd'] }, [file('trace.log')], (r) => store.resolveRequest(req.id, r))
     const [p] = store.getTask(task.id)!.feedbackImages!
     assert.ok(p.startsWith(path.join(taskTree, ATTACHMENTS_DIR, task.id, 'ret_')) && p.endsWith('file-1-trace.log'), p)
     assert.ok(workerTaskPrompt(store.getTask(task.id)!, 'ответ').includes(`\`${p}\``))

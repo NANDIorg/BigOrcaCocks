@@ -34,11 +34,11 @@ function listing(names: string[], truncated = false): ProjectFilesListing {
 }
 
 function fakeApi(opts: { list?: ProjectBranchList | Error; files?: ProjectFilesListing | Error } = {}): InitialCommitApi {
-  const answer = <T>(v: T | Error | undefined): Promise<T> => (v instanceof Error ? Promise.reject(v) : Promise.resolve(v as T))
+  const answer = async <T>(v: T | Error | undefined): Promise<T> => (v instanceof Error ? (await Promise.reject(v)) : (await Promise.resolve(v as T)))
   return {
     createInitialCommit: async () => UNBORN.current,
-    branches: 'list' in opts ? async () => answer(opts.list) : undefined,
-    listFiles: 'files' in opts ? async () => answer(opts.files) : undefined
+    branches: 'list' in opts ? async () => (await answer(opts.list)) : undefined,
+    listFiles: 'files' in opts ? async () => (await answer(opts.files)) : undefined
   }
 }
 

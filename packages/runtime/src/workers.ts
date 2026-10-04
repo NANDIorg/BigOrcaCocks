@@ -3,15 +3,18 @@ import { posix, win32 } from 'node:path'
 import { existsSync, mkdirSync } from 'node:fs'
 import { newId, getAgent, agentSystemPrompt, coordinatorPrompt, workerTaskPrompt,
   type AgentSpec, type AgentLanguage, type BuiltinPrompts, type AssistantSettings, type TaskStore,
-  type Role, type Attachment, type RunTypeInput, type Workflow } from '@orca-board/core'
+  statusSource, type Role, type Attachment, type RunTypeInput, type Workflow } from '@orca-board/core'
 import { assistantEnv, assistantCwd, missingRoleText } from './launch-policy.ts'
 import type { ExecutionResources } from './execution-resources.ts'
 import type { ExecutionMessages } from './execution-messages.ts'
 import type { createSessionRegistry, PtyCommand } from './sessions.ts'
 import type { createAgentLauncher, LaunchOptions } from './agent-launch.ts'
+import { executionProject, type ExecutionContext } from './execution-context.ts'
+import type { EffectScope } from './effect-scope.ts'
+import { CommandError } from './project-commands.ts'
 import type { PermissionMode } from '@orca-board/contracts'
 
-export interface WorkerEnvContext {
+export interface WorkerEnvContext extends ExecutionContext {
   socketPath: string
   projectId: string
   /** Режим разрешений типа задачи прогона (`resolveRunType`). */
@@ -68,7 +71,8 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
   const platform = host.platform ?? process.platform
   const { spawnPty, isAlive, killPty } = sessions
   const { launchAgent } = launcher
-  const { addTaskWorktree, assertHasCommits, projectBranchInfo, setupCommand, taskWorktreePath } = resources.git
+  const { setupCommand, taskWorktreePath, workflowGit, projectBranchInfoAsync } = resources.git
+  const pendingWorkers = new WeakMap<TaskStore, Set<string>>()
   const { roleLaunchExtraArgs, assistantLaunch, resumeObjective, returnGlobalTaskToWork,
     ensureRunBranch, coordinatorImages, attachmentsRoot, clearStartImages, pruneAttachments, writeAttachments } = resources
 
@@ -126,7 +130,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
    * Worktree создаётся рядом с репозиторием: <repo>/../.orca-worktrees/<taskId>. Ветка `orca/<taskId>` ответвляется
    * от ветки глобальной задачи (`ensureRunBranch`), а без неё — от текущего HEAD корня, как раньше.
    */
-  function startWorker(
+  async function startWorker(
     store: TaskStore,
     repoRoot: string,
     ctx: WorkerEnvContext,
@@ -134,7 +138,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     cols = 120,
     rows = 30,
     roleId?: string
-  ): { ptyId: string; dispatchId: string; worktree: string; branch: string } {
+  ): Promise<{ ptyId: string; dispatchId: string; worktree: string; branch: string }> {
     const task = store.getTask(taskId)
     if (!task) {
       // Карточка глобальной задачи — не подзадача: на ней работает координатор, а не воркер.
@@ -147,59 +151,69 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     // Флаги запуска роли разбираются до worktree и dispatch: с негодной строкой задача не должна уйти «в работу».
     const { role, spec, extraArgs } = roleLaunch(ctx, runRoleId, 'worker.cannotStart')
 
-    // Ветку и worktree могла уже назначить нода воркфлоу «Git» (`create_branch`/`checkout`): работаем на них, а не
-    // заводим `orca/<id>`. Нет worktree на диске (конец без мержа, удалили руками) — ставим на ту же ветку.
-    const branch = task.branch ?? `orca/${task.id}`
-    const worktree = task.worktree ?? taskWorktreePath(repoRoot, task.id)
-    const runGit = ensureRunBranch(store, repoRoot, task.runId)
-    let fresh = false
-    if (!existsSync(worktree)) {
-      addTaskWorktree(repoRoot, worktree, branch, runGit?.branch)
-      fresh = true
-    }
-    // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи. Роль этапа «Вопрос
-    // человеку» задачу не меняет (агент задачи остаётся прежним).
-    store.updateTask(task.id, { ...(roleId ? {} : { agent: role.agent }), worktree, branch })
+    let pending = pendingWorkers.get(store)
+    if (!pending) { pending = new Set(); pendingWorkers.set(store, pending) }
+    if (pending.has(taskId)) throw new CommandError('command.conflict', { reason: `Запуск задачи ${taskId} уже готовится` })
+    const project = executionProject(store, repoRoot, ctx)
+    const source = ctx.source ?? statusSource()
+    const scope = resources.effects.capture(project, { taskId }, { source }); pending.add(taskId)
+    let launchScope: EffectScope | undefined
+    try {
+      const branch = task.branch ?? `orca/${task.id}`
+      const worktree = task.worktree ?? taskWorktreePath(repoRoot, task.id)
+      const runGit = await scope.wait(() => ensureRunBranch(store, repoRoot, task.runId, ctx))
+      let fresh = false
+      if (!existsSync(worktree)) {
+        await scope.transaction(workflowGit, repo => repo.addTaskWorktree(worktree, branch, runGit?.branch))
+        fresh = true
+      }
+      // Агент задачи синхронизируется с ролью: роль могли перенастроить после создания задачи. Роль этапа «Вопрос
+      // человеку» задачу не меняет (агент задачи остаётся прежним).
+      scope.commit(() => store.updateTask(task.id, { ...(roleId ? {} : { agent: role.agent }), worktree, branch }))
+      launchScope = resources.effects.capture(project, { taskId }, { source, signal: scope.signal })
 
-    const dispatchId = newId('disp')
-    // Уточнение к задаче-ответу идёт вместе с прошлым ответом: воркер отвечает заново, а не с нуля.
-    const snap = store.snapshot()
-    const previousAnswer = snap.dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
-    // Ответы на вопросы прошлых запусков: перезапуск после ответа человека не должен спрашивать заново.
-    const answers = snap.questions.filter((q) => q.taskId === task.id && q.answeredAt).sort((a, b) => a.createdAt - b.createdAt)
-    // Этап «Работа» графа: его инструкция и требование показа человеку — раздел «Этап» в задании.
-    const stage = task.answerFor
-      ? undefined
-      : store.taskWorkStage(task.id, { roleIds: ctx.roles.map((r) => r.id), ...(ctx.workflow ? { workflow: ctx.workflow } : {}) })
-    const sessionId = agentSessionId(spec)
-    const inv = spec.invoke(agentSystemPrompt(host.prompts.worker, { projectRules: ctx.agentRules, role, language: host.language() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: host.shell(), model: role.model, effort: role.effort, sessionId, extraArgs })
+      const dispatchId = newId('disp')
+      // Уточнение к задаче-ответу идёт вместе с прошлым ответом: воркер отвечает заново, а не с нуля.
+      const snap = store.snapshot()
+      const previousAnswer = snap.dispatches.filter((d) => d.taskId === task.id && d.answer).at(-1)?.answer
+      // Ответы на вопросы прошлых запусков: перезапуск после ответа человека не должен спрашивать заново.
+      const answers = snap.questions.filter((q) => q.taskId === task.id && q.answeredAt).sort((a, b) => a.createdAt - b.createdAt)
+      // Этап «Работа» графа: его инструкция и требование показа человеку — раздел «Этап» в задании.
+      const stage = task.answerFor
+        ? undefined
+        : store.taskWorkStage(task.id, { roleIds: ctx.roles.map((r) => r.id), ...(ctx.workflow ? { workflow: ctx.workflow } : {}) })
+      const sessionId = agentSessionId(spec)
+      const inv = spec.invoke(agentSystemPrompt(host.prompts.worker, { projectRules: ctx.agentRules, role, language: host.language() }), workerTaskPrompt(task, previousAnswer, answers, stage), { permissionMode: ctx.permissionMode, shell: host.shell(), model: role.model, effort: role.effort, sessionId, extraArgs })
 
-    // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
-    // Worktree, который создала нода «Git» до первого запуска, тоже «свежий»: зависимостей в нём ещё нет.
-    const setup = fresh || !snap.dispatches.some((d) => d.taskId === task.id) ? setupCommand(worktree) : null
-    const ptyId = launchAgent(inv, worktree, (launch, onExit) => {
-      const unixSetup = platform !== 'win32' && setup && Array.isArray(launch.args)
-        ? {
-            command: host.shell(),
-            args: ['-c', `echo "[orca] ${setup}"; ${setup}; exec ${[launch.command, ...launch.args].map(shellQuote).join(' ')}`]
-          }
-        : undefined
-      return spawnPty(
-        {
-          meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
-          cwd: worktree,
-          command: unixSetup?.command ?? launch.command,
-          args: unixSetup?.args ?? launch.args,
-          ...(platform === 'win32' && setup ? { before: win32Setup(setup) } : {}),
-          cols,
-          rows,
-          env: { ...baseEnv(ctx), ...launch.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
-        },
-        onExit
-      )
-    }, (id, code) => store.ptyExited(id, code), host.launchOptions())
-    store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
-    return { ptyId, dispatchId, worktree, branch }
+      // Свежий worktree без node_modules — ставим зависимости в том же PTY, потом exec агента.
+      // Worktree, который создала нода «Git» до первого запуска, тоже «свежий»: зависимостей в нём ещё нет.
+      const setup = fresh || !snap.dispatches.some((d) => d.taskId === task.id) ? setupCommand(worktree) : null
+      launchScope.guard()
+      const ptyId = launchAgent(inv, worktree, (launch, onExit) => {
+        const unixSetup = platform !== 'win32' && setup && Array.isArray(launch.args)
+          ? {
+              command: host.shell(),
+              args: ['-c', `echo "[orca] ${setup}"; ${setup}; exec ${[launch.command, ...launch.args].map(shellQuote).join(' ')}`]
+            }
+          : undefined
+        return spawnPty(
+          {
+            meta: { role: 'worker', label: task.title, taskId: task.id, projectId: ctx.projectId },
+            cwd: worktree,
+            command: unixSetup?.command ?? launch.command,
+            args: unixSetup?.args ?? launch.args,
+            ...(platform === 'win32' && setup ? { before: win32Setup(setup) } : {}),
+            cols,
+            rows,
+            env: { ...baseEnv(ctx), ...launch.env, ORCA_TASK_ID: task.id, ORCA_DISPATCH_ID: dispatchId }
+          },
+          onExit
+        )
+      }, (id, code) => store.ptyExited(id, code), host.launchOptions())
+      try { launchScope.commit(() => store.startDispatch(task.id, ptyId, dispatchId, { roleId: role.id, agent: role.agent, model: role.model, sessionId })) }
+      catch (error) { killPty(ptyId); throw error }
+      return { ptyId, dispatchId, worktree, branch }
+    } finally { launchScope?.close(); scope.close(); pending.delete(taskId) }
   }
 
   /**
@@ -221,7 +235,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     store.settleIdleRuns(isAlive)
   }
 
-  function startCoordinator(
+  async function startCoordinator(
     store: TaskStore,
     repoRoot: string,
     ctx: WorkerEnvContext,
@@ -230,7 +244,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     rows = 30,
     images: Attachment[] = [],
     runId?: string
-  ): { ptyId: string; runId: string } {
+  ): Promise<{ ptyId: string; runId: string }> {
     // Роль coordinator можно удалить из типа задачи («Настройки» → «Типы задач»); молча запускать claude вместо неё нельзя — человек её убрал.
     // Флаги запуска роли — до `createRun`: с негодной строкой карточка создалась бы и тут же закрылась пустой.
     const { role, spec, extraArgs } = roleLaunch(ctx, 'coordinator', 'coordinator.cannotStart')
@@ -245,14 +259,24 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
       images = merged.images
     }
     // Репозиторий без коммитов — отказ до `createRun`: иначе карточка создалась бы и тут же закрылась пустой.
-    if (!resume && projectBranchInfo(repoRoot).isGitRepo) assertHasCommits(repoRoot)
-    const run = resume?.run ?? store.createRun(objective, undefined, ctx.type)
+    const project = executionProject(store, repoRoot, ctx)
+    const source = ctx.source ?? statusSource()
+    const preflight = resources.effects.capture(project, {}, { source })
+    let run: ReturnType<TaskStore['createRun']>
+    try {
+      if (!resume && (await preflight.wait(() => projectBranchInfoAsync(repoRoot))).isGitRepo) {
+        await preflight.read(workflowGit, repo => repo.assertHasCommits())
+      }
+      run = preflight.commit(() => resume?.run ?? store.createRun(objective, undefined, ctx.type))
+    } finally { preflight.close() }
+    const previousPty = run.coordinatorPtyId
+    const scope = resources.effects.capture({ ...project, isCurrent: () => (project.isCurrent?.() ?? true) && run.coordinatorPtyId === previousPty }, { runId: run.id }, { source })
     let ptyId: string
     let root: string | undefined
     const sessionId = agentSessionId(spec)
     try {
       // Ветка фичи заводится до координатора: он декомпозирует по коду этой ветки, воркеры ответвятся от неё.
-      const cwd = ensureRunBranch(store, repoRoot, run.id)?.worktree ?? repoRoot
+      const cwd = (await scope.wait(() => ensureRunBranch(store, repoRoot, run.id, ctx)))?.worktree ?? repoRoot
       root = images.length > 0 ? attachmentsRoot(cwd) : undefined
       if (root) pruneAttachments(store, root, isAlive)
       // Вложения прошлого запуска этой глобальной задачи: координатор не жив (проверено), файлы не нужны. Возвраты
@@ -267,6 +291,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
         sessionId,
         extraArgs
       })
+      scope.guard()
       ptyId = launchAgent(inv, cwd, (launch, onExit) => spawnPty({
         meta: { role: 'coordinator', label: 'координатор', projectId: ctx.projectId, runId: run.id },
         cwd,
@@ -290,12 +315,15 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     } catch (e) {
       // Координатор не запустился — пустой прогон не оставляем висеть открытым, его файлы не храним.
       // Существующую глобальную задачу не трогаем: она жила и до этого запуска.
-      if (!resume) store.closeRun(run.id)
-      if (root) clearStartImages(root, run.id, !resume)
+      try { scope.commit(() => { if (!resume) store.closeRun(run.id); if (root) clearStartImages(root, run.id, !resume) }) }
+      finally { scope.close() }
       throw e
     }
-    store.setRunPty(run.id, ptyId, role.agent, { roleId: role.id, agent: role.agent, model: role.model, sessionId })
-    return { ptyId, runId: run.id }
+    try {
+      scope.commit(() => store.setRunPty(run.id, ptyId, role.agent, { roleId: role.id, agent: role.agent, model: role.model, sessionId }))
+      return { ptyId, runId: run.id }
+    } catch (error) { killPty(ptyId); throw error }
+    finally { scope.close() }
   }
 
   /**
@@ -307,7 +335,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
    * `images` — пути картинок к уточнению, уже сохранённые в cwd координатора (`withReturnImages`): они лежат в `Run.returns`
    * и попадают в цель повторного запуска.
    */
-  function returnToWork(
+  async function returnToWork(
     store: TaskStore,
     repoRoot: string,
     ctx: WorkerEnvContext,
@@ -316,7 +344,7 @@ export function createWorkerServices({ host, resources, messages, sessions, laun
     cols = 120,
     rows = 30,
     images: string[] = []
-  ): { ptyId: string; runId: string } {
+  ): Promise<{ ptyId: string; runId: string }> {
     roleLaunch(ctx, 'coordinator', 'coordinator.cannotStart')
     returnGlobalTaskToWork(store, runId, text, isAlive, killPty, images)
     return startCoordinator(store, repoRoot, ctx, '', cols, rows, [], runId)

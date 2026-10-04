@@ -111,12 +111,12 @@ function startApp(implPath?: WfSubflow, workflow?: Workflow): App {
       return { roles: t.roles, ...(workflow ? { workflow } : {}) }
     },
     // Как runWorker + startWorker: роль задачи должна быть в типе, ветка задачи — от ветки прогона, dispatch с ролью.
-    startWorker(taskId) {
-      enterWork(app.deps as unknown as WorkflowDeps, taskId)
+    async startWorker(taskId) {
+      await enterWork(app.deps as unknown as WorkflowDeps, taskId)
       const t = store.getTask(taskId)!
       const role = app.deps.run(t.runId).roles.find((r) => r.id === t.roleId)
       if (!role) throw new Error(`воркер не запустится: роли «${t.roleId}» нет в типе задачи`)
-      const runGit = ensureRunBranch(store, repo, t.runId)
+      const runGit = await ensureRunBranch(store, repo, t.runId)
       const branch = t.branch ?? `orca/${taskId}`
       const worktree = t.worktree ?? taskWorktreePath(repo, taskId)
       if (!existsSync(worktree)) git(repo, 'worktree', 'add', '-q', '-b', branch, worktree, ...(runGit ? [runGit.branch] : []))
@@ -132,20 +132,20 @@ function startApp(implPath?: WfSubflow, workflow?: Workflow): App {
       app.alive.add(pty)
       store.setRunPty(runId, pty)
     },
-    mergeTarget: (t) => mergeTarget(store, repo, t)
+    mergeTarget: async (t) => await mergeTarget(store, repo, t)
   }
   return app
 }
 
 /** Новая глобальная задача типа «Фича», как «Создать» + «Запустить координатора» (ветка, терминал, вход в граф). */
-function startRun(app: App, title: string): string {
+async function startRun(app: App, title: string): Promise<string> {
   const g = app.store.createGlobalTask({ title, description: `цель: ${title}`, type: app.pm.runType(pid, typeId) })
   assert.equal(app.store.getRun(g.id)!.workflowScope, 'run', 'граф типа версии 2 — прогон идёт по глобальной задаче')
-  ensureRunBranch(app.store, repo, g.id)
+  await ensureRunBranch(app.store, repo, g.id)
   const pty = `pty_coord_start_${g.id}`
   app.alive.add(pty)
   app.store.setRunPty(g.id, pty)
-  startRunWorkflow(app.deps, g.id)
+  await startRunWorkflow(app.deps, g.id)
   return g.id
 }
 
@@ -159,33 +159,33 @@ const gateOf = (app: App, runId: string): Task => app.store.listTasks().filter((
 const inRunBranch = (app: App, runId: string, file: string): boolean => existsSync(path.join(app.store.getRun(runId)!.git!.worktree!, file))
 
 /** События, появившиеся после `before`, — исполнителю обоих движков (подписка `runWorkflowEvents` в index.ts). */
-function deliver(app: App, before: number): void {
+async function deliver(app: App, before: number): Promise<void> {
   const fresh = app.store.listEvents().slice(before)
-  handleWorkflowEvents(app.deps as unknown as WorkflowDeps, fresh)
-  handleRunWorkflowEvents(app.deps, fresh)
+  await handleWorkflowEvents(app.deps as unknown as WorkflowDeps, fresh)
+  await handleRunWorkflowEvents(app.deps, fresh)
 }
 
 /** Координатор: `task create` (store привязывает к этапу) + `worker start`. */
-function spawn(app: App, runId: string, title: string, roleId?: string): Task {
+async function spawn(app: App, runId: string, title: string, roleId?: string): Promise<Task> {
   const t = app.store.createTask({ title, runId, ...(roleId ? { roleId } : {}) })
-  app.deps.startWorker(t.id)
+  await app.deps.startWorker(t.id)
   return task(app, t.id)
 }
 
 /** Воркер коммитит файл в своей ветке, сдаёт `orca-board done` — приложение сливает ветку в ветку прогона. */
-function deliverFile(app: App, t: Task, file: string): void {
+async function deliverFile(app: App, t: Task, file: string): Promise<void> {
   writeFileSync(path.join(t.worktree!, file), `${file}\n`)
   git(t.worktree!, 'add', '-A')
   git(t.worktree!, 'commit', '-qm', file)
   const before = app.store.listEvents().length
   app.store.finishDispatch(task(app, t.id).dispatchId!, 'сделал', [])
-  deliver(app, before)
+  await deliver(app, before)
 }
 
 /** Решение запроса человеком (Инбокс / `request resolve`), как `resolveRequest` в index.ts. */
-function resolve(app: App, requestId: string, action: 'accept' | 'reject', text?: string): void {
-  resolveHumanRequest(app.store, repo, requestId, { action, ...(text ? { text } : {}) }, app.deps.startWorker, (r) => {
-    if (!handleRunRequest(app.deps, r)) approvalResolved(app.deps as unknown as WorkflowDeps, r)
+async function resolve(app: App, requestId: string, action: 'accept' | 'reject', text?: string): Promise<void> {
+  await resolveHumanRequest(app.store, repo, requestId, { action, ...(text ? { text } : {}) }, app.deps.startWorker, async (r) => {
+    if (!await handleRunRequest(app.deps, r)) await approvalResolved(app.deps as unknown as WorkflowDeps, r)
   }, app.deps.mergeTarget)
 }
 
@@ -207,15 +207,15 @@ function reviewedPath(): WfSubflow {
 }
 
 describe('воркфлоу глобальной задачи: сквозной сценарий', () => {
-  it('анализ → человек → реализация (2 подзадачи) → ревью reject → реализация → ревью accept → человек → merge → end', () => {
+  it('анализ → человек → реализация (2 подзадачи) → ревью reject → реализация → ревью accept → человек → merge → end', async () => {
     const app = startApp()
     // Старый прогон (без Run.workflowScope) живёт рядом и идёт прежним движком по подзадачам.
     const legacyRun = app.store.createRun('старая цель')
     assert.equal(legacyRun.workflowScope, undefined)
     const legacyTask = app.store.createTask({ title: 'старая', runId: legacyRun.id })
-    app.deps.startWorker(legacyTask.id)
+    await app.deps.startWorker(legacyTask.id)
 
-    const runId = startRun(app, 'Фича')
+    const runId = await startRun(app, 'Фича')
     assert.equal(app.store.getRun(runId)!.workflow?.version, 2)
 
     // --- Анализ: stage_started с ролью ноды, подзадачи только роли planner ---
@@ -227,12 +227,12 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.match(String(s1.payload.instructions), /analysis\.md/)
     assert.equal(app.coordinatorStarts.length, 0, 'координатор жив — заново не запускается')
     assert.throws(() => app.store.createTask({ title: 'код на анализе', runId, roleId: 'developer' }), /роль «developer» не разрешена на этапе «Анализ»[\s\S]*«planner»/)
-    const plan = spawn(app, runId, 'План')
+    const plan = await spawn(app, runId, 'План')
     assert.equal(plan.roleId, 'planner', 'одна роль ноды берётся по умолчанию, если task create без --role')
     assert.deepEqual(plan.stageOf, { nodeId: 'analysis', visit: 1 })
     assert.equal(app.launches.at(-1)!.roleId, 'planner')
-    assert.throws(() => finishRunStage(app.deps, runId, 'рано'), /не закрыты подзадачи/)
-    deliverFile(app, plan, 'analysis.md')
+    await assert.rejects(async () => await finishRunStage(app.deps, runId, 'рано'), /не закрыты подзадачи/)
+    await deliverFile(app, plan, 'analysis.md')
     assert.equal(task(app, plan.id).status, 'done', 'воркер → done → автомерж → задача закрыта')
     assert.equal(inRunBranch(app, runId, 'analysis.md'), true, 'файл анализа в ветке прогона')
     assert.equal(existsSync(path.join(repo, 'analysis.md')), false, 'корень не тронут')
@@ -247,12 +247,12 @@ describe('воркфлоу глобальной задачи: сквозной �
     // Легаси-задача прошла через свой движок и не задела прогон нового формата.
     const legacyBefore = app.store.listEvents().length
     app.store.finishDispatch(task(app, legacyTask.id).dispatchId!, 'старая сдана', [])
-    deliver(app, legacyBefore)
+    await deliver(app, legacyBefore)
     assert.equal(task(app, legacyTask.id).stage?.nodeId, 'review', 'прежний движок довёл подзадачу до этапа проверки')
     assert.equal(stageId(app, runId), 'analysis')
 
     // --- stage finish → human «Выбор варианта» (approval прогона без задачи) ---
-    finishRunStage(app.deps, runId, 'варианты: A и B')
+    await finishRunStage(app.deps, runId, 'варианты: A и B')
     assert.equal(stageId(app, runId), 'choice')
     const choice = approvalOf(app, runId)!
     assert.equal(choice.nodeId, 'choice')
@@ -261,7 +261,7 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.throws(() => app.store.createTask({ title: 'мимо', runId, roleId: 'planner' }), /подзадачи создаются только на этапе «Работа»[\s\S]*stage_started/)
 
     // --- Реализация: решение человека — в stage_started; роли не заданы — координатор выбирает сам ---
-    resolve(app, choice.id, 'accept', 'вариант B')
+    await resolve(app, choice.id, 'accept', 'вариант B')
     assert.equal(stageId(app, runId), 'impl')
     const s2 = lastEvent(app, 'stage_started')
     assert.equal(s2.payload.nodeId, 'impl')
@@ -270,18 +270,18 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.throws(() => app.store.createTask({ title: 'ревью', runId, roleId: 'reviewer' }), /не разрешена на этапе «Реализация»[\s\S]*не роли проверки/)
     assert.throws(() => app.store.createTask({ title: 'коорд', runId, roleId: 'coordinator' }), /не разрешена на этапе/)
     const doneBefore = events(app, 'stage_tasks_done').length
-    const a = spawn(app, runId, 'Модуль A', 'developer')
-    const b = spawn(app, runId, 'Модуль B', 'qa')
+    const a = await spawn(app, runId, 'Модуль A', 'developer')
+    const b = await spawn(app, runId, 'Модуль B', 'qa')
     assert.deepEqual([a.stageOf, b.stageOf], [{ nodeId: 'impl', visit: 1 }, { nodeId: 'impl', visit: 1 }])
-    deliverFile(app, a, 'a.ts')
+    await deliverFile(app, a, 'a.ts')
     assert.equal(events(app, 'stage_tasks_done').length, doneBefore, 'вторая подзадача ещё в работе — этап не закрыт')
-    deliverFile(app, b, 'b.ts')
+    await deliverFile(app, b, 'b.ts')
     assert.equal(events(app, 'stage_tasks_done').length, doneBefore + 1)
     assert.equal(lastEvent(app, 'stage_tasks_done').payload.nodeId, 'impl')
     assert.equal(inRunBranch(app, runId, 'a.ts') && inRunBranch(app, runId, 'b.ts'), true, 'обе подзадачи слиты в ветку прогона')
 
     // --- Проверка ветки прогона целиком; reject → снова Реализация с замечаниями ---
-    finishRunStage(app.deps, runId, 'модули готовы')
+    await finishRunStage(app.deps, runId, 'модули готовы')
     assert.equal(stageId(app, runId), 'review')
     const gate1 = gateOf(app, runId)
     assert.equal(gate1.roleId, 'reviewer')
@@ -291,36 +291,36 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.equal(app.launches.at(-1)!.taskId, gate1.id, 'проверку запустило приложение')
     assert.equal(events(app, 'stage_started').length, 2, 'на проверке координатору делать нечего')
 
-    runGateDecision(app.deps, gate1.id, 'reject', 'нет тестов')
+    await runGateDecision(app.deps, gate1.id, 'reject', 'нет тестов')
     assert.equal(stageId(app, runId), 'impl')
     assert.equal(app.store.getRun(runId)!.stage!.visits.impl, 2)
     const s3 = lastEvent(app, 'stage_started')
     assert.equal(s3.payload.feedback, 'нет тестов')
     assert.equal(s3.payload.visit, 2)
     // Закрытые подзадачи прошлого захода в счёт нового не идут: этап ждёт новых задач.
-    assert.throws(() => finishRunStage(app.deps, runId, 'рано'), /нет подзадач/)
-    const tests = spawn(app, runId, 'Тесты', 'qa')
+    await assert.rejects(async () => await finishRunStage(app.deps, runId, 'рано'), /нет подзадач/)
+    const tests = await spawn(app, runId, 'Тесты', 'qa')
     assert.deepEqual(tests.stageOf, { nodeId: 'impl', visit: 2 })
-    deliverFile(app, tests, 'tests.ts')
+    await deliverFile(app, tests, 'tests.ts')
     assert.equal(events(app, 'stage_tasks_done').length, 3, 'второй заход Реализации закрыт отдельным stage_tasks_done')
-    finishRunStage(app.deps, runId, 'тесты добавлены')
+    await finishRunStage(app.deps, runId, 'тесты добавлены')
 
     const gate2 = gateOf(app, runId)
     assert.notEqual(gate2.id, gate1.id)
     assert.match(gate2.spec, /модули готовы[\s\S]*тесты добавлены/, 'сводки обоих заходов видны новой проверке')
     const before = app.store.listEvents().length
     app.store.finishDispatch(task(app, gate1.id).dispatchId!, 'отклонено', [])
-    deliver(app, before)
+    await deliver(app, before)
     assert.equal(task(app, gate1.id).status, 'done', 'старая проверка закрылась по своему done')
-    assert.throws(() => runGateDecision(app.deps, gate1.id, 'accept'), /уже не актуальна/)
-    runGateDecision(app.deps, gate2.id, 'accept')
+    await assert.rejects(async () => await runGateDecision(app.deps, gate1.id, 'accept'), /уже не актуальна/)
+    await runGateDecision(app.deps, gate2.id, 'accept')
     assert.equal(stageId(app, runId), 'check')
 
     // --- Человек «Проверка» → merge: слито в базу (master; защищённых веток нет) ---
     const check = approvalOf(app, runId)!
     assert.equal(check.nodeId, 'check')
     assert.match(check.body!, /Ветка: `feature\//)
-    resolve(app, check.id, 'accept')
+    await resolve(app, check.id, 'accept')
     assert.equal(stageId(app, runId), 'end')
     for (const f of ['analysis.md', 'a.ts', 'b.ts', 'tests.ts']) assert.equal(existsSync(path.join(repo, f)), true, `${f} слит в master`)
     assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'master', 'корень не переключался')
@@ -340,12 +340,12 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.equal(app.store.getRun(legacyRun.id)!.closedAt, undefined)
   })
 
-  it('перезапуск приложения на approval и мёртвый координатор: граф продолжается по сохранённой позиции', () => {
+  it('перезапуск приложения на approval и мёртвый координатор: граф продолжается по сохранённой позиции', async () => {
     const app = startApp()
-    const runId = startRun(app, 'Фича')
-    const plan = spawn(app, runId, 'План')
-    deliverFile(app, plan, 'analysis.md')
-    finishRunStage(app.deps, runId, 'варианты')
+    const runId = await startRun(app, 'Фича')
+    const plan = await spawn(app, runId, 'План')
+    await deliverFile(app, plan, 'analysis.md')
+    await finishRunStage(app.deps, runId, 'варианты')
     const requestId = approvalOf(app, runId)!.id
 
     // Приложение закрыли и открыли снова: новые ProjectManager и store, терминалов нет.
@@ -355,28 +355,28 @@ describe('воркфлоу глобальной задачи: сквозной �
     assert.equal(again.alive.size, 0)
 
     // Решение человека после перезапуска: координатор не жив — «Работа» поднимает его заново.
-    resolve(again, requestId, 'accept', 'вариант A')
+    await resolve(again, requestId, 'accept', 'вариант A')
     assert.equal(stageId(again, runId), 'impl')
     assert.deepEqual(again.coordinatorStarts, [runId])
     assert.equal(lastEvent(again, 'stage_started').payload.decision, 'вариант A')
     assert.equal(inRunBranch(again, runId, 'analysis.md'), true)
   })
 
-  it('перезапуск приложения: подзадачи на gate и human пути — Run.stage и Task.stage восстанавливаются вместе и путь продолжается', () => {
+  it('перезапуск приложения: подзадачи на gate и human пути — Run.stage и Task.stage восстанавливаются вместе и путь продолжается', async () => {
     const app = startApp(reviewedPath())
-    const runId = startRun(app, 'Фича')
-    const plan = spawn(app, runId, 'План')
-    deliverFile(app, plan, 'analysis.md')
-    finishRunStage(app.deps, runId, 'варианты')
-    resolve(app, approvalOf(app, runId)!.id, 'accept')
+    const runId = await startRun(app, 'Фича')
+    const plan = await spawn(app, runId, 'План')
+    await deliverFile(app, plan, 'analysis.md')
+    await finishRunStage(app.deps, runId, 'варианты')
+    await resolve(app, approvalOf(app, runId)!.id, 'accept')
     assert.equal(stageId(app, runId), 'impl')
 
     // A прошла проверку и ждёт человека на своём пути, B ждёт решения проверки (её воркер убит перезапуском).
-    const a = spawn(app, runId, 'A')
-    deliverFile(app, a, 'a.ts')
-    reviewAccept(app.deps as unknown as WorkflowDeps, a.id)
-    const b = spawn(app, runId, 'B')
-    deliverFile(app, b, 'b.ts')
+    const a = await spawn(app, runId, 'A')
+    await deliverFile(app, a, 'a.ts')
+    await reviewAccept(app.deps as unknown as WorkflowDeps, a.id)
+    const b = await spawn(app, runId, 'B')
+    await deliverFile(app, b, 'b.ts')
     assert.equal(task(app, a.id).stage?.nodeId, 'ok')
     assert.equal(task(app, b.id).stage?.nodeId, 'rev')
     const request = app.store.pendingRequests(runId).find((r) => r.taskId === a.id)!
@@ -395,14 +395,14 @@ describe('воркфлоу глобальной задачи: сквозной �
 
     // Решения после перезапуска ведут обе подзадачи по путям; этап держат обе до конца.
     const tasksDone = events(again, 'stage_tasks_done').length // один — от этапа «Анализ»
-    resolve(again, request.id, 'accept')
+    await resolve(again, request.id, 'accept')
     assert.equal(task(again, a.id).status, 'done')
     assert.equal(task(again, a.id).stage?.nodeId, 'end')
     assert.equal(inRunBranch(again, runId, 'a.ts'), true)
     assert.equal(events(again, 'stage_tasks_done').length, tasksDone, 'B ещё на проверке')
-    reviewAccept(again.deps as unknown as WorkflowDeps, b.id)
+    await reviewAccept(again.deps as unknown as WorkflowDeps, b.id)
     assert.equal(task(again, b.id).stage?.nodeId, 'ok')
-    resolve(again, again.store.pendingRequests(runId).find((r) => r.taskId === b.id)!.id, 'accept')
+    await resolve(again, again.store.pendingRequests(runId).find((r) => r.taskId === b.id)!.id, 'accept')
     assert.equal(task(again, b.id).status, 'done')
     assert.equal(events(again, 'stage_tasks_done').length, tasksDone + 1)
     assert.equal(stageId(again, runId), 'impl')
@@ -437,27 +437,27 @@ function forkWorkflow(): Workflow {
 
 describe('воркфлоу глобальной задачи: развилка «Решение ИИ»', () => {
   /** Анализ сделан и закрыт — граф на развилке, решатель запущен. */
-  function toFork(app: App): { runId: string; decider: Task } {
-    const runId = startRun(app, 'Фича')
-    deliverFile(app, spawn(app, runId, 'План'), 'analysis.md')
-    finishRunStage(app.deps, runId, 'затронут экран настроек')
+  async function toFork(app: App): Promise<{ runId: string; decider: Task }> {
+    const runId = await startRun(app, 'Фича')
+    await deliverFile(app, await spawn(app, runId, 'План'), 'analysis.md')
+    await finishRunStage(app.deps, runId, 'затронут экран настроек')
     assert.equal(stageId(app, runId), 'need_design')
     return { runId, decider: gateOf(app, runId) }
   }
 
   const decisionRequest = (app: App, runId: string) => app.store.pendingRequests(runId).find((r) => r.kind === 'decision')
 
-  it('агент выбирает «Да» → Дизайн → Реализация → merge → end; решение в истории и в stage_started', () => {
+  it('агент выбирает «Да» → Дизайн → Реализация → merge → end; решение в истории и в stage_started', async () => {
     const app = startApp(undefined, forkWorkflow())
-    const { runId, decider } = toFork(app)
+    const { runId, decider } = await toFork(app)
     assert.deepEqual(app.launches.at(-1), { taskId: decider.id, roleId: 'reviewer', agent: DEFAULT_ROLES.find((r) => r.id === 'reviewer')!.agent })
     assert.equal(events(app, 'stage_started').length, 1, 'координатор ждёт, пока агент решает')
 
     // Агент: decision choose, затем done — задача-решатель закрывается, worktree убран.
-    runDecision(app.deps, decider.id, 'yes', 'новый экран — нужен макет')
+    await runDecision(app.deps, decider.id, 'yes', 'новый экран — нужен макет')
     const before = app.store.listEvents().length
     app.store.finishDispatch(task(app, decider.id).dispatchId!, 'выбрано: Да', [])
-    deliver(app, before)
+    await deliver(app, before)
     assert.equal(task(app, decider.id).status, 'done')
     assert.equal(task(app, decider.id).worktree, undefined)
 
@@ -465,10 +465,10 @@ describe('воркфлоу глобальной задачи: развилка �
     const s = lastEvent(app, 'stage_started')
     assert.equal(s.payload.nodeId, 'design')
     assert.match(String(s.payload.decision), /Нужен ли дизайн для этой задачи\?» → Да\. новый экран — нужен макет/)
-    deliverFile(app, spawn(app, runId, 'Макет'), 'mockup.html')
-    finishRunStage(app.deps, runId, 'макет готов')
-    deliverFile(app, spawn(app, runId, 'Код'), 'settings.ts')
-    finishRunStage(app.deps, runId, 'экран сделан')
+    await deliverFile(app, await spawn(app, runId, 'Макет'), 'mockup.html')
+    await finishRunStage(app.deps, runId, 'макет готов')
+    await deliverFile(app, await spawn(app, runId, 'Код'), 'settings.ts')
+    await finishRunStage(app.deps, runId, 'экран сделан')
     assert.equal(stageId(app, runId), 'end')
     assert.equal(existsSync(path.join(repo, 'settings.ts')), true, 'ветка прогона слита в базу')
 
@@ -479,15 +479,15 @@ describe('воркфлоу глобальной задачи: развилка �
     assert.equal(app.store.getGlobalTask(runId).stageHistory?.[1].decision?.by, 'agent', 'история видна и в глобальной задаче')
   })
 
-  it('escalate → перезапуск приложения → человек выбирает «Нет» в Инбоксе → Реализация, мёртвый координатор поднимается', () => {
+  it('escalate → перезапуск приложения → человек выбирает «Нет» в Инбоксе → Реализация, мёртвый координатор поднимается', async () => {
     const app = startApp(undefined, forkWorkflow())
-    const { runId, decider } = toFork(app)
-    assert.throws(() => runGateDecision(app.deps, decider.id, 'accept'), /используй decision choose/)
+    const { runId, decider } = await toFork(app)
+    await assert.rejects(async () => await runGateDecision(app.deps, decider.id, 'accept'), /используй decision choose/)
     const { requestId } = escalateDecision(app.deps, decider.id, 'не знаю, есть ли макет')
 
     // Приложение закрыли и открыли: ни задача, ни запрос не дублируются, агент заново не стартует.
     const again = startApp(undefined, forkWorkflow())
-    startRunWorkflow(again.deps, runId)
+    await startRunWorkflow(again.deps, runId)
     assert.equal(stageId(again, runId), 'need_design')
     assert.equal(again.store.listTasks().filter((t) => t.gateFor?.nodeId === 'need_design').length, 1)
     assert.equal(again.store.pendingRequests(runId).filter((r) => r.kind === 'decision').length, 1)
@@ -495,8 +495,8 @@ describe('воркфлоу глобальной задачи: развилка �
     assert.deepEqual(again.launches, [])
     assert.equal(again.store.getGlobalTask(runId).status, 'needs_input')
 
-    resolveHumanRequest(again.store, repo, requestId, { action: 'answer', optionId: 'no', text: 'макет уже в Figma' }, again.deps.startWorker, (r) => {
-      if (!handleRunRequest(again.deps, r)) approvalResolved(again.deps as unknown as WorkflowDeps, r)
+    await resolveHumanRequest(again.store, repo, requestId, { action: 'answer', optionId: 'no', text: 'макет уже в Figma' }, again.deps.startWorker, async (r) => {
+      if (!await handleRunRequest(again.deps, r)) await approvalResolved(again.deps as unknown as WorkflowDeps, r)
     }, again.deps.mergeTarget)
     assert.equal(stageId(again, runId), 'impl')
     assert.deepEqual(again.coordinatorStarts, [runId], 'координатор после перезапуска не жив — «Работа» поднимает его')
@@ -505,6 +505,6 @@ describe('воркфлоу глобальной задачи: развилка �
     assert.deepEqual(fork.decision, {
       optionId: 'no', label: 'Нет', reason: 'макет уже в Figma', by: 'human', fallback: 'unsure', agentNote: 'не знаю, есть ли макет'
     })
-    assert.throws(() => runDecision(again.deps, decider.id, 'yes', 'поздно'), /уже принято или передано человеку/)
+    await assert.rejects(async () => await runDecision(again.deps, decider.id, 'yes', 'поздно'), /уже принято или передано человеку/)
   })
 })

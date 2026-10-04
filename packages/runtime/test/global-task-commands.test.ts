@@ -24,6 +24,7 @@ function fixture(authorize = (_context: unknown, _name: unknown) => true) {
   const lookedUp: string[] = []
   const alive = new Set<string>(); const killed: string[] = []
   const service = runtime.createGlobalTaskCommands({
+    isCurrent: (project, context) => stores.get(context.projectId) === project.store && project.root === join(dir, `repo-${context.projectId}`),
     authorize, dataDir: dir, resources: resources(), messages: { error: key => new Error(key) },
     sessions: { isAlive: id => alive.has(id), kill: id => { alive.delete(id); killed.push(id) } },
     selection: runtime.createAgentSelection({ error: key => new Error(key) }),
@@ -40,7 +41,7 @@ function fixture(authorize = (_context: unknown, _name: unknown) => true) {
   return { dir, stores, service, lookedUp, alive, killed }
 }
 
-test('CRUD двух явных проектов сохраняет тип, изменения и отделённые DTO после reload', () => {
+test('CRUD двух явных проектов сохраняет тип, изменения и отделённые DTO после reload', async () => {
   const f = fixture(); const a = f.service.create(context(), { title: 'Alpha', description: 'Text', priority: 'high' })
   const b = f.service.create(context('B'), { description: 'Beta', typeId: 'other' })
   f.service.update(context(), a.id, { title: 'Updated', description: 'Changed', priority: 'low' })
@@ -54,21 +55,21 @@ test('CRUD двух явных проектов сохраняет тип, из�
   const restored = new TaskStore(runtime.jsonPersistence(join(f.dir, 'A.json')))
   assert.equal(restored.getRun(a.id)?.typeId, 'other')
   assert.equal(restored.getGlobalTask(a.id).title, 'Updated')
-  f.service.remove(context(), a.id)
+  await f.service.remove(context(), a.id)
   assert.equal(f.service.list(context()).length, 0)
   assert.equal(f.service.list(context('B')).length, 1)
 })
 
-test('все 12 команд проверяют policy до payload и открытия проекта', () => {
+test('все 12 команд проверяют policy до payload и открытия проекта', async () => {
   const checked: unknown[] = []; const f = fixture((ctx, name) => { checked.push([ctx, name]); return false })
   for (const action of [
     () => f.service.list(context()), () => f.service.get(context(), 'run'),
     () => f.service.create(context(), { title: 'No' }), () => f.service.update(context(), 'run', {}),
     () => f.service.changeType(context(), 'run', 'other'), () => f.service.move(context(), 'run', 'done'),
-    () => f.service.remove(context(), 'run'), () => f.service.tasks(context(), 'run'),
+    async () => await f.service.remove(context(), 'run'), () => f.service.tasks(context(), 'run'),
     () => f.service.createTask(context(), 'run', { title: 'No' }), () => f.service.addImages(context(), 'run', [attachment()]),
     () => f.service.removeImage(context(), 'run', 'image'), () => f.service.image(context(), 'run', 'image')
-  ]) assert.throws(action, code('command.forbidden'))
+  ]) await assert.rejects(async () => await (action)(), code('command.forbidden'))
   assert.equal(checked.length, 12); assert.deepEqual(f.lookedUp, [])
   assert.equal(existsSync(join(f.dir, 'run-images')), false)
 })
@@ -93,26 +94,26 @@ for (const [input, field] of [
   assert.deepEqual(f.lookedUp, []); assert.equal(existsSync(join(f.dir, 'A.json')), false)
 })
 
-test('patch, status, typeId, cascade и id проверяются до lookup', () => {
+test('patch, status, typeId, cascade и id проверяются до lookup', async () => {
   const f = fixture()
   for (const action of [() => f.service.update(context(), 'run', { status: 'done' } as never),
     () => f.service.update(context(), 'run', { description: false } as never),
     () => f.service.move(context(), 'run', ''), () => f.service.changeType(context(), 'run', 1 as never),
-    () => f.service.remove(context(), 'run', { cascade: 'true' } as never), () => f.service.get(context(), [] as never)
-  ]) assert.throws(action, code('command.invalidInput'))
+    async () => await f.service.remove(context(), 'run', { cascade: 'true' } as never), () => f.service.get(context(), [] as never)
+  ]) await assert.rejects(async () => await (action)(), code('command.invalidInput'))
   assert.deepEqual(f.lookedUp, [])
   assert.throws(() => f.service.list(context('removed')), code('command.projectNotFound'))
 })
 
-test('чужой run не даёт читать/менять подзадачи и вложения', () => {
+test('чужой run не даёт читать/менять подзадачи и вложения', async () => {
   const f = fixture(); const run = f.service.create(context('B'), { title: 'B' }, [attachment()])
   const before = structuredClone(f.stores.get('B')!.snapshot())
   for (const action of [() => f.service.get(context(), run.id), () => f.service.update(context(), run.id, { title: 'No' }),
     () => f.service.changeType(context(), run.id, 'other'), () => f.service.move(context(), run.id, 'done'),
-    () => f.service.remove(context(), run.id, { cascade: true }), () => f.service.tasks(context(), run.id),
+    async () => await f.service.remove(context(), run.id, { cascade: true }), () => f.service.tasks(context(), run.id),
     () => f.service.createTask(context(), run.id, { title: 'No' }), () => f.service.addImages(context(), run.id, [attachment()]),
     () => f.service.removeImage(context(), run.id, run.images![0].id), () => f.service.image(context(), run.id, run.images![0].id)
-  ]) assert.throws(action, code('command.globalTaskNotFound'))
+  ]) await assert.rejects(async () => await (action)(), code('command.globalTaskNotFound'))
   assert.deepEqual(f.stores.get('B')!.snapshot(), before); assert.equal(f.stores.get('A')!.listRuns().length, 0)
   assert.equal(existsSync(join(f.dir, 'run-images', 'B', run.id)), true)
 })
@@ -179,20 +180,20 @@ test('сбой файловой системы откатывает новый r
   assert.equal(restored.listRuns().length, 0)
 })
 
-test('cascade/live coordinator/live dispatch guards сохраняют run, файлы и PTY', () => {
+test('cascade/live coordinator/live dispatch guards сохраняют run, файлы и PTY', async () => {
   const f = fixture(); const run = f.service.create(context(), { title: 'A' }, [attachment()]); const store = f.stores.get('A')!
   const child = f.service.createTask(context(), run.id, { title: 'Child' })
-  assert.throws(() => f.service.remove(context(), run.id), /cascade/)
+  await assert.rejects(async () => await f.service.remove(context(), run.id), /cascade/)
   store.setRunPty(run.id, 'coordinator'); f.alive.add('coordinator')
-  assert.throws(() => f.service.remove(context(), run.id, { cascade: true }), e => e instanceof runtime.CommandError && e.cause instanceof Error && e.cause.message === 'global.coordinatorAlive')
+  await assert.rejects(async () => await f.service.remove(context(), run.id, { cascade: true }), e => e instanceof runtime.CommandError && e.cause instanceof Error && e.cause.message === 'global.coordinatorAlive')
   f.alive.delete('coordinator'); store.startDispatch(child.id, 'worker'); f.alive.add('worker')
   const before = structuredClone(store.snapshot())
-  assert.throws(() => f.service.remove(context(), run.id, { cascade: true }), /сначала останови/)
+  await assert.rejects(async () => await f.service.remove(context(), run.id, { cascade: true }), /сначала останови/)
   assert.deepEqual(store.snapshot(), before); assert.deepEqual(f.killed, [])
   assert.equal(existsSync(join(f.dir, 'run-images', 'A', run.id)), true)
 })
 
-test('разрешённое удаление убирает свои files, закрытый живой PTY и чистый worktree, сохраняя ветку', () => {
+test('разрешённое удаление убирает свои files, закрытый живой PTY и чистый worktree, сохраняя ветку', async () => {
   const f = fixture(); const run = f.service.create(context(), { title: 'A' }, [attachment()]); const other = f.service.create(context('B'), { title: 'B' }, [attachment()])
   const store = f.stores.get('A')!; const child = f.service.createTask(context(), run.id, { title: 'Child' })
   const dispatch = store.startDispatch(child.id, 'worker'); store.finishDispatch(dispatch.id, 'done'); f.alive.add('worker')
@@ -202,10 +203,18 @@ test('разрешённое удаление убирает свои files, з�
   git('init', '-q', '-b', 'master'); writeFileSync(join(repo, 'README'), 'base'); git('add', 'README'); git('commit', '-qm', 'base')
   const worktree = join(f.dir, 'global-worktree'); git('worktree', 'add', '-q', '-b', 'feature/global-test', worktree)
   store.setRunGit(run.id, { branch: 'feature/global-test', base: 'master', worktree })
-  assert.deepEqual(f.service.remove(context(), run.id, { cascade: true }), { deleted: run.id, tasks: [child.id] })
+  assert.deepEqual(await f.service.remove(context(), run.id, { cascade: true }), { deleted: run.id, tasks: [child.id] })
   assert.equal(existsSync(showcase), false); assert.equal(existsSync(worktree), false)
   assert.equal(existsSync(join(f.dir, 'run-images', 'A', run.id)), false)
   assert.equal(existsSync(join(f.dir, 'run-images', 'B', other.id)), true)
   assert.deepEqual(f.killed, ['worker']); assert.equal(store.getTask(child.id), undefined)
   assert.equal(git('branch', '--list', 'feature/global-test'), 'feature/global-test')
+})
+
+test('смена registration во время durable удаления сохраняет файлы и отказывает late cleanup', async () => {
+  const f = fixture(); const run = f.service.create(context(), { title: 'A' }, [attachment()])
+  const image = join(f.dir, 'run-images', 'A', run.id, `${run.images![0].id}.png`); assert.equal(existsSync(image), true); const store = f.stores.get('A')!
+  store.subscribe(() => { if (!store.getRun(run.id)) f.stores.set('A', new TaskStore()) })
+  await assert.rejects(f.service.remove(context(), run.id), code('command.stale'))
+  assert.equal(store.getRun(run.id), undefined); assert.equal(existsSync(image), true)
 })
