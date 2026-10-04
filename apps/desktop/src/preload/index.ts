@@ -9,6 +9,18 @@ function on<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: OrcaApi = {
+  operator: {
+    hello: input => ipcRenderer.invoke('operator:hello', input), call: input => ipcRenderer.invoke('operator:call', input),
+    select: input => ipcRenderer.invoke('operator:select', input), snapshot: () => ipcRenderer.invoke('operator:snapshot'),
+    events: () => ipcRenderer.invoke('operator:events'), close: () => ipcRenderer.invoke('operator:close'),
+    upload: input => ipcRenderer.invoke('operator:upload', input), binary: input => ipcRenderer.invoke('operator:binary', input),
+    writer: input => ipcRenderer.invoke('operator:writer', input)
+  },
+  recovery: {
+    list: projectId => ipcRenderer.invoke('recovery:list', projectId),
+    inspect: projectId => ipcRenderer.invoke('recovery:inspect', projectId),
+    resolve: (id, revision, resolution) => ipcRenderer.invoke('recovery:resolve', id, revision, resolution)
+  },
   app: {
     windowChrome: windowChromeMode(process.platform, process.argv),
     info: () => ipcRenderer.invoke('app:info'),

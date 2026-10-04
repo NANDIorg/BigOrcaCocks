@@ -26,12 +26,12 @@ function manager(): ProjectManager {
   return new ProjectManager(mkdtempSync(path.join(tmp, 'userData-')))
 }
 
-/** Выполнить fn с временно подменёнными переменными окружения (execFileSync берёт process.env). */
-function withEnv<T>(patch: Record<string, string>, fn: () => T): T {
+/** Выполнить fn с временно подменённым окружением до завершения async Git. */
+async function withEnv<T>(patch: Record<string, string>, fn: () => T | Promise<T>): Promise<T> {
   const saved = Object.fromEntries(Object.keys(patch).map((k) => [k, process.env[k]]))
   Object.assign(process.env, patch)
   try {
-    return fn()
+    return await fn()
   } finally {
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k]
@@ -41,17 +41,17 @@ function withEnv<T>(patch: Record<string, string>, fn: () => T): T {
 }
 
 describe('ProjectManager.add — причина №1/№2: любая ошибка git выдаётся за «не git-репозиторий»', () => {
-  it('контроль: обычный репозиторий (кириллица и пробел в пути) добавляется', () => {
-    const p = manager().add(repo)
+  it('контроль: обычный репозиторий (кириллица и пробел в пути) добавляется', async () => {
+    const p = (await manager().add(repo))
     assert.equal(p.name, 'репо с пробелом')
   })
 
-  it('ДЕФЕКТ: «dubious ownership» (safe.directory, частый случай на Windows) → «не git-репозиторий»', () => {
+  it('ДЕФЕКТ: «dubious ownership» (safe.directory, частый случай на Windows) → «не git-репозиторий»', async () => {
     // GIT_TEST_ASSUME_DIFFERENT_OWNER — тестовый флаг git: ведёт себя так, будто владелец каталога — другой
     // пользователь. На Windows это репозиторий на FAT/exFAT/сетевом диске, в \\wsl$, склонированный от админа.
-    const err = withEnv({ GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }, () => {
+    const err = await withEnv({ GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }, async () => {
       try {
-        manager().add(repo)
+        await manager().add(repo)
         return null
       } catch (e) {
         return e as Error
@@ -63,10 +63,10 @@ describe('ProjectManager.add — причина №1/№2: любая ошибк
     assert.doesNotMatch(err.message, /dubious ownership|safe\.directory/)
   })
 
-  it('ДЕФЕКТ: git не найден в PATH процесса (ENOENT) → «не git-репозиторий»', () => {
-    const err = withEnv({ PATH: path.join(tmp, 'пустой-PATH') }, () => {
+  it('ДЕФЕКТ: git не найден в PATH процесса (ENOENT) → «не git-репозиторий»', async () => {
+    const err = await withEnv({ PATH: path.join(tmp, 'пустой-PATH') }, async () => {
       try {
-        manager().add(repo)
+        await manager().add(repo)
         return null
       } catch (e) {
         return e as Error
@@ -90,9 +90,9 @@ describe('win32-пути (path.win32): что git возвращает на Wind
     assert.equal(path.win32.basename('D:/'), '')
   })
 
-  it('id проекта и имя файла доски — hex sha1, без «:» и «\\» даже для C:/… пути', () => {
+  it('id проекта и имя файла доски — hex sha1, без «:» и «\\» даже для C:/… пути', async () => {
     const m = manager()
-    const p = m.add(repo)
+    const p = (await m.add(repo))
     assert.match(p.id, /^[0-9a-f]{10}$/)
   })
 

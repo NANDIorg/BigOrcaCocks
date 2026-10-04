@@ -1,5 +1,31 @@
 # Воркфлоу задачи
 
+Текущие границы backend/UI/host — [shared-foundation.md](shared-foundation.md).
+Основная логика общая; Electron-specific действия выполняет Desktop host.
+
+Node/Electron native roots раздельны: сборка Desktop не переключает ABI процесса,
+который проверяет common workflow. Installed Linux smoke использует настоящий Git/PTY
+из собственной Node поставки, production runtime не импортирует native backend.
+
+Linux installed smoke также проверяет service без `SHELL` и явной команды оболочки.
+Продление writer lease не расходует durable ledger workflow; повторный quit Desktop
+не обходит ожидание native exit/profile lease, включая выход установщика обновления.
+
+В recovery исходные пути Git остаются в отчёте, а referenced определяется по realpath:
+различия Windows slash/8.3 и эквивалентные пути не меняют принадлежность worktree.
+
+
+Редактор workflow и его presentation state теперь принадлежат общему UI package.
+Desktop compatibility IPC продолжает вызывать тот же runtime; operator client
+не запускает workflow tools локально и не считает потерянный ответ новым эффектом.
+
+
+`createRuntimeServices` объединяет workflow effects, фоновые transitions и
+agent socket callbacks для Desktop и Node host. Shutdown отключает callbacks,
+отменяет owned Git и ждёт native providers/PTY до освобождения profile lease;
+late workflow results после начала stop отклоняются общим execution guard.
+Это перенос прежнего движка, без изменения workflow schema или agent HELP.
+
 Этот документ описывает внутренний граф приложения. **Два формата.** Версия 2 (`WORKFLOW_VERSION = 2`) — граф
 **глобальной задачи**: позицию на графе хранит `Run.stage`, подзадачи по графу не ходят; её контракт — в разделе
 «Воркфлоу глобальной задачи (версия 2)» ниже. Версия 1 — граф **по подзадачам**: каждая рабочая подзадача идёт по нему
@@ -18,8 +44,70 @@
 
 Код: модель, валидация и функция перехода — `packages/core/src/workflow.ts`; позиция задачи и переходы —
 `packages/core/src/store.ts` (`advanceStage`, `enterWork`, `blockStage`, `requestApproval`); эффекты —
-`apps/desktop/src/main/workflow.ts`; git-часть мержа — `mergeTaskBranch` в `apps/desktop/src/main/review.ts`.
+`packages/runtime/src/workflow.ts` и `workflow-run.ts`; review/merge — общий
+`packages/runtime/src/review.ts` и async Git ports. `apps/desktop/src/main/workflow.ts`
+и `review.ts` сохраняют совместимые exports и host messages.
 Подробности по слоям — `docs/architecture.md` («Воркфлоу: модель», «Воркфлоу: состояние в store», «Ревью и мерж»).
+
+Планирование/запись снимка показа и чтение showcase теперь доступны как общие
+runtime factories с прежними лимитами и prepared commit/discard. Desktop facades и
+14 прежних IPC вызывают эти factories/FileCommands, socket snapshot воркера использует
+тот же алгоритм. Electron registration и OS shell находятся в host adapter.
+Общий API проверяет captured task/worktree/dispatch до late effect/result; file
+чтение не держит withStatusSource через await и не повторяет workflow effect.
+
+Project Git commands проверяют registration/policy внутри очереди и перед внешним
+изменением после await. Checkout повторяет guard живых агентов перед сменой root;
+начальный empty commit сохраняет staged/index пользователя. Собственный unborn root
+не считается чужим busy worktree при первом tracking checkout. Это не заменяет
+EffectToken run/node/visit/lane/dispatch: его отдельно проверяет общий async workflow executor.
+Девять старых Desktop IPC теперь вызывают common commands; private Git root helper
+удалён, process count передаётся как callback общей операции checkout.
+
+Общие SessionCommands отделяют input/resize writer от lifetime PTY. Client lease
+expiry/disconnect не меняет workflow и не запускает новый dispatch; explicit kill
+идёт по существующему callback ptyExited. Validation payload предшествует process spawn.
+
+Команды диалога используют общий async client scope: policy до lookup и после await,
+синхронный commit со status source без удержания его через Promise. Host workflow
+context передаётся скрыто, как прежде; malformed permission answer не меняет pending
+request. История после stop/restart не исполняет сохранённые tool calls.
+
+Desktop session/assistant каналы подключены к common commands без изменения preload
+сигнатур. Нативный PTY exit по-прежнему вызывает loaded store ptyExited; disconnect
+окна освобождает только leases. Внутренний worker answer nudge остаётся owner effect,
+а ввод из UI проверяет principal/payload и writer до native write.
+
+Git effects Task/Run workflow и веток прогона используют общий async GitProcessService
+и canonical commonDir queue. Старые именованные Git helpers теперь Promise adapters
+к этому же port, их синхронные алгоритмы удалены. Составные commit/review/merge/cleanup занимают очередь один
+раз; независимые репозитории продолжают работать во время чужого hook. Stop/timeout
+завершают принадлежащее owner дерево процессов, отмена не маскируется domain ошибкой.
+
+EffectScope сохраняет project/store/task/run identity, node/visit, точный lane/forkVisit
+и dispatch до ожидания. Guard выполняется после await и перед store/native эффектом;
+обычная правка текста и продвижение соседа не отменяют текущую позицию. Смена поколения,
+registration или policy запрещает следующий spawn/переход и запись stale failure.
+Все действия перехода Run захватывают позиции до Promise handoff/ожидания первого пути.
+После deliberate store phase используется новый scope. Cleanup завершённой service-task
+проверяет её dispatch и живость run, отдельно от уже продвинутого родительского этапа.
+
+Task/Run workflow, workers, coordinator, review и attachments возвращают Promise; Desktop
+и socket ожидают завершение. Автор захватывается до await и задаётся только на синхронную
+store phase: `workflow` для графа, human/cli/app для прямого решения. Native attachments
+сохраняются после durable reference даже при failed launch. Event/timer rejection обработан.
+Stage options читают HEAD асинхронно; idle settlement фильтрует изменившиеся кандидаты до
+core transition. Отказ native чтения optional entry marker сохраняет прежний best-effort,
+но authority/position errors не подавляются.
+
+Async RunBranchServices готовит/восстанавливает feature worktree и выполняет merge/nonforce
+cleanup тем же Git owner. Отсутствующая feature не создаётся из другой истории; root branch,
+detached base, dirty worktree и feature ref после конфликта сохраняются. Одновременные
+подготовки объединены с отдельным guard каждого caller. Run Git metadata проверяются отдельно
+от domain token, поэтому подготовка соседа не отменяет lane. Profile/docs/preview Git reads тоже
+асинхронны; policy проверяется до сохранения проекта, cancellation не становится fallback. Persistent
+journal/reconciliation подключены: native effect до отмены может
+остаться, автоматического rollback и безопасного повтора после crash пока не обещаем.
 
 ## Создание и правка графа через ассистента
 
@@ -90,7 +178,7 @@ orca-board workflow create --title "..." --base-type <id> --definition '<JSON>'
 | `decision` (роль R, вопрос, варианты) | выбор ветки графа по смыслу задачи | агент роли R, **одна** задача-решатель (`gateFor.runId`), её создаёт приложение; не смог — человек (запрос `decision` в Инбоксе) | нет |
 | `condition` | ветвление: `attempts` по `Run.stage.visits`; `role` не бывает | приложение | нет |
 | `git` | `commit` / `push` в worktree глобальной задачи (`RunGit.worktree`) | приложение | нет |
-| `merge` | слияние ветки глобальной задачи в `RunGit.base` локально (в корне, если база выгружена там, иначе через временный worktree); защищённых веток нет — кому нужен PR, ставит вместо неё `git push` | приложение (`execFileSync('git', …)`) | нет |
+| `merge` | слияние ветки глобальной задачи в `RunGit.base` локально (в корне, если база выгружена там, иначе через временный worktree); защищённых веток нет — кому нужен PR, ставит вместо неё `git push` | приложение (общий async Git port) | нет |
 | `fork` (пути 2–4) | запуск путей параллельно: у каждого своя позиция (`Run.lanes`) | приложение | по `stage_started` каждой «Работы» пути — её подзадачи (`--stage`) |
 | `join` (`forkId`) | ждёт все пути своего `fork`, потом идёт по `next` | приложение | — |
 | `end` | прогон закрыт, карточка в «Сделано», координатору `run_done` | приложение | выходит по `run_done` |
@@ -380,9 +468,9 @@ Store двигает граф и возвращает `WfAction`, **эффект
 `merge` на `git push` и PR. Корень проекта не переключается: если база выгружена в корне (или другом worktree) и там чисто — `git merge --no-ff` прямо там, с
 незакоммиченными правками — `workflow_blocked` (мерж в грязное дерево может их задеть); иначе **временный worktree** базы (`git worktree add <os.tmpdir()>/orca-merge-*/base <база>`
 → мерж → `worktree remove --force`, папка удаляется). Конфликт (`git merge --abort` уже выполнен) — исход `conflict`, обычно «Конфликт мержа» (`human`) с текстом git; «Принять»
-повторяет слияние (ветку разрешает человек). Повтор ноды после `workflow_blocked` — `startRunWorkflow` (см. ниже). Платформенных веток нет: только `execFileSync('git', […])` и `os.tmpdir()`.
+повторяет слияние (ветку разрешает человек). Повтор ноды после `workflow_blocked` — `startRunWorkflow` (см. ниже). Платформенных веток нет: общий async Git process/queue и `os.tmpdir()`.
 
-**Вход и повтор.** `startRunWorkflow(runId)` зовёт `runCoordinator` (`index.ts`) после каждого запуска координатора: граф не начат — `enterRunStage` и эффект первой ноды
+**Вход и повтор.** Общая trusted orchestration `createCoordinatorOperations` вызывает `startRunWorkflow` после запуска координатора. В неё входят owner `CoordinatorCommands` с явным context/policy и старый agent socket через Desktop `runCoordinator`: граф не начат — `enterRunStage` и эффект первой ноды
 (обычно `stage_started`), граф идёт — повтор эффекта текущей ноды. Повтор безопасен: задача-вопрос и проверка этого захода не дублируются (нашлась — при необходимости просто запускается),
 ждущий approval возвращается тот же, слияние и git идемпотентны, «Работа» при живом координаторе ничего не делает. Прогон, дошедший до `end`, координатора не запускает
 (`workflow.runFinished`): запуск переоткрыл бы закрытый прогон.
@@ -404,7 +492,7 @@ Store двигает граф и возвращает `WfAction`, **эффект
 | `worker_done` задачи `ask` | то же | закрыть, `advanceRunStage(next, {answers})`, если прогон стоит на этом заходе ноды |
 | `question_answered` (агент `ask` не жив) | то же | воркер стартует сам |
 | approval `human` решён | IPC `requests:resolve`, сокет `request resolve` → `resolveHumanRequest` → `handleRunRequest` | `accept` → исход `accept` (текст «Принять» → `decision` следующей «Работы»), `reject` → исход `reject` (замечания → `feedback`, приложенные к ним файлы → `images`) |
-| «Подтвердить» / «Вернуть в работу» на карточке | IPC `globalTasks:accept` → `acceptRun`, `globalTasks:returnToWork(…, images?)` → `returnRun` | то же решение approval (файлы к «Вернуть» main пишет в cwd координатора до перехода); «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
+| «Подтвердить» / «Вернуть в работу» на карточке | Desktop compatibility adapter → общие `CoordinatorCommands.accept/returnToWork` → `acceptRun/returnRun` | то же решение approval (файлы к «Вернуть» общий runtime пишет в cwd координатора до перехода); «Вернуть» **не закрывает** живого координатора (он ждёт этап в Monitor), мёртвого — перезапускает граф на входе в «Работу»; IPC отдаёт терминал координатора |
 | Координатор умер, `stage finish` не пришёл | раз в 5 с `watchFinishedCoordinators` → `settleIdleRunStages` | `settleIdleStages`: этап закрывается по `next` без сводки, эффект следующей ноды |
 
 **Путь подзадачи в движке main.** Подзадача этапа «Работа» идёт по своему пути (`Task.stage`), его исполняет **движок по подзадачам** (`main/workflow.ts`: `advance`,
@@ -426,7 +514,10 @@ Store двигает граф и возвращает `WfAction`, **эффект
 подзадачи (`Task.stage`) и прогона (`Run.stage`) лежат в снимке и переживают рестарт вместе, путь читается из `Run.workflow`; подзадача на `gate`/`human` пути ждёт решения как обычно.
 Задачи-ответы (`answerFor`) идут своим циклом «Принять» / «Уточнить».
 
-**Ограничения.** Эффект, не доведённый до конца из-за выхода приложения, повторяется при следующем запуске координатора (`startRunWorkflow`) или, для закрытия этапа, фолбэком. Файлы показа
+**Восстановление.** `startRunWorkflow` и fallback закрытия этапа восстанавливают позицию графа
+с проверкой актуальности. Незавершённый native effect записан в journal: reconciliation
+сопоставляет его с Git/PTY/filesystem, неопределённый результат не повторяется автоматически.
+Recovery resolution фиксирует выбор оператора и сама не запускает effect. Файлы показа
 снимаются при `done` в userData и после автомержа читаются из снимка; показ, сданный до снимков, — из worktree задачи, затем из worktree
 ветки прогона, а когда нет и его — IPC отвечает ошибкой с именем ветки прогона («Показ человеку» → «Снимок»). `RunBranchSync` только убирает worktree после «Сделано»:
 push ветки прогона — нода `git push` или человек.
@@ -448,7 +539,7 @@ push ветки прогона — нода `git push` или человек.
 `answer` + `optionId`). Поля `StageChange.decision`, `options`, `fallback` необязательные: снапшот старого main без них
 ленту и карточку не роняет.
 
-Подзадача этапа «Работа» на доске и в карточке показывает **шаг своего пути** (`renderer/src/subtaskPath.ts`, `Task.stage` — позиция внутри `work.subflow`, а не на графе прогона):
+Подзадача этапа «Работа» на доске и в карточке показывает **шаг своего пути** (`packages/ui/src/subtaskPath.ts`, `Task.stage` — позиция внутри `work.subflow`, а не на графе прогона):
 пилюля «Реализация › Ревью кода» (этап › шаг; шаг «Работа» без названия — просто «Реализация», как заголовок в промпте воркера), «N-й заход» со второго захода в шаг. Названия нод пути
 берутся из **пути** ноды `Task.stageOf.nodeId` (`subflow ?? defaultSubflow()`), а не из графа прогона: id вроде `work`/`merge` в путях повторяются. Задача-проверка ветки подзадачи
 (`gateFor.taskId`) называет ноду пути проверяемой задачи. Метка «⧗ держит этап: ждёт проверки / человека» — у подзадачи текущего захода этапа, на которой сейчас стоит `Run.stage`, если она
@@ -458,7 +549,7 @@ push ветки прогона — нода `git push` или человек.
 
 **Вкладка «Граф»** экрана глобальной задачи (макет `docs/design/workflow-progress/variant-a.html`) — граф прогона только для чтения и панель выбранной ноды. Вкладка вторая, после «Доски», и есть
 только у прогона с `workflowScope: 'run'` (`visibleTabs`, `globalScreen.ts`); у старых прогонов её нет, чип этапа не показывается. Данные — только из снимка, новых полей нет
-(`renderer/src/workflowProgress.ts`, чистые функции, тест рядом):
+(`packages/ui/src/workflowProgress.ts`, чистые функции, тест рядом):
 - **Пройденный путь** (`runProgress`, `walkHistory`): ребро записи `stageHistory` — из `from` (у первой записи — из старта) с исходом `outcome` в `nodeId`; ноды, на которых задача не стоит
   (`start`, `condition`), проходятся насквозь — рёбра через них тоже пройдены; `restart` — прыжок без ребра. Счётчик ребра — сколько раз по нему шли. Текущая нода — `stage.nodeId`, заход — `stage.visits`;
   на `end` или у закрытой задачи текущей нет. «Вернули» — последний вход в текущую ноду с исходом `reject`/`restart`.
@@ -569,7 +660,7 @@ push ветки прогона — нода `git push` или человек.
 
 Эти же описания редактор показывает в инспекторе выбранной ноды («Как работает этап»), в легенде «Типы нод» под
 списком нод и в подсказках кнопок палитры: тексты — `WF_NODE_HELP` в
-`apps/desktop/src/renderer/src/workflowHelp.ts`, тест `workflowHelp.test.ts` требует описание и все исходы для
+`packages/ui/src/workflowHelp.ts`, тест `workflowHelp.test.ts` требует описание и все исходы для
 каждого типа. Меняешь поведение этапа — правь таблицу ниже, эту таблицу и `WF_NODE_HELP` вместе.
 
 ## Этапы и что делает приложение
@@ -624,11 +715,14 @@ push ветки прогона — нода `git push` или человек.
 Путь вопроса (main, `apps/desktop/src/main`):
 
 - **Запуск.** `executeSteps` (`workflow.ts`) для ноды `ask` не зовёт `applyWorkRole`: роль ноды едет в запуск параметром
-  `WorkflowDeps.startWorker(taskId, {roleId})` → `runWorker` (`index.ts`) → `startWorker(…, roleId)` (`worker.ts`), а
+  `WorkflowDeps.startWorker(taskId, {roleId})` → Desktop `runWorker` (выбор project ports) → общий
+  `WorkerOperations.start` (`packages/runtime/src/worker-operations.ts`) → `WorkerServices.startWorker(…, roleId)`, а
   `task.roleId` и `task.agent` остаются прежними — иначе следующая «Работа» без своей роли запустилась бы ролью
-  опросника. Проверки роли и агента в `runWorker` идут по роли этапа. `Dispatch.roleId` — роль ноды. Без параметра
+  опросника. Проверки роли и агента в общем preflight идут по роли этапа до enterWork/kill. `Dispatch.roleId` — роль ноды. Без параметра
   (`worker start`, перезапуск, автоперезапуск) роль этапа `runWorker` берёт из графа (`enterWork` из `workflow.ts` возвращает
   `{roleId}` ноды `ask`). `store.enterWork` этап `ask` не сбрасывает: агент входит в него при каждом запуске.
+  IPC `worker:start` вызывает явный project `WorkerCommands`, а socket/workflow — ту же trusted orchestration;
+  `TaskWorkerLifecycle` закрывает старые dispatch до PTY, не создавая эскалацию от обычного kill.
 - **Первый этап.** `ask` сразу после `start`: первый запуск (`worker start`) входит в граф в `ask`; worktree и ветка
   создаются как обычно, после `next` «Работа» идёт в том же worktree.
 - **Адресат.** `worker.ask` (`socket.ts`) спрашивает у store ноду задачи (`taskStageNode`, граф прогона или запасной граф
@@ -691,8 +785,8 @@ worktree задачи, агент не запускается, человек н
 
 - Действие — `WfAction {type: 'git', nodeId, operation, branch?, base?, message?, remote?}` (`stageAction`). Шаблоны в нём
   **не подставлены**: `runGitNode` вызывает `renderGitTemplate(x, wfGitVars(task))`. У `push` `remote` уже с умолчанием.
-  Событий воркера нет: `executeSteps` выполняет git синхронно и сразу вызывает `advance(…, 'ok' | 'error')` — цепочка
-  `git → git → …` идёт за один вызов (лимит 50 переходов подряд общий).
+  Событий воркера нет: `executeSteps` ожидает async Git, проверяет исходную позицию и вызывает `advance(…, 'ok' | 'error')`.
+  Цепочка `git → git → …` идёт за один async вызов (лимит 50 переходов подряд общий).
 - **Имя ветки** после подстановки проверяется дважды: упрощённо (`isValidGitBranchName`) и настоящим `git check-ref-format
   --branch` (`isBranchNameAcceptedByGit`). Недопустимое — `workflow_blocked` «имя ветки «…» после подстановки недопустимо»:
   git не запускался, это ошибка настройки, а не отказ git. Пустое сообщение коммита после подстановки — тоже `blocked`.
@@ -730,7 +824,7 @@ worktree задачи, агент не запускается, человек н
 - `push` отправляет только закоммиченное: нужны изменения — поставьте `commit` перед ним. Ветка после `merge` удаляется
   локально, на remote остаётся; для «запушить без мержа» граф идёт `… → git(push) → end` (конец без мержа сохраняет ветку).
   Git запускается с `GIT_TERMINAL_PROMPT=0` (без запроса пароля в несуществующем терминале), а `push` ещё и с таймаутом
-  120 с — **синхронно в main**: пока идёт push, приложение не отвечает; зависший remote даёт `error` «не ответил за 120 с».
+  120 с — асинхронно, main продолжает отвечать; зависший remote даёт `error` «не ответил за 120 с».
 - Запрещено намеренно (противоречит модели «worktree на ветку задачи, слияние — нода `merge`»): `merge`, `rebase`, `reset`,
   `checkout` файлов, удаление веток, `push --force`, произвольная команда. Слияние — `merge`; ветки удаляет уборка.
 
@@ -1045,7 +1139,7 @@ HELP `check` не меняются.
 | Путь без «Работы» | допустим: `fork` сразу в `join` — `forkEmptyBranch`, путь только из проверок — `forkBranchNoWork` (предупреждения) |
 | Закрытие прогона посреди разветвления | как посреди графа: `closedAt` есть, позиции остаются, эффектов нет |
 
-Git: ветка и worktree прогона **одни на все пути**. Слияния подзадач разных путей сериализует синхронный git main,
+Git: ветка и worktree прогона **одни на все пути**. Слияния подзадач разных путей сериализует commonDir queue runtime,
 конфликты ловит нода `conflict` пути подзадачи; смысловые конфликты путей видны только на общей ветке — `gate` ставьте
 после `join`. `StageChange.commit` у путей накладывается по времени: дифф этапа пути не изолирован.
 
@@ -1231,7 +1325,7 @@ worktree задачи, без абсолютных путей и `..` (`normaliz
   HTML, md и картинки открываются «На весь экран» в просмотрщике `ShowcaseViewer.tsx` (список файлов, ширина страницы,
   «Интернет-ресурсы», решение approval внизу — см. `docs/architecture.md` → «UI» → «Показ человеку»); «Открыть» / «В папке» —
   в меню «⋯», у PDF — кнопками. Разделы «## Показ» из `body` вычитаются (`bodyWithoutShowcases`), чтобы не дублировать.
-  Логика — `renderer/src/showcase.ts`: старые main/preload — «Перезапустите приложение» (`showcaseApi`,
+  Логика — `packages/ui/src/showcase.ts`: старые main/preload — «Перезапустите приложение» (`showcaseApi`,
   `showcasePreviewApi`). У «Принять» approval — поле «Решение / вариант» (`resolution.text` → `request_resolved.decision`),
   общее с просмотрщиком.
 
@@ -1289,6 +1383,14 @@ G закроется по своему `done`.
 `main/workflow.ts`), а не только по проверке. Колонка «Ревью» не значит «этап проверки»: после `done` задача стоит в
 «Ревью» и на `merge`/`git`/`end`, пока эффект не прошёл.
 
+Public `ReviewCommands`/`HumanRequestCommands` проверяют policy, явный project/client/actor
+и payload до lookup/effects. Общие `ReviewOperations` вызывают прежний workflow router
+для задач и run gate, включая taskless approval/decision; Desktop IPC и agent socket
+используют эту же orchestration. Перед ответом сверяется живость dispatch, вложения
+проверяются по байтам и сохраняют прежний rollback. Public resolution не принимает
+server paths; legacy resolution.images отбрасываются. Workflow engine и guards ниже
+сохраняют прежние переходы.
+
 | Нода задачи | «Принять» | «Вернуть» (замечания) |
 |---|---|---|
 | `gate`, `human` | исход `accept` (на `human` — решение его approval) | исход `reject`, замечания в `feedback` |
@@ -1304,10 +1406,28 @@ G закроется по своему `done`.
 уже слита — сливать нечего, остаётся уборка (`git worktree prune` для убранной руками папки). Конфликт — только когда в индексе
 есть незаслитые пути (`git diff --name-only --diff-filter=U`, `MergeError.conflict` из `mergeBranch`): это нода `conflict`.
 Прочие отказы `git merge` (занятый `index.lock`, незакоммиченное в цели, таймаут) — исключение → `workflow_blocked` с текстом git,
-а не ложный «Конфликт мержа». git в main синхронный, поэтому у `merge`, `commit`, `worktree remove` таймаут 120 с,
-`GIT_TERMINAL_PROMPT=0` и `GIT_EDITOR=true` (`main/git.ts`).
+а не ложный «Конфликт мержа». Async Git использует таймауты общего process service,
+`GIT_TERMINAL_PROMPT=0` и `GIT_EDITOR=true` (`packages/runtime/src/git-workflow.ts`).
 
 ## CLI и сокет
+
+Application API библиотеки workflow общий: `ProfileCommands.workflowGet/Validate/Set/Create`
+использует прежние guards/revision менеджера, guarded draft/context — общую factory
+`createWorkflowAssistantServices`. Контекст обсуждения не сохраняет тип; актуальные роли,
+название и revision берёт manager, extraArgs не передаются ассистенту. Native экспорт
+и legacy selection относятся к Desktop adapter; протокол/HELP agent CLI сохраняются.
+Прежний workflowAssistant:save IPC вызывает общий guarded draft через profile adapter,
+а assistantChat контекст и socket используют совместимый facade общей factory.
+Settings/types/templates IPC подключены к тому же manager, UI/preload signatures прежние.
+
+`RuleCommands` правит только два известных файла правил выбранного проекта;
+`StatsCommands` считает прежние метрики по отделённому snapshot, без исполнения
+сохранённых tool calls или workflow. Запись session id после чтения транскрипта
+проверяет текущую identity проекта и dispatch; async executor сохраняет авторство
+только внутри синхронного commit. Workflow Git использует ту же commonDir queue;
+актуальность его task/run/lane позиции защищает отдельный EffectScope.
+Desktop и socket уже используют общий rules service; прежние stats IPC вызывают
+scoped commands, которые отклоняют поздний результат удалённого проекта.
 
 ```
 orca-board workflow show [--run <id>]     # этапы и переходы: снимок прогона (координатору --run из $ORCA_RUN_ID) или граф проекта
@@ -1342,8 +1462,42 @@ orca-board request resolve --request <id> --option <id|метка> [--text "..."
   создаётся; на `human` без ждущего approval — запрос. Идемпотентен. Остановленные задачи (`stageBlock`) ждут человека — иначе
   каждый запуск заново слал бы `workflow_blocked`. Живые запуски после рестарта закрываются как `unknown`, задача
   (и проверка) — в ready на своём этапе; повторный запуск повтором не считается (`visits` не растут).
-- Мерж синхронный: пока идёт `git merge` с хуками, main занят (таймаут 120 с). Асинхронный мерж — отдельная задача.
+- Async Git не блокирует main; queue сериализует связанные worktree. После crash native effect
+  может уже существовать без store metadata: persistent journal и reconciliation подключены.
 - Решение человека (`human` → «Вернуть» → работа) останавливает цикл так же, как `attempts`: предупреждение
   валидации о бесконечных отказах такие циклы не учитывает.
 - Условие `files` не поддерживается. Параллельные этапы — только разветвлением `fork`/`join` графа глобальной задачи
   (раздел «Разветвление»): без вложенности, пути сходятся в одном `join`, ветка прогона у путей общая.
+
+### Предварительный расчёт запуска
+
+`TaskStore.previewEnterWork` и `previewAdvanceStage` вычисляют действие и посещения
+тем же движком, что записывающие методы. Они не меняют этап, stageBlock, историю,
+события, pending requests и persistence. Preview не является резервированием:
+вызывающий код должен применить проверку и переход в одном синхронном вызове;
+асинхронные effects отдельно проверяют EffectScope после ожидания.
+
+Runtime `enterWork` принимает optional `validateRole` и role override. Прямой
+запуск/перезапуск проверяет выбранную роль до записи; роль ask остаётся временной,
+роль work применяется после проверки. Если перед воркером Git и нет override,
+исход операции выбирает роль: выполненный Git сохраняется, проверка проходит
+до следующего перехода к work/ask. При отказе задача остаётся на Git без нового
+dispatch; обычный повтор запуска вновь проходит подготовку. Ошибки Git продолжают
+идти по error-ветке, в том числе к человеку. Проверка только выбранной роли
+не требует доступности агентов неиспользованных веток.
+Если подготовительная Git-цепочка проходит через merge, проверка роли также
+выполняется перед переходом из merge к воркеру; уже выполненный мерж и уборка
+сохраняются. Отказ запуска не является откатом Git-истории.
+
+В guarded-входе граф с первым эффектом human/gate/merge/end/blocked исполняет
+этот этап; обычный воркер не запускается мимо него. Если цепочка не пришла
+к work/ask, команда сообщает, что воркер не запущен, а запрос/конец/блокировка
+остаются результатом графа. Повторный заход через условие в ту же ноду
+сохраняет увеличенные visits и stage_changed: attempts учитывает такой повтор,
+а preview соответствует записываемому этапу.
+
+Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.
+
+### Reconnect operator clients
+
+Protocol/schema handshake предшествует effects. Общие mutations сохраняют intent и accepted result атомарно, revision проверяется перед новым invoke. Повтор уже завершённого запроса возвращает результат даже после изменения текущей revision; повтор с другим payload конфликтует. После crash незавершённый запрос остаётся uncertain, его нельзя автоматически повторить. Revision provider и события всех owner/agent путей подключаются в общей composition; observer не потребляет агентские check events.

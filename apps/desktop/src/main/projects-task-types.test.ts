@@ -165,14 +165,14 @@ describe('библиотека типов', () => {
     assert.throws(() => pm.deleteTaskType('docs'), /тип задачи не найден: docs/)
   })
 
-  it('удалён «Программирование» — тип по умолчанию первый в библиотеке, новые проекты и прогоны на нём', () => {
+  it('удалён «Программирование» — тип по умолчанию первый в библиотеке, новые проекты и прогоны на нём', async () => {
     writeConfig()
     const pm = new ProjectManager(tmp)
     assert.equal(pm.deleteTaskType(GENERAL_TASK_TYPE_ID).defaultTaskTypeId, 'frontend')
     assert.equal(pm.projectDefaultTypeId(PID), 'frontend')
     assert.equal(pm.runType(PID).typeId, 'frontend')
     assert.equal(pm.resolveRun(PID).typeId, 'frontend')
-    assert.equal(pm.add(gitRepo('fresh')).defaultTaskTypeId, 'frontend')
+    assert.equal((await pm.add(gitRepo('fresh'))).defaultTaskTypeId, 'frontend')
     assert.equal(new ProjectManager(tmp).defaultTaskTypeId(), 'frontend', 'и после перезапуска')
   })
 
@@ -374,16 +374,16 @@ describe('экспорт типа', () => {
 })
 
 describe('типы проекта', () => {
-  it('add: колонки встроенные, тип по умолчанию — заданный или библиотеки; копии настроек нет', () => {
+  it('add: колонки встроенные, тип по умолчанию — заданный или библиотеки; копии настроек нет', async () => {
     const pm = new ProjectManager(tmp)
-    const api = pm.add(gitRepo('api'), 'backend')
+    const api = (await pm.add(gitRepo('api'), 'backend'))
     assert.equal(api.defaultTaskTypeId, 'backend')
     assert.deepEqual(api.columns, DEFAULT_COLUMNS)
     assert.equal('roles' in api, false)
     assert.deepEqual(pm.roles(api.id), presetTaskType('backend')!.settings.roles ?? DEFAULT_ROLES, 'роли — из типа по умолчанию')
-    assert.equal(pm.add(gitRepo('plain')).defaultTaskTypeId, GENERAL_TASK_TYPE_ID)
-    assert.throws(() => pm.add(gitRepo('x'), 'нет-такого'), /тип задачи не найден/)
-    assert.equal(pm.add(gitRepo('api'), 'frontend').defaultTaskTypeId, 'backend', 'уже добавленный — как есть')
+    assert.equal((await pm.add(gitRepo('plain'))).defaultTaskTypeId, GENERAL_TASK_TYPE_ID)
+    await assert.rejects(async () => (await pm.add(gitRepo('x'), 'нет-такого')), /тип задачи не найден/)
+    assert.equal((await pm.add(gitRepo('api'), 'frontend')).defaultTaskTypeId, 'backend', 'уже добавленный — как есть')
   })
 
   it('detectTaskType: угаданная заготовка, без признаков — тип библиотеки по умолчанию', () => {

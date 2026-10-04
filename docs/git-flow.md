@@ -1,5 +1,31 @@
 # Git Flow для двух разработчиков и агентов
 
+## Независимые продукты
+
+Общий фундамент уже реализован: [карта пакетов](shared-foundation.md) и
+[результаты проверок](orca-foundation-progress.md). Shared packages пока private
+и встраиваются в продукт из выбранного для его сборки состояния репозитория.
+Изменение shared кода не выпускает автоматически Desktop/Web/CLI одновременно.
+
+Общие feature PR по-прежнему идут в develop. Desktop сохраняет существующие версии
+root/apps/desktop, `release/X.Y.Z`, `hotfix/X.Y.Z`, теги `vX.Y.Z` и marine codenames.
+CLI использует manifest packages/cli/package.json, ветки release/cli/X.Y.Z и hotfix/cli/X.Y.Z,
+теги cli/vX.Y.Z. Web использует будущий apps/web/package.json, release/web/X.Y.Z,
+hotfix/web/X.Y.Z и web/vX.Y.Z. Существующий agent JS CLI не превращается в новый UI
+от изменения release guard; его HELP остаётся прежним.
+
+Подготовка меняет только выбранный продукт. Git-flow guard сверяет branch/tag с его
+manifest, остальные версии не выравниваются. Одна активная release preparation и
+concurrency относятся к продукту. Backmerge сохраняет версии других продуктов.
+CLI/Web publication обязательно использует make_latest=false и не содержит Desktop
+latest manifests/установщики; только Desktop владеет GitHub Latest/update feed.
+Source policy — scripts/product-release.mjs, release fixtures — scripts/product-release.test.mjs.
+Workflows CLI/Web добавляются с реальными поставками, сейчас публикаций нет.
+Local rulesets учитывают product prefixes; применять их на GitHub должен владелец
+в отдельной операции. Проверки Node используют отдельный `.native` root, не rebuild
+Desktop node-pty. Полный verify сохраняется перед PR.
+
+
 Это обязательный процесс разработки **этого репозитория**. Инженерные ограничения —
 [CLAUDE.md](../CLAUDE.md), устройство приложения — [architecture.md](architecture.md),
 результат исходного аудита — [development-audit.md](development-audit.md).

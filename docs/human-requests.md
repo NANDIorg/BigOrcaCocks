@@ -1,5 +1,30 @@
 # Запросы к человеку (`HumanRequest`)
 
+Текущие границы backend/UI/host — [shared-foundation.md](shared-foundation.md).
+Основная логика общая; Electron-specific действия выполняет Desktop host.
+
+Release version продукта не заменяет protocol/schema compatibility. Клиент другой
+поддерживаемой версии решает запрос теми же commands, несовместимый handshake
+блокирует mutation до effects; данные запросов сохраняет единственный profile owner.
+
+Writer heartbeat терминала не заполняет durable журнал ответов/команд профиля.
+Ответы человеку сохраняют request identity/revision и прежнее безопасное повторение;
+shutdown Desktop завершает native cleanup до выхода и освобождения profile owner.
+
+Отчёт восстановления сопоставляет пути по filesystem identity; иной формат Windows
+пути не превращает используемый worktree в orphan для ручного решения оператора.
+
+
+Общие request UI/presentation helpers перенесены в `packages/ui`, runtime resolution
+не дублируется на клиенте. Binary вложения и повтор RPC используют общий client
+transport; native file actions поступают через PlatformAdapter.
+
+
+Ответы человеку и возобновление задач у Desktop и Node host проходят общие
+runtime commands/lifecycle. Старый agent socket использует ту же фабрику handlers,
+сохраняя ask/check envelope; отдельный operator endpoint не выдаёт агенту
+право recovery или управления чужим client writer lease.
+
 Всё, что ждёт решения человека, хранится как одна запись `HumanRequest`: вопрос воркера, сданный ответ
 задачи-ответа, упавший воркер, этап воркфлоу «человек» (`approval`, `docs/workflow.md`) и выбор ветки «Решения ИИ», когда агент не выбрал (`decision`). Статус хранится явно (`pending → resolved | cancelled`) и не выводится из колонок,
 вопросов или живости координатора. Колонка «Нужен ответ» на обеих досках, счётчик `GlobalTask.waiting`,
@@ -7,9 +32,88 @@
 (`isPendingRequest` / `pendingRequestsOf` / `hasPendingRequest`, `packages/core/src/global-tasks.ts`).
 
 Код: типы — `packages/core/src/types.ts` («запросы к человеку»), переходы — `packages/core/src/store.ts`
-(`createRequest`, `resolveRequest`, `cancelRequests`), транспорт — `apps/desktop/src/main/review.ts`
-(`resolveHumanRequest`), `socket.ts` (`request.*`, `worker.ask`), `request-params.ts` (разбор флагов CLI),
+(`createRequest`, `resolveRequest`, `cancelRequests`), общий application API —
+`packages/contracts/src/human-request-commands.ts`, runtime `human-request-commands.ts`
+и `review-operations.ts`. Desktop adapter — `main/review-request-commands.ts`,
+`socket.ts` (`request.*`, `worker.ask`), `request-params.ts` (разбор флагов CLI),
 `notify.ts`. Тесты — `packages/core/src/answers.test.ts`, `requests.test.ts`.
+
+Перед ответом человеку Desktop/socket сверяют живость через общий
+`TaskWorkerLifecycle.syncWorkerLiveness` (`packages/runtime/src/task-worker-lifecycle.ts`):
+dispatch закрываются только если все активные PTY задачи мертвы. Сам sync не
+переносит колонку; дальнейший переход делает прежний request/question guard.
+Перезапуск после уточнения использует общую `WorkerOperations.start`: preflight
+фактической роли и enterWork предшествуют закрытию старого PTY. Application API
+`WorkerCommands`, `ReviewCommands` и `HumanRequestCommands` общие: policy/context
+и payload проверяются до project lookup/effects, id вопроса/запроса принадлежит
+именно указанному store. Executor сохраняет human/cli/app источник и отделяет DTO.
+Public resolution не принимает server paths; байты вложений идут отдельным input.
+Legacy Desktop/socket отбрасывают resolution.images, пути формируют только общие
+resources. Router сохраняет taskless approval/decision прогона, duplicate/stale
+guards, rollback orphan файлов и durable feedback после решения.
+
+Библиотека типов и графов теперь также имеет общий profile API; конфигурация проекта
+требует явный project context. Эти команды используют прежние guards ProjectManager
+и не решают pending запросы выбранной в другом клиенте доски.
+Desktop settings/types/templates вызывают этот API через проверенный profile adapter;
+agent socket сохраняет прежние trusted методы и ограничения передачи приватных полей.
+
+Общие правила/статистика получают явный проект и не изменяют pending запросы
+другого клиента. Статистические показатели ожидания человека строятся из снимка,
+отделённого до async чтения; поздняя запись найденного session id проходит проверку
+project/store/dispatch. Полномочия отвечать человеку от чтения статистики не появляются.
+Desktop stats IPC использует общий API и переводит Promise rejection в прежний
+локализованный IPC code; rules IPC и agent project.rules.* используют одну factory.
+
+Общая preview policy ограничивает недоверенную страницу root её grant и прежним
+sandbox/CSP. Проектные документы не получают network, показы — лишь со snapshot.
+FileCommands требуют явный проект и host policy, не решают и не потребляют
+pending-запросы. После удаления проекта поздний file result/native effect отклонён;
+Desktop IPC проверяет caller до выбора проекта и вызывает общий API.
+
+Run list/counts и agent preflight не потребляют check и не отвечают человеку.
+Preflight проверяет роль, доступность агента и флаги сохранённого снимка до launch;
+явный неизвестный run отклонён, а не заменяется default типом другого прогона.
+Desktop Git/runs/agents channels проверяют caller до чтения legacy selection;
+чтение прогонов из UI не меняет доступность pending ответов в agent socket.
+
+Наблюдатель терминала не получает writer capability из подписки. Смена writer не
+отвечает на request/question и не потребляет agent check; после disconnect pending
+запрос продолжает ожидать ответа, а процесс сохраняется.
+
+Ответы на permission/question структурного чата проходят общий DialogCommands или
+compatibility AssistantCommands: shape validation до provider, затем проверка живого
+request/turn и вариантов самим driver. История диалога после stop/restart read-only,
+не воспроизводит tool calls и не принимает прежний permission. HumanRequest доски
+сохраняет собственный существующий lifecycle.
+
+Desktop assistantChat send/respond теперь вызывает общий compatibility API через
+проверенное главное окно; локализованная domain ошибка сохраняется при Promise.
+PTY input/resize auto claim не выполняется для malformed payload, а отказ event
+пишется в logger. Отключение окна освобождает его writer, pending запрос остаётся.
+
+Review/request effects подключены к общему async runtime: commit/review/merge/cleanup
+занимают одну transaction canonical commonDir queue, preview не удерживает mutation
+queue. Долгий hook не блокирует PTY/другой repo. Ожидание человека остаётся вне Git queue.
+Именованные review/Git helpers тоже возвращают Promise через общий port, без sync-дубликата.
+GitProcessService закрывает stdin, ограничивает output, при stop/timeout завершает hooks.
+
+EffectScope проверяет captured project/store/task/run identity, node/visit/lane/dispatch
+и host policy после await до следующего эффекта. Stale/forbidden не пишут feedback и не
+эскалируют новый dispatch. Уже durable решение не откатывается при failed launch; вкладка
+другого клиента не выбирается. Human/cli/app source захватывается до ожидания, graph phases
+пишут workflow; глобальный withStatusSource не удерживается через Promise.
+
+Вложения ожидают весь async apply. При актуальной позиции файлы без ссылок убираются после отказа; referenced
+feedback/stageInput остаются при ошибке последующего запуска. Request/review commands,
+Desktop adapters и legacy socket ожидают Promise до ответа. Optional entry commit marker
+best-effort при native read error, но policy/position errors не подавляются.
+
+Подготовка feature run разделяет один Git effect между ожидающими с отдельным domain
+guard каждого. Git metadata не отменяет соседний lane и отдельно проверяется branch port.
+Уже случившийся native effect не откатывается после отмены и может требовать восстановления:
+persistent journal/reconciliation подключены. Profile/docs/preview Git reads тоже async:
+root probe проверяет policy перед записью, отмена docs не скрывается fallback/пропуском группы.
 
 ## Модель
 
@@ -159,7 +263,7 @@ Payload короткие: строка события в мониторе коо
 
 Инбокс (`InboxPanel`), карточка глобальной доски (`GlobalBoard`) и `RequestCard` работают и с запросами **без `taskId`** (approval прогона): `where` —
 «глобальная задача › нода воркфлоу» (`wfNodeTitles` по графу прогона), а кнопки, которым нужна задача («Терминал», «Открыть полностью»), не показываются.
-Какие показы выводить, решает `requestShowcases` (`renderer/src/showcase.ts`): у approval — `showcaseDispatchIds`, а у старых запросов (только
+Какие показы выводить, решает `requestShowcases` (`packages/ui/src/showcase.ts`): у approval — `showcaseDispatchIds`, а у старых запросов (только
 `showcaseDispatchId`) — одиночный id; у `answer` — показ запуска, сдавшего ответ (`dispatchId`: `done --answer-file … --show …`). Файлы каждого показа
 читаются из задачи его запуска: у approval прогона своей задачи нет. Запусков с показом может быть несколько — по одному на подзадачу; тогда
 `RequestCard` рисует `ShowcaseGroupsBlock` — блок на подзадачу с цветной полосой её состояния по колонке (готово / на проверке / в работе), числом
@@ -167,7 +271,7 @@ Payload короткие: строка события в мониторе коо
 заголовком `### <подзадача>`) вычитаются из свёрнутого body (`bodyWithoutShowcases`). Решение («Принять» / «Вернуть…», у `answer` — «Уточнить…» и
 поле «Решение») доступно и внизу просмотрщика: поле общее с карточкой. Файлы читаются из снимка запуска
 (`<userData>/showcase`, снят при `done`), поэтому доступны и после мержа подзадачи (`docs/workflow.md` → «Показ человеку» → «Снимок»).
-Markdown из показа рендерится с контекстом файла (`Markdown` с `assets`, `renderer/src/markdownAssets.ts`): относительная картинка `![](shots/a.png)`
+Markdown из показа рендерится с контекстом файла (`Markdown` с `assets`, `packages/ui/src/markdownAssets.ts`): относительная картинка `![](shots/a.png)`
 грузится из того же снимка по `orca-preview://<токен>/…` (`base` из `showcase:previewUrl`), `..` за корень показа, абсолютные пути, `https://` и
 `data:` — не грузятся (вместо картинки — подпись с `alt`); относительная ссылка на другой файл показа открывает его в просмотрщике. Страницы HTML из показа открываются в изолированном
 фрейме по протоколу `orca-preview://` без сети (`docs/architecture.md` → «Протокол показа»), поэтому воркер сдаёт их автономными — правила ему даёт
@@ -178,7 +282,7 @@ Markdown из показа рендерится с контекстом файл
 
 Пункты ленты `review` («Ждёт ревью») и `stalled` («Этап остановлен») — **состояние задачи, а не `HumanRequest`**: у них нет запроса, решение уходит
 в `review.accept` / `review.reject` по задаче (у `approval` — `requests.resolve` по запросу). Строятся они по колонке **и** ноде этапа
-(`reviewStateOf` в `renderer/src/taskReview.ts`): задача в колонке `review`, не ответ (`answerFor`) и не проверка (`gateFor`), без pending-запроса
+(`reviewStateOf` в `packages/ui/src/taskReview.ts`): задача в колонке `review`, не ответ (`answerFor`) и не проверка (`gateFor`), без pending-запроса
 (иначе пункт — сам запрос). Нода этапа — в том же графе, что у движка (`stageNodeOf`: путь подзадачи, граф прогона или граф по подзадачам старого
 движка). Нода `gate`/`human` или задача без `Task.stage` — `review` («Принять» / «Вернуть…»). Любая другая нода (`merge`, `git`, `end`, `work`) —
 `stalled`: колонка «Ревью», а воркфлоу стоит (мерж упал или прервался рестартом). Заголовок — причина остановки из `Task.stageBlock` этой ноды,
@@ -223,3 +327,9 @@ orca-board request resolve --request <id> --restart | --dismiss
 `question.forward {question, note?}`, `worker.ask {question, option[]|options, recommend?, context?, wait?}`
 (`--context-file` читает CLI и шлёт текст в `context`).
 IPC: `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)`, событие `requests:focus`.
+
+Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.
+
+### Повтор ответа после reconnect
+
+Общий operator session принимает host-verified principal и mutation identity. Один request id с прежним payload возвращает сохранённый accepted result; другой payload конфликтует. Pending запрос после restart требует явной сверки, без автоматического повторного ответа. Каждый клиент имеет собственные selection и observer subscription; disconnect не завершает процессы owner. Transport/UI wiring следует после общей composition.

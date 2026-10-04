@@ -10,36 +10,27 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@orca-board/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@orca-board/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@xterm/addon-fit':
-        specifier: ^0.10.0
-        version: 0.10.0(@xterm/xterm@5.5.0)
-      '@xterm/xterm':
-        specifier: ^5.5.0
-        version: 5.5.0
-      dompurify:
-        specifier: ^3.4.15
-        version: 3.4.15
+      '@orca-board/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@orca-board/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9
-      marked:
-        specifier: ^18.0.13
-        version: 18.0.13
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
-      react:
-        specifier: ^19.0.0
-        version: 19.3.0
-      react-dom:
-        specifier: ^19.0.0
-        version: 19.3.0(react@19.3.0)
-      refractor:
-        specifier: ^5.0.0
-        version: 5.0.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -69,13 +60,126 @@ importers:
         specifier: ^7.0.0
         version: 7.3.6(@types/node@22.20.4)(jiti@2.7.0)
 
+  apps/headless:
+    dependencies:
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@orca-board/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.4
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   packages/cli: {}
+
+  packages/client:
+    dependencies:
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.4
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/contracts:
+    dependencies:
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
 
   packages/core:
     devDependencies:
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
+
+  packages/runtime:
+    dependencies:
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.4
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/ui:
+    dependencies:
+      '@orca-board/client':
+        specifier: workspace:*
+        version: link:../client
+      '@orca-board/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@orca-board/core':
+        specifier: workspace:*
+        version: link:../core
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
+      dompurify:
+        specifier: ^3.4.15
+        version: 3.4.15
+      marked:
+        specifier: ^18.0.13
+        version: 18.0.13
+      react:
+        specifier: ^19.0.0
+        version: 19.3.0
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.3.0(react@19.3.0)
+      refractor:
+        specifier: ^5.0.0
+        version: 5.0.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.4
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.3.0(@types/react@19.3.0)
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vite:
+        specifier: ^7.0.0
+        version: 7.3.6(@types/node@22.20.4)(jiti@2.7.0)
 
 packages:
 

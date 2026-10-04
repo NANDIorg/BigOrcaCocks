@@ -27,6 +27,7 @@ let typeWorkflow: Workflow | undefined
 let noDecisionEngine: boolean
 /** Снимки показа как в main (`snapshotDispatchShowcase`); нет — у deps нет `snapshotShowcase`, как до снимков. */
 let snapshots: ShowcaseSnapshots | undefined
+let asyncPorts: Partial<ProjectDeps> = {}
 
 function fakeDeps(): ProjectDeps {
   let pty = 0
@@ -74,7 +75,8 @@ function fakeDeps(): ProjectDeps {
     saveTaskTypeRules: () => { throw new Error('не нужен') },
     columns: () => DEFAULT_COLUMNS,
     workflow: () => ({ typeId: 'general', title: 'Программирование', workflow: legacyDefaultWorkflow(roles), custom: false }),
-    ...NOT_NEEDED_SETTINGS_DEPS
+    ...NOT_NEEDED_SETTINGS_DEPS,
+    ...asyncPorts
   }
 }
 
@@ -83,6 +85,10 @@ interface Reply {
   ok: boolean
   error?: string
   result: {
+    ptyId?: string
+    finished?: string
+    stage?: { nodeId: string }
+    next?: { type: string }
     status?: string
     feedback?: string
     stopped?: string[]
@@ -124,6 +130,7 @@ beforeEach(async () => {
   typeWorkflow = undefined
   noDecisionEngine = false
   snapshots = undefined
+  asyncPorts = {}
   server = startSocketServer(sockPath, { resolve: () => fakeDeps(), projects: () => [], ...NOT_NEEDED_APP_SETTINGS_DEPS })
   await new Promise((r) => server.once('listening', r))
 })
@@ -661,4 +668,52 @@ describe('decision choose / escalate', () => {
     assert.match((await call('decision.choose', { option: ['yes'], reason: 'r' }, env)).error ?? '', /decision choose не поддерживается/)
     assert.match((await call('decision.escalate', { reason: 'r' }, env)).error ?? '', /decision escalate не поддерживается/)
   })
+})
+
+// Хендлер обязан дождаться native эффекта до JSON-сериализации вложенных полей.
+for (const method of ['worker.restart', 'task.reopen', 'coordinator.start', 'review.accept', 'stage.finish'] as const) {
+  it(`${method}: ответ ждёт асинхронного эффекта и содержит завершённый результат`, async () => {
+    const task = store.createTask({ title: 'Async', roleId: 'developer' })
+    const run = store.createRun('Goal', undefined, { version: 2,
+      nodes: [{ id: 's', type: 'start', x: 0, y: 0 }, { id: 'w', type: 'work', x: 0, y: 0 }, { id: 'e', type: 'end', x: 0, y: 0 }],
+      edges: [{ id: 'a', from: 's', outcome: 'next', to: 'w' }, { id: 'b', from: 'w', outcome: 'next', to: 'e' }] })
+    store.enterRunStage(run.id)
+    const child = store.createTask({ title: 'Child', runId: run.id }); store.acceptTask(child.id)
+    if (method === 'task.reopen' || method === 'review.accept') store.acceptTask(task.id)
+    let release!: () => void; let enter!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    const wait = async () => { enter(); await held }
+    asyncPorts = {
+      startWorker: async id => { assert.equal(id, task.id); await wait(); const d = store.startDispatch(id, 'pty_async'); return { ptyId: d.ptyId, dispatchId: d.id, worktree: '/wt', branch: 'orca/async' } },
+      startCoordinator: async objective => { assert.equal(objective, 'Goal'); await wait(); return 'pty_coord_async' },
+      accept: async id => { assert.equal(id, task.id); await wait(); store.acceptTask(id) },
+      finishStage: async id => { assert.equal(id, run.id); await wait(); return store.finishStage(id) }
+    }
+    let answered = false
+    const reply = call(method, { task: task.id, start: true, objective: 'Goal', run: run.id }).then(result => { answered = true; return result })
+    await entered
+    try {
+      await new Promise(resolve => setTimeout(resolve, 25))
+      assert.equal(answered, false, 'ответ не должен опережать завершение native эффекта')
+    } finally { release() }
+    const result = await reply
+    assert.equal(result.ok, true, result.error)
+    if (method === 'worker.restart') { assert.equal(result.result.ptyId, 'pty_async'); assert.ok(result.result.dispatchId) }
+    if (method === 'task.reopen') assert.ok(result.result.worker?.dispatchId)
+    if (method === 'coordinator.start') assert.equal(result.result.ptyId, 'pty_coord_async')
+    if (method === 'review.accept') assert.equal(result.result.status, 'done')
+    if (method === 'stage.finish') { assert.equal(result.result.finished, 'w'); assert.equal(result.result.stage?.nodeId, 'e'); assert.equal(result.result.next?.type, 'done') }
+  })
+}
+it('worker.restart: поздняя ошибка эффекта возвращается как ошибка сокета', async () => {
+  const task = store.createTask({ title: 'Async', roleId: 'developer' })
+  asyncPorts = { startWorker: () => {
+    const pending = Promise.resolve().then(() => { throw new Error('native launch failed') })
+    // Старый хендлер теряет Promise; наблюдатель предотвращает падение всего test runner до проверки ответа.
+    void pending.catch(() => {})
+    return pending
+  } }
+  const result = await call('worker.restart', { task: task.id })
+  assert.equal(result.ok, false); assert.match(result.error!, /native launch failed/)
 })

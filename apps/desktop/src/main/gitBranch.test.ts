@@ -12,78 +12,78 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()
 }
 
-test('projectBranchInfo: не репозиторий', () => {
+test('projectBranchInfo: не репозиторий', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-nogit-'))
-  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: false, branch: null, detached: false })
+  assert.deepEqual((await projectBranchInfo(dir)), { isGitRepo: false, branch: null, detached: false })
 })
 
-test('projectBranchInfo: ветка, репозиторий без коммитов и detached HEAD', () => {
+test('projectBranchInfo: ветка, репозиторий без коммитов и detached HEAD', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-git-'))
   git(dir, 'init', '-b', 'main')
-  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: true, branch: 'main', detached: false, unborn: true })
+  assert.deepEqual((await projectBranchInfo(dir)), { isGitRepo: true, branch: 'main', detached: false, unborn: true })
   writeFileSync(join(dir, 'a.txt'), 'a')
   git(dir, 'add', '-A')
   git(dir, 'commit', '-m', 'init')
   git(dir, 'checkout', '-b', 'feature/x')
-  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: true, branch: 'feature/x', detached: false })
+  assert.deepEqual((await projectBranchInfo(dir)), { isGitRepo: true, branch: 'feature/x', detached: false })
   const sha = git(dir, 'rev-parse', '--short', 'HEAD')
   git(dir, 'checkout', '--detach')
-  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: true, branch: null, detached: true, sha })
+  assert.deepEqual((await projectBranchInfo(dir)), { isGitRepo: true, branch: null, detached: true, sha })
 })
 
-test('projectBranchInfo: папка проекта удалена — не исключение', () => {
+test('projectBranchInfo: папка проекта удалена — не исключение', async () => {
   const dir = join(mkdtempSync(join(tmpdir(), 'orca-gone-')), 'missing')
-  assert.deepEqual(projectBranchInfo(dir), { isGitRepo: false, branch: null, detached: false })
+  assert.deepEqual((await projectBranchInfo(dir)), { isGitRepo: false, branch: null, detached: false })
 })
 
-test('projectBranchInfo: git недоступен (пустой PATH) — не исключение', () => {
+test('projectBranchInfo: git недоступен (пустой PATH) — не исключение', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-nopath-'))
   const saved = process.env.PATH
   process.env.PATH = ''
   try {
-    assert.deepEqual(projectBranchInfo(dir), { isGitRepo: false, branch: null, detached: false })
+    assert.deepEqual((await projectBranchInfo(dir)), { isGitRepo: false, branch: null, detached: false })
   } finally {
     process.env.PATH = saved
   }
 })
 
-test('currentBranch и hasCommits: unborn, ветка, detached, не репозиторий', () => {
+test('currentBranch и hasCommits: unborn, ветка, detached, не репозиторий', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-git-'))
   git(dir, 'init', '-b', 'main')
-  assert.equal(currentBranch(dir), 'main', 'unborn HEAD — имя ветки, а не падение rev-parse')
-  assert.equal(hasCommits(dir), false)
-  assert.throws(() => assertHasCommits(dir), (e: unknown) => e instanceof OrcaError && e.key === 'git.noCommits' && e.message.includes('«main»'))
+  assert.equal((await currentBranch(dir)), 'main', 'unborn HEAD — имя ветки, а не падение rev-parse')
+  assert.equal((await hasCommits(dir)), false)
+  await assert.rejects(async () => (await assertHasCommits(dir)), (e: unknown) => e instanceof OrcaError && e.key === 'git.noCommits' && e.message.includes('«main»'))
   writeFileSync(join(dir, 'a.txt'), 'a')
   git(dir, 'add', '-A')
   git(dir, 'commit', '-m', 'init')
-  assert.equal(hasCommits(dir), true)
-  assert.doesNotThrow(() => assertHasCommits(dir))
+  assert.equal((await hasCommits(dir)), true)
+  await assert.doesNotReject(async () => (await assertHasCommits(dir)))
   git(dir, 'checkout', '-b', 'feature/x')
-  assert.equal(currentBranch(dir), 'feature/x')
-  assert.equal(headBase(dir), 'feature/x')
+  assert.equal((await currentBranch(dir)), 'feature/x')
+  assert.equal((await headBase(dir)), 'feature/x')
   git(dir, 'checkout', '--detach')
-  assert.equal(currentBranch(dir), 'HEAD')
-  assert.equal(headBase(dir), git(dir, 'rev-parse', 'HEAD'), 'detached — хеш коммита')
-  assert.equal(hasCommits(dir), true)
+  assert.equal((await currentBranch(dir)), 'HEAD')
+  assert.equal((await headBase(dir)), git(dir, 'rev-parse', 'HEAD'), 'detached — хеш коммита')
+  assert.equal((await hasCommits(dir)), true)
 
   const nogit = mkdtempSync(join(tmpdir(), 'orca-nogit-'))
-  assert.throws(() => currentBranch(nogit), 'не репозиторий — не превращается в HEAD')
-  assert.throws(() => hasCommits(nogit))
+  await assert.rejects(async () => (await currentBranch(nogit)), 'не репозиторий — не превращается в HEAD')
+  await assert.rejects(async () => (await hasCommits(nogit)))
 })
 
-test('addTaskWorktree: без коммитов — git.noCommits и никакой сироты; с коммитом — ветка от HEAD', () => {
+test('addTaskWorktree: без коммитов — git.noCommits и никакой сироты; с коммитом — ветка от HEAD', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'orca-git-'))
   git(dir, 'init', '-b', 'main')
   writeFileSync(join(dir, 'a.txt'), 'a')
   const wt = join(dir, '..', `${basename(dir)}-wt`)
-  assert.throws(() => addTaskWorktree(dir, wt, 'orca/t1'), (e: unknown) => e instanceof OrcaError && e.key === 'git.noCommits')
+  await assert.rejects(async () => (await addTaskWorktree(dir, wt, 'orca/t1')), (e: unknown) => e instanceof OrcaError && e.key === 'git.noCommits')
   assert.equal(existsSync(wt), false)
   assert.equal(git(dir, 'branch', '--list', 'orca/t1'), '')
-  assert.throws(() => gitCreateBranch(dir, wt, 'feature/y', undefined, false), (e: unknown) => e instanceof GitOpError && /нет ни одного коммита/.test(e.message))
+  await assert.rejects(async () => (await gitCreateBranch(dir, wt, 'feature/y', undefined, false)), (e: unknown) => e instanceof GitOpError && /нет ни одного коммита/.test(e.message))
 
   git(dir, 'add', '-A')
   git(dir, 'commit', '-m', 'init')
-  addTaskWorktree(dir, wt, 'orca/t1')
+  await addTaskWorktree(dir, wt, 'orca/t1')
   assert.equal(existsSync(join(wt, 'a.txt')), true)
   assert.equal(git(wt, 'rev-parse', '--abbrev-ref', 'HEAD'), 'orca/t1')
 })

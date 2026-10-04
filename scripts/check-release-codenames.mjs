@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
+import { releaseTag, productVersion, productReleasePolicy } from './product-release.mjs'
 import { releaseTitle, validateReleaseCodenames } from '../packages/core/src/release-codenames.ts'
 
 const registryPath = 'packages/core/src/release-codenames.json'
@@ -46,10 +47,13 @@ try {
     break
   }
   for (const ref of previous) validateReleaseCodenames(entries, registryAt(ref))
-  const title = releaseTitle(version, entries)
+  const target = releaseTag((process.env.GITHUB_REF ?? '').replace(/^refs\/tags\//, ''))
+  const selectedVersion = target ? productVersion(target.product) : version
+  if (target && target.version !== selectedVersion) throw new Error('тег не совпадает с версией продукта')
+  const title = target && target.product !== 'desktop' ? productReleasePolicy(target.product, selectedVersion).title : releaseTitle(version, entries)
   if (process.argv.includes('--github-output')) {
     if (!process.env.GITHUB_OUTPUT) throw new Error('не задан GITHUB_OUTPUT')
-    appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntitle=${title}\n`)
+    appendFileSync(process.env.GITHUB_OUTPUT, `version=${selectedVersion}\ntitle=${title}\n`)
   }
   process.stdout.write(`Кодовые имена: ${title}; реестр и история согласованы.\n`)
 } catch (error) {

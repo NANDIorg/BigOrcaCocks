@@ -329,6 +329,17 @@ test('CI не загружает установщики до проверки ma
 const releaseWorkflow = () => readYaml(join(root, '.github/workflows/release.yml'))
 const validationJob = () => releaseWorkflow().jobs['macos-validation']
 
+test('Release готовит отдельный Node native root до параллельных тестов, без Apple secrets', () => {
+  const steps = releaseWorkflow().jobs.package.steps
+  const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile')
+  const native = steps.findIndex(step => step.run === 'node scripts/node-native.mjs')
+  const verify = steps.findIndex(step => step.run === 'pnpm verify')
+  assert.ok(install >= 0 && verify > install)
+  assert.ok(native > install && native < verify,
+    'Node root должен быть готов до concurrent suites: lazy install из resolver не сериализует npm')
+  assert.equal(steps[native].env, undefined, 'native подготовка не должна получать signing secrets')
+})
+
 // Выполняем выражения из YAML на таблице событий. Это ограниченный контракт workflow,
 // а не эмулятор Actions: неизвестные конструкции должны потребовать обновления проверки.
 function condition(expression, github, succeeded = true) {
