@@ -40,6 +40,11 @@ EffectToken run/node/visit/lane/dispatch: общий async workflow Git — сл
 expiry/disconnect не меняет workflow и не запускает новый dispatch; explicit kill
 идёт по существующему callback ptyExited. Validation payload предшествует process spawn.
 
+Команды диалога используют общий async client scope: policy до lookup и после await,
+синхронный commit со status source без удержания его через Promise. Host workflow
+context передаётся скрыто, как прежде; malformed permission answer не меняет pending
+request. История после stop/restart не исполняет сохранённые tool calls.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

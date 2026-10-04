@@ -20,5 +20,7 @@ export interface ConversationOptions {
   extraArgs?: readonly string[]
   cwd: string
   env: Record<string, string>
+  /** Только явная привязка owner; унаследованный ORCA_PROJECT удаляется перед запуском. */
+  projectId?: string
   onUpdate(update: ConversationUpdate): void
 }

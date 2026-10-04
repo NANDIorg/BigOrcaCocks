@@ -34,7 +34,7 @@ export interface ProjectCommandHost<Project, Name extends string> {
   authorize(context: ProjectCommandContext, command: Name): boolean
 }
 
-function clientContextFrom(raw: unknown): ClientCommandContext {
+export function clientCommandContextFrom(raw: unknown): ClientCommandContext {
   const nonempty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new CommandError('command.invalidContext')
   const value = raw as Record<string, unknown>
@@ -48,7 +48,7 @@ function clientContextFrom(raw: unknown): ClientCommandContext {
 }
 
 export function projectCommandContextFrom(raw: unknown): ProjectCommandContext {
-  const context = clientContextFrom(raw)
+  const context = clientCommandContextFrom(raw)
   const projectId = (raw as Record<string, unknown>).projectId
   if (typeof projectId !== 'string' || !projectId.trim()) throw new CommandError('command.invalidContext')
   return { ...context, projectId }
@@ -62,7 +62,7 @@ export interface ClientCommandHost<Name extends string> {
 export function createClientCommandExecutor<Name extends string>(host: ClientCommandHost<Name>) {
   return function execute<T>(raw: unknown, command: Name, validate: () => (context: ClientCommandContext) => T): T {
     try {
-      const context = clientContextFrom(raw)
+      const context = clientCommandContextFrom(raw)
       if (host.authorize(structuredClone(context), command) !== true) throw new CommandError('command.forbidden')
       const operation = validate()
       const source: StatusSource = context.actor.kind === 'operator' ? 'human' : context.actor.kind === 'agent' ? 'cli' : 'app'

@@ -28,6 +28,12 @@ Session writer lease управляет вводом и resize живого PTY,
 Освобождение управления при disconnect не закрывает координатора, не удаляет
 worktree и не меняет глобальную задачу. Явный operator kill сохраняет прежний exit flow.
 
+Общий DialogCommands задаёт project binding отдельно от выбора проекта клиентом;
+реальный процесс получает только явный ORCA_PROJECT owner. Удаление/замена project
+registration во время ожидаемого ACK делает результат команды stale; другой диалог
+сохраняет свой transcript/provider binding. Глобальный Desktop assistant по-прежнему
+не привязан к глобальной задаче или унаследованному run/dispatch.
+
 ## Модель: глобальная задача = прогон (`Run`)
 
 Общие `GlobalTaskCommands` в contracts и `createGlobalTaskCommands` в runtime

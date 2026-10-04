@@ -44,13 +44,13 @@
 
 **Files:** create contracts/dialog-commands.ts, assistant-commands.ts; runtime/dialog-commands.ts, assistant-commands.ts, async-client-commands.ts; tests/dialog-commands.test.ts; modify dialog-registry.ts project binding port, barrels/docs4/dashboard/plan.
 
-**Interfaces:** DialogCommands list/create/snapshot/send/interrupt/respond/stop with ClientCommandContext and optional explicit projectId for create/list; host registry/settings/projectExists/authorize. DialogSnapshot DTO переезжает в contracts без поведения. DialogRegistryDependencies.create(settings,onUpdate,projectId?:string) forwards actual dialog binding. AssistantCommands open/reset/available/snapshot/send/interrupt/respond; host legacy AssistantSession and buildWorkflowContext(context?). AsyncClient scope checks authorize on commit/result; no status attribution across await. No global selection added to new Dialog API.
+**Interfaces:** DialogCommands list/create/snapshot/send/interrupt/respond/stop with ClientCommandContext and optional explicit projectId for create/list, create {projectId?,settings?:Partial<AssistantSettings>}; host registry/settings/project(id)/authorize. DialogSnapshot DTO переезжает в contracts без поведения. DialogRegistryDependencies.create(settings,onUpdate,projectId?:string) forwards actual dialog binding. AssistantCommands open/reset/available/snapshot/send/interrupt/respond; host legacy AssistantSession and buildWorkflowContext(context?). AsyncClient scope checks authorize on commit/result; no status attribution across await. No global selection added to new Dialog API.
 
-- [ ] **Step 1:** Real repository + actual conversation fixture tests two bound projects/drivers/history/late callbacks, forbidden/malformed before lookup/CLI, unknown project/dialog/request, readOnly restart, native terminal fallback legacy compatibility and Promise locale cause. Send result must not apply to another dialog.
-- [ ] **Step 2:** Runtime targeted new test; Expected FAIL missing factories.
-- [ ] **Step 3:** Implement commands and shared validator for InteractionAnswer shape; actual provider validates request/turn and answer choices. Optional workflow context prepared by host helper before send. Forward project binding into driver port; old two-argument factories compatible.
-- [ ] **Step 4:** New API + dialog-registry/repository/assistant-session/conversations/import guards/types/core; Expected PASS.
-- [ ] **Step 5:** Diff/staged diff/docs commit/task-done.
+- [x] **Step 1:** Real repository + actual conversation fixture tests two bound projects/drivers/history/late callbacks, forbidden/malformed before lookup/CLI, unknown project/dialog/request, readOnly restart, native terminal fallback legacy compatibility and Promise domain cause (ru/en adapter Task3). Send result must not apply to another dialog.
+- [x] **Step 2:** Runtime targeted new test; Expected FAIL missing factories.
+- [x] **Step 3:** Implement commands and shared validator for InteractionAnswer shape; actual provider validates request/turn and answer choices. Optional workflow context prepared by host helper before send. Forward project binding into driver port; old two-argument factories compatible.
+- [x] **Step 4:** New API + dialog-registry/repository/assistant-session/conversations/import guards/types/core; Expected PASS.
+- [x] **Step 5:** Diff/staged diff/docs commit/task-done.
 
 ### Task 3: Desktop compatibility
 

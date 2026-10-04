@@ -448,6 +448,7 @@ class Conversation implements AssistantConversation {
     const env: NodeJS.ProcessEnv = { ...this.deps.env(), ...this.options.env }
     for (const name of Object.keys(env)) if (name === 'CLAUDECODE' || name.startsWith('CLAUDE_CODE_')) delete env[name]
     for (const name of ['ORCA_PROJECT', 'ORCA_RUN_ID', 'ORCA_TASK_ID', 'ORCA_DISPATCH_ID']) delete env[name]
+    if (this.options.projectId !== undefined) env.ORCA_PROJECT = this.options.projectId
     env.ORCA_ROLE = 'assistant'
     let command = this.options.agent as string
     let args: string[]

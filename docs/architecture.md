@@ -397,6 +397,23 @@ Expiry/dead records удаляются на обращении, background inter
 Desktop bridge подключается после dialog API:
 [план](superpowers/plans/2026-10-04-orca-session-dialog-commands.md).
 
+### Общие команды диалогов и совместимость ассистента
+
+DialogCommands адресуют конкретный dialog без active selection. Create принимает
+явный projectId и отдельные settings override, list фильтрует по зарегистрированному
+проекту. Host principal проверяется до payload/lookup/CLI; async scope повторяет
+policy после await, а registration/root диалога проверяются перед эффектом и результатом.
+DTO отделён от driver; read-only история не возобновляет permissions или tool calls.
+InteractionAnswer проверяется по форме до обращения к provider, который проверяет
+актуальный request/turn и допустимые варианты ответа.
+
+DialogRegistry передаёт projectId в create port; ConversationOptions.projectId задаёт
+ORCA_PROJECT после удаления унаследованных task/run/dispatch bindings. Глобальный
+ассистент остаётся без project binding. AssistantCommands сохраняют выбранный Desktop
+диалог, open/reset и terminal fallback Amp/Shell; host готовит скрытый workflow context.
+Async client executor сохраняет domain cause, не держит status attribution через await.
+Desktop IPC подключается следующим шагом. Durable message dedup/replay — рубеж C.
+
 ### Общий запуск агентов и терминальные сессии
 
 `createAgentLauncher({ settingsInvalid })` готовит команду и окружение агента,

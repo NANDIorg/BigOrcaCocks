@@ -1,15 +1,10 @@
 import type { AssistantSettings } from '@orca-board/core'
 import { dialogHistory } from '@orca-board/contracts'
-import type { ConversationUpdate, DialogRecord, InteractionAnswer } from '@orca-board/contracts'
+import type { ConversationUpdate, DialogRecord, DialogSnapshot, InteractionAnswer } from '@orca-board/contracts'
 import type { AssistantConversation } from './assistant-conversation-types.ts'
 import type { DialogRepository } from './dialog-repository.ts'
 
-export interface DialogSnapshot {
-  dialog: DialogRecord
-  readOnly?: true
-  requiresNewConversation?: true
-  storageFailed?: true
-}
+export type { DialogSnapshot } from '@orca-board/contracts'
 export interface DialogRegistryUpdate {
   id: string
   revision: number
@@ -20,7 +15,7 @@ export interface DialogRegistryUpdate {
 }
 export interface DialogRegistryDependencies {
   repository?: DialogRepository
-  create(settings: AssistantSettings, onUpdate: (update: ConversationUpdate) => void): AssistantConversation
+  create(settings: AssistantSettings, onUpdate: (update: ConversationUpdate) => void, projectId?: string): AssistantConversation
   errors: { unknown(): Error; emptyText(): Error; readOnly(): Error; storage(error: unknown): Error; load?(error: unknown): Error }
   onError?(error: Error): void
 }
@@ -70,7 +65,7 @@ export class DialogRegistry {
     const records = this.list()
     const at = records.reduce((latest, record) => Math.max(latest, record.updatedAt + 1), Date.now())
     let entry: Entry | undefined
-    const driver = this.deps.create(settings, update => { if (entry?.driver) this.changed(entry, update) })
+    const driver = this.deps.create(settings, update => { if (entry?.driver) this.changed(entry, update) }, projectId)
     try {
       const record: DialogRecord = { id: driver.id, ...(projectId === undefined ? {} : { projectId }), createdAt: at, updatedAt: at, revision: 0, conversation: copy(driver.snapshot()) }
       if (this.entries.has(record.id)) throw this.deps.errors.storage(new Error('Повторный id диалога'))

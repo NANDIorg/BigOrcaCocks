@@ -56,6 +56,12 @@ Desktop Git/runs/agents channels проверяют caller до чтения leg
 отвечает на request/question и не потребляет agent check; после disconnect pending
 запрос продолжает ожидать ответа, а процесс сохраняется.
 
+Ответы на permission/question структурного чата проходят общий DialogCommands или
+compatibility AssistantCommands: shape validation до provider, затем проверка живого
+request/turn и вариантов самим driver. История диалога после stop/restart read-only,
+не воспроизводит tool calls и не принимает прежний permission. HumanRequest доски
+сохраняет собственный существующий lifecycle.
+
 ## Модель
 
 ```ts

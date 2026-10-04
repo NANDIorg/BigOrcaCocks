@@ -16,6 +16,13 @@ export interface DialogHistorySnapshot {
   requiresNewConversation: true
 }
 
+export interface DialogSnapshot {
+  dialog: DialogRecord
+  readOnly?: true
+  requiresNewConversation?: true
+  storageFailed?: true
+}
+
 /** Старый permission/tool нельзя продолжить чтением файла: процесс и turn уже не живы. */
 export function dialogHistory(record: DialogRecord): DialogHistorySnapshot {
   const dialog = JSON.parse(JSON.stringify(record)) as DialogRecord
