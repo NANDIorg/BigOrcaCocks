@@ -39,9 +39,9 @@ omitted:
 окна принадлежат AppKit через Electron. Мастер и содержимое «О приложении» —
 авторские брендовые поверхности первого знакомства.
 
-Владелец палитры и семейства шрифта — `apps/desktop/src/shared/theme.ts`.
-`renderer/src/appearance.ts` устанавливает CSS-переменные до первого рендера;
-`main/index.ts`, `main/about-window.ts`, `main/about-content.ts` и `renderer/src/Terminal.tsx`
+Владелец палитры и семейства шрифта — `packages/ui/shared/theme.ts`.
+`packages/ui/src/appearance.ts` устанавливает CSS-переменные до первого рендера;
+`main/index.ts`, `main/about-window.ts`, `main/about-content.ts` и `packages/ui/src/Terminal.tsx`
 используют тот же источник. Размеры, формы и состояния компонентов остаются в `styles.css`.
 Этот документ отражает токены и не генерирует код. Нативные меню macOS/Linux и трея оформляет ОС;
 меню главного окна Windows использует общие токены renderer.
@@ -303,3 +303,5 @@ CLI; `useModalFocus` — фокусом и inert-фоном. Состояния 
 открывает новый диалог с сохранением текста, вложения и снимка возврата; отдельная подсказка в настройках
 объясняет этот переход. Обычная смена агента действует на следующий диалог и сохраняет текущий. Терминал
 требует выбранного проекта. Все элементы используют общие `btn-sm`, `icon-btn`, `PopupMenu` и токены темы.
+
+Общий UI живёт в packages/ui; Desktop main использует compatibility wrappers тех же browser-safe tokens. UI получает client/platform через injection, системные окна/диалоги/updater принадлежат Desktop host. Перенос не меняет оформление и поведение экранов.

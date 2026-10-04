@@ -1,0 +1,28 @@
+{
+  "name": "@orca-board/client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./legacy-api": "./src/legacy-api.ts",
+    "./platform": "./src/platform.ts",
+    "./window-chrome": "./src/window-chrome.ts",
+    "./desktop-settings": "./src/desktop-settings.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts",
+    "build": "echo skip"
+  },
+  "dependencies": {
+    "@orca-board/contracts": "workspace:*",
+    "@orca-board/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

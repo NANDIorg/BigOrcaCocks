@@ -10,11 +10,11 @@ if (!releaseNotes) throw new Error(`Описание релиза v${version} п
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@orca-board/core', '@orca-board/contracts', '@orca-board/runtime'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['@orca-board/core', '@orca-board/contracts', '@orca-board/runtime', '@orca-board/client', '@orca-board/ui'] })],
     resolve: { alias: { '@orca-board/core': resolve(__dirname, '../../packages/core/src/index.ts'), '@orca-board/contracts': resolve(__dirname, '../../packages/contracts/src/index.ts'), '@orca-board/runtime': resolve(__dirname, '../../packages/runtime/src/index.ts') } }
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@orca-board/contracts'] })]
+    plugins: [externalizeDepsPlugin({ exclude: ['@orca-board/contracts', '@orca-board/client'] })]
   },
   renderer: {
     define: {

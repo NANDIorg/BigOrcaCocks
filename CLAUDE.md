@@ -3,10 +3,11 @@
 Монорепо pnpm: `apps/desktop` (Electron: main / preload / renderer / shared), `packages/core`
 (модель, store, промпты — TypeScript без сборки), `packages/contracts` (общие DTO и чистые функции),
 `packages/runtime` (Node: запись состояния, резервные копии и Git; private bundle без Electron),
-`packages/cli` (голый JS, `bin/orca-board.js`),
+`packages/client` (browser-safe operator client), `packages/ui` (общий React UI),
+`apps/headless` (установленный Node host), `packages/cli` (голый JS, `bin/orca-board.js`),
 `skills/` (инструкции координатора и воркера, вшиваются в сборку), `docs/` (архитектура и решения).
 Полная картина — `docs/architecture.md`. Комментарии в коде, документация и коммиты — на русском;
-UI — на русском и английском через i18n (`renderer/src/i18n/`).
+UI — на русском и английском через i18n (`packages/ui/src/i18n/`).
 Этот файл и `AGENTS.md` можно править и в приложении: «О проекте → Правила».
 
 Командный процесс — **[docs/git-flow.md](docs/git-flow.md), прочитай целиком перед работой**.
@@ -92,7 +93,7 @@ orca-board; `skills/*.md` — инструкции самого продукта
   `migrateGlobalTasks` в `packages/core/src/store.ts`). Проверь, что остаётся после рестарта:
   незакрытые dispatch, задачи в `in_progress`/`review` от старого кода (7b1fa05, 2d3c5da).
 - **Тесты — рядом с кодом, `*.test.ts`, `node:test` + `node:assert`.** В desktop запускаются только
-  `src/main/*.test.ts` и `src/renderer/src/*.test.ts` (скрипт `test` в `apps/desktop/package.json`):
+  `src/main/*.test.ts` (скрипт `test` в `apps/desktop/package.json`); общий UI запускает `packages/ui/src/*.test.ts`:
   тест в подпапке (`about/`, `settings/`) не выполнится, клади его в `renderer/src/`
   (как `taskTypeEdit.test.ts`). Логику из компонентов выноси в `.ts`-модуль и тестируй его
   (`boardSort.ts`, `duration.ts`, `docToc.ts`).

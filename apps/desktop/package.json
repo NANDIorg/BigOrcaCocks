@@ -13,21 +13,16 @@
     "dist": "pnpm run dist:mac",
     "dist:mac": "electron-vite build && electron-builder --mac --publish never && node ../../scripts/verify-macos-release.mjs && electron-builder install-app-deps",
     "dist:win": "electron-vite build && electron-builder --win --config.npmRebuild=false --publish never && electron-builder install-app-deps",
-    "test": "node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/*.test.ts src/renderer/src/*.test.ts"
+    "test": "node --experimental-transform-types --no-warnings --import ./test/ts-resolve.mjs --test src/main/*.test.ts"
   },
   "dependencies": {
     "@orca-board/contracts": "workspace:*",
     "@orca-board/core": "workspace:*",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
-    "dompurify": "^3.4.15",
     "electron-updater": "^6.8.9",
-    "marked": "^18.0.13",
     "node-pty": "^1.1.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "refractor": "^5.0.0",
-    "@orca-board/runtime": "workspace:*"
+    "@orca-board/runtime": "workspace:*",
+    "@orca-board/client": "workspace:*",
+    "@orca-board/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

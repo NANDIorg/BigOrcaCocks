@@ -18,3 +18,7 @@ registerHooks({
     }
   }
 })
+
+// Integration fixtures старого preload остаются Desktop; общий UI читает injected resolver.
+import { setUiApiResolver } from '@orca-board/ui/modules/host'
+setUiApiResolver(() => globalThis.window?.orca)

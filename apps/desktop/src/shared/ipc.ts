@@ -1,4 +1,2 @@
-// Совместимый путь импортов Desktop; общие DTO живут отдельно от платформенного API.
-export * from '@orca-board/contracts'
-export * from './desktop-api'
-export * from './desktop-settings'
+// Общий UI/contracts имеют одного владельца.
+export * from '@orca-board/ui/shared/ipc'

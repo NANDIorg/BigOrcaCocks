@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createAssistantConversation, structuredLaunch } from './assistant-conversation'
-import { chooseQuestionOption, questionAnswer } from '../renderer/src/assistantQuestions'
+import { chooseQuestionOption, questionAnswer } from '@orca-board/ui/modules/assistantQuestions'
 import { fixture, until } from '../../../../packages/runtime/test/conversation-fixture.ts'
 import { setMainLocale } from './i18n'
 

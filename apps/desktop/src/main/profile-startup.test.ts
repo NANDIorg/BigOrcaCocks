@@ -35,6 +35,7 @@ function desktop() {
     app: { isReady: () => true, getPath: () => '/unused', on: (_event: string, callback: () => void) => { handler = callback } },
     assertProfileSchemas: () => { trace.push('schemas') },
     initializeEffectJournal: () => { trace.push('journal') },
+    initializeMutationLedger: () => { trace.push('mutations') },
     initializeDesktop: () => { trace.push('desktop'); initialized = true },
     cleanupDesktop: async () => {},
     failDesktopStartup: (error: unknown) => { failures.push(error); state.quitting = true },
@@ -64,7 +65,7 @@ test('second-instance во время initializer ждёт готовность;
   host.activate()
   assert.equal(host.shows(), 1)
   assert.deepEqual(host.failures, [])
-  assert.deepEqual(host.trace, ['schemas', 'journal', 'desktop'])
+  assert.deepEqual(host.trace, ['schemas', 'journal', 'mutations', 'desktop'])
 })
 
 test('second-instance после запроса quit не создаёт окно даже у готового Desktop', async () => {

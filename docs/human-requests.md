@@ -1,5 +1,10 @@
 # Запросы к человеку (`HumanRequest`)
 
+Общие request UI/presentation helpers перенесены в `packages/ui`, runtime resolution
+не дублируется на клиенте. Binary вложения и повтор RPC используют общий client
+transport; native file actions поступают через PlatformAdapter.
+
+
 Ответы человеку и возобновление задач у Desktop и Node host проходят общие
 runtime commands/lifecycle. Старый agent socket использует ту же фабрику handlers,
 сохраняя ask/check envelope; отдельный operator endpoint не выдаёт агенту

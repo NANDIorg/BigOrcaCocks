@@ -1,5 +1,10 @@
 # Воркфлоу задачи
 
+Редактор workflow и его presentation state теперь принадлежат общему UI package.
+Desktop compatibility IPC продолжает вызывать тот же runtime; operator client
+не запускает workflow tools локально и не считает потерянный ответ новым эффектом.
+
+
 `createRuntimeServices` объединяет workflow effects, фоновые transitions и
 agent socket callbacks для Desktop и Node host. Shutdown отключает callbacks,
 отменяет owned Git и ждёт native providers/PTY до освобождения profile lease;

@@ -21,12 +21,13 @@ const canonical = (file: string): string => existsSync(file) ? realpathSync(file
 const isTest = (file: string): boolean => /(?:^|[/\\])tests?(?:[/\\]|$)|\.test\.[cm]?[jt]sx?$/.test(file)
 
 /** Проверяет production graph, включая type-only edges; Node остаётся только в тестовом инструменте. */
-export function auditContractImports(root: string): ContractBoundaryIssue[] {
+export function auditContractImports(root: string, config?: { roots: string[]; packages: string[]; externals?: string[] }): ContractBoundaryIssue[] {
   const repo = canonical(root)
   const contracts = canonical(join(repo, 'packages/contracts/src'))
   const core = canonical(join(repo, 'packages/core/src'))
   const desktop = canonical(join(repo, 'apps/desktop'))
   const visited = new Set<string>()
+  const allowed = config ? config.packages.map(name => canonical(join(repo, 'packages', name))) : [contracts, core]
   const issues: ContractBoundaryIssue[] = []
   const report = (file: string, specifier: string, reason: ContractBoundaryIssue['reason']): void => {
     issues.push({ file: relative(repo, file).split(sep).join('/'), specifier, reason })
@@ -41,7 +42,15 @@ export function auditContractImports(root: string): ContractBoundaryIssue[] {
       report(file, specifier, 'electron')
       return
     }
-    if (specifier !== '@orca-board/core' && !specifier.startsWith('./') && !specifier.startsWith('../')) {
+    if (config?.externals?.some(name => specifier === name || specifier.startsWith(name + '/'))) return
+    if (config && /\.(?:css|svg)(?:\?.*)?$/.test(specifier)) {
+      if (specifier.startsWith('.')) {
+        const target = canonical(resolve(join(file, '..'), specifier.split('?')[0]))
+        if (!existsSync(target) || !allowed.some(root => within(target, root))) report(file, specifier, 'outside')
+      } else if (!config.externals?.some(name => specifier.startsWith(name + '/'))) report(file, specifier, 'outside')
+      return
+    }
+    if (specifier !== '@orca-board/core' && !(config && specifier.startsWith('@orca-board/') && config.packages.includes(specifier.split('/')[1])) && !specifier.startsWith('./') && !specifier.startsWith('../')) {
       report(file, specifier, 'outside')
       return
     }
@@ -54,7 +63,7 @@ export function auditContractImports(root: string): ContractBoundaryIssue[] {
     const target = canonical(resolved)
     if (within(target, desktop)) {
       report(file, specifier, 'desktop')
-    } else if ((!within(target, contracts) && !within(target, core)) || isTest(relative(repo, target))) {
+    } else if (!allowed.some(root => within(target, root)) || isTest(relative(repo, target))) {
       report(file, specifier, 'outside')
     } else if (!target.endsWith('.json')) {
       visit(target)
@@ -95,10 +104,14 @@ export function auditContractImports(root: string): ContractBoundaryIssue[] {
     for (const item of readdirSync(directory, { withFileTypes: true })) {
       const file = join(directory, item.name)
       if (isTest(relative(contracts, file))) continue
-      if (item.isDirectory()) collect(file)
+      if (item.isSymbolicLink()) {
+        const target = canonical(file)
+        if (!allowed.some(root => within(target, root))) report(file, file, 'outside')
+        else if (/\.[cm]?tsx?$/.test(item.name)) visit(target)
+      } else if (item.isDirectory()) collect(file)
       else if (item.isFile() && /\.[cm]?tsx?$/.test(item.name)) visit(canonical(file))
     }
   }
-  collect(contracts)
+  for (const root of config?.roots ?? ['packages/contracts/src']) collect(join(repo, root))
   return issues.sort((a, b) => a.file.localeCompare(b.file) || a.specifier.localeCompare(b.specifier) || a.reason.localeCompare(b.reason))
 }

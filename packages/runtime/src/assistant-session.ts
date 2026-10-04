@@ -11,7 +11,7 @@ export interface AssistantSessionDependencies {
   onError?(error: Error): void
   settings(): AssistantSettings
   assertUsable(agent: AgentKind): void
-  create(settings: AssistantSettings, onUpdate: (update: ConversationUpdate) => void): AssistantConversation
+  create(settings: AssistantSettings, onUpdate: (update: ConversationUpdate) => void, projectId?: string): AssistantConversation
   startTerminal(settings: AssistantSettings, cols: number, rows: number, onExit: (id: string) => void): string
   isAlive(id: string): boolean
   killTerminal(id: string): void
@@ -39,6 +39,8 @@ export class AssistantSession {
       storage: deps.errors.storage ?? (error => error instanceof Error ? error : new Error(String(error)))
     } })
   }
+  /** Compatibility selection не определяет project binding новых operator clients. */
+  get dialogs(): DialogRegistry { return this.registry }
   private select(id: string): { ptyId: string } {
     this.selected = id
     this.unsubscribe = this.registry.subscribe(id, (event: DialogRegistryUpdate) => {

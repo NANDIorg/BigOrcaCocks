@@ -1,5 +1,10 @@
 # Двухуровневый канбан: глобальные задачи и подзадачи
 
+Прежняя доска/подзадачи теперь находятся в общем `packages/ui`; Desktop передаёт
+client/platform ports. Новый operator bridge задаёт project явно и не переключает
+ProjectManager.activeId; общая модель/канбан остаются прежними.
+
+
 Desktop и самостоятельный Node host собирают один `createRuntimeServices` graph:
 global task/workers/review/merge и lifecycle callbacks общие. Operator clients
 имеют собственный project/dialog selection; observer snapshot не забирает события

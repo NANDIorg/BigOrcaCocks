@@ -1,3 +1,4 @@
+import { getUiApi } from '@orca-board/ui/modules/host'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 
@@ -47,6 +48,7 @@ export function componentHarness(source: URL, exportName: string, imports: Recor
   const output = ts.transpileModule(readFileSync(source, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText
   const module = { exports: {} as Record<string, unknown> }
   const require = (id: string): unknown => {
+    if (id === './host' || id === '../host') return { getUiApi }
     if (id === 'react') return { ...react, useLayoutEffect: react.useEffect }
     if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'fragment' }
     if (!(id in imports)) throw new Error(`Не задан импорт тестового компонента: ${id}`)
@@ -98,7 +100,8 @@ export function jsxHandler(source: URL, component: string, event: string, bindin
   if (!handler || !ts.isArrowFunction(handler)) throw new Error(`Не найден callback ${component}.${event}`)
   const output = ts.transpileModule(`module.exports = ${handler.getText(file)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: undefined as unknown }
-  new Function(...Object.keys(bindings), 'module', output)(...Object.values(bindings), module)
+  const scope = { getUiApi, ...bindings }
+  new Function(...Object.keys(scope), 'module', output)(...Object.values(scope), module)
   return module.exports as (...values: unknown[]) => unknown
 }
 
@@ -115,6 +118,7 @@ export function namedHandler(source: URL, name: string, bindings: Record<string,
   if (!handler) throw new Error(`Не найден обработчик ${name}`)
   const output = ts.transpileModule(`module.exports = ${handler.getText(file)}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
   const module = { exports: undefined as unknown }
-  new Function(...Object.keys(bindings), 'module', output)(...Object.values(bindings), module)
+  const scope = { getUiApi, ...bindings }
+  new Function(...Object.keys(scope), 'module', output)(...Object.values(scope), module)
   return module.exports as (...values: unknown[]) => unknown
 }

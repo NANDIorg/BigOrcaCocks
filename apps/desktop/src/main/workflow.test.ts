@@ -15,7 +15,7 @@ import { OrcaError } from './i18n'
 import { resolveHumanRequest } from './review'
 import { ProjectManager } from './projects'
 import { describeEvent } from './notify'
-import { addRetryLimit } from '../renderer/src/workflowForm'
+import { addRetryLimit } from '@orca-board/ui/modules/workflowForm'
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' }).trim()

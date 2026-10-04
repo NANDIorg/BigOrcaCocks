@@ -33,6 +33,8 @@ import { registerDesktopSessionAssistantCommands } from './session-assistant-com
 import { executionResources } from './execution-resources'
 import { initializeEffectJournal, getEffectJournal, requiredEffectJournal } from './effect-journal'
 import { registerDesktopRecoveryCommands } from './recovery-commands'
+import { registerDesktopOperator } from './operator-bridge'
+import { createMutationLedger, createOperatorApi, createDialogCommands, type MutationLedger } from '@orca-board/runtime'
 import { gitProcesses } from './git'
 import { profileStartupMessage } from './profile-startup-errors'
 import { attachmentCapabilities } from './attachments'
@@ -112,6 +114,9 @@ let windowFullscreen = false
 let runtimeServices: ReturnType<typeof createRuntimeServices<AppSettings, AppSettingsPatch>>
 let desktopRuntime: ProfileRuntime<void> | undefined
 let desktopCleanup: Promise<void> | undefined
+let mutationLedger: MutationLedger
+let operatorBridge: ReturnType<typeof registerDesktopOperator> | undefined
+const dialogObservers = new Map<string, () => void>()
 let projects: ProjectManager
 let recoveryCommands: RecoveryCommands
 let boardCommands: BoardCommands
@@ -298,6 +303,8 @@ function liveWorkerCount(): number {
 function cleanupDesktop(): Promise<void> {
   if (desktopCleanup) return desktopCleanup
   quitting = true
+  operatorBridge?.stop()
+  for (const off of dialogObservers.values()) off(); dialogObservers.clear()
   assistantSession.dispose()
   desktopCleanup = Promise.all([stopAgentSocket(), runtimeServices?.stop(), stopAssistantConversations(), sessionRegistry.stop(), gitProcesses.stop()])
     .then(() => { disposeAgentLauncher() })
@@ -416,12 +423,13 @@ const assistantSession = new AssistantSession({
   isAlive,
   killTerminal: killPty,
   startTerminal: (settings, cols, rows, onExit) => startAssistant({ socketPath: SOCKET_PATH, settings }, cols, rows, onExit).ptyId,
-  create: (settings, onUpdate) => {
+  create: (settings, onUpdate, projectId) => {
     const launch = assistantLaunch(settings, BUILTIN_PROMPTS.assistant, mainLocale())
-    const cwd = assistantCwd(app.getPath('userData'))
+    const cwd = projectId ? projects.get(projectId)?.root : assistantCwd(app.getPath('userData'))
+    if (!cwd) throw new OrcaError('command.projectNotFound', { projectId })
     mkdirSync(cwd, { recursive: true })
     return createAssistantConversation({
-      agent: launch.agent, system: launch.system, model: launch.model, effort: launch.effort, extraArgs: launch.extraArgs, cwd,
+      agent: launch.agent, system: launch.system, model: launch.model, effort: launch.effort, extraArgs: launch.extraArgs, cwd, projectId,
       env: assistantEnv({ socketPath: SOCKET_PATH, path: workerPath(), nodePath: app.isPackaged ? process.execPath : undefined }),
       onUpdate
     })
@@ -767,6 +775,20 @@ async function initializeDesktop(): Promise<void> {
   })
   updater.start()
   registerIpc()
+  const dialogs = assistantSession.dialogs
+  const dialogCommands = createDialogCommands({ registry: dialogs, authorize, project: id => projects.get(id), settings: () => projects.settings().assistant, assertUsable: agent => assertAgentUsable(agentInfos(undefined), agent) })
+  const operatorApi = createOperatorApi({ product: { name: 'orca-desktop', version: app.getVersion() }, ownerId: requiredEffectJournal().ownerId, ledger: mutationLedger, events: runtimeServices.events, preview: true,
+    groups: { profile: profileCommands, projectConfig: projectConfigCommands, board: boardCommands, globalTask: globalTaskCommands, coordinator: coordinatorCommands, worker: workerCommands, review: reviewCommands,
+      humanRequest: humanRequestCommands, projectGit: projectGitCommands, run: runCommands, agent: agentCommands, session: sessionCommands, recovery: recoveryCommands, rules: ruleCommands, stats: statsCommands, files: fileCommands, dialog: dialogCommands },
+    authorize, authorizeProject: (ctx, id) => Boolean(projects.get(id)) && authorize(ctx), onDetach: ctx => runtimeServices.detach(ctx.clientId),
+    getRevision: (_projectId, dialogId) => dialogId ? dialogs.snapshot(dialogId).dialog.revision : runtimeServices.revision,
+    onDialog: id => { if (!dialogObservers.has(id)) dialogObservers.set(id, dialogs.subscribe(id, event => runtimeServices.events.publish('dialog.changed', { id, revision: event.revision }, dialogs.snapshot(id).dialog.projectId))) }
+  })
+  operatorBridge = registerDesktopOperator<IpcMainInvokeEvent>({ handle, api: operatorApi, profile: profileCommands, board: boardCommands, dialog: dialogCommands, session: sessionCommands,
+    files: fileCommands, globalTask: globalTaskCommands, leases: sessionWriterLeases, revision: () => runtimeServices.revision,
+    clientId: event => win && !win.isDestroyed() && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame ? `desktop:${event.sender.id}` : null,
+    onDestroyed: (event, callback) => { event.sender.once('destroyed', callback) }
+  })
   startSocketServer(SOCKET_PATH, createLegacySocketDeps(runtimeServices, ruleServices, snapshotDispatchShowcase, () => {
     setMainLocale(projects.settings().language); refreshApplicationMenu(); refreshTray(); updater.settingsChanged()
   }))
@@ -781,6 +803,8 @@ async function initializeDesktop(): Promise<void> {
   // Клик по иконке в Dock (macOS) — вернуть окно.
   app.on('activate', () => showWindow())
 }
+
+function initializeMutationLedger(dataDir: string, ownerId: string): void { mutationLedger = createMutationLedger({ dataDir, ownerId }) }
 
 function failDesktopStartup(error: unknown): void {
   quitting = true
@@ -803,6 +827,7 @@ app.whenReady().then(async () => {
       try {
         assertProfileSchemas(context.dataDir)
         initializeEffectJournal(context.dataDir, context.owner.instanceId)
+        initializeMutationLedger(context.dataDir, context.owner.instanceId)
         await initializeDesktop()
         desktopInitialized = true
       } catch (error) {

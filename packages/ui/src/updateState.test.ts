@@ -1,0 +1,281 @@
+// Запуск: pnpm --filter @orca-board/desktop test. Что плашка и «Настройки → Обновления» показывают при каждом
+// состоянии обновления, живые агенты для выбора «Сейчас / Когда закончат» и защита от старого preload.
+import { describe, it, afterEach } from 'node:test'
+import assert from 'node:assert/strict'
+import type { UpdateInfo, UpdateState } from '../shared/ipc'
+import { setLocale } from './i18n'
+import { formatPercent } from './i18n/format'
+import {
+  bannerView, canCheck, isReleaseUrl, isStaleUpdatesError, needsAttention, pendingText, statusLine, unsupportedText,
+  updatesApi, versionLabel, releaseSummary, updateProgress, cardStatus, cardRelease
+} from './updateState'
+
+afterEach(() => setLocale('ru'))
+
+const base: UpdateState = {
+  status: 'idle', currentVersion: '0.4.1', availableVersion: null, releaseNotes: null, releaseUrl: null,
+  percent: null, installPending: null, mode: 'auto', unsupportedReason: null, error: null
+}
+const found: Partial<UpdateState> = {
+  availableVersion: '0.4.2', releaseNotes: '## Что нового\n- всё', releaseUrl: 'https://github.com/NANDIorg/BigOrcaCocks/releases/tag/v0.4.2'
+}
+const st = (patch: Partial<UpdateState>): UpdateState => ({ ...base, ...patch })
+
+describe('описание версии в карточке', () => {
+  const bundled: Pick<UpdateInfo, 'version' | 'releaseNotes'> = {
+    version: base.currentVersion, releaseNotes: '# Orca 0.4.1\n\nИзменения установленной версии.'
+  }
+
+  it('текущая версия раскрывает встроенное описание без проверки сети', () => {
+    assert.deepEqual(cardRelease(base, bundled), {
+      ...bundled, releaseUrl: 'https://github.com/NANDIorg/BigOrcaCocks/releases/tag/v0.4.1'
+    })
+  })
+
+  it('portable и ошибка сети сохраняют описание установленной версии', () => {
+    for (const patch of [
+      { status: 'unsupported', mode: 'manual-download', unsupportedReason: 'portable' },
+      { status: 'error', error: 'Нет сети' }
+    ] as const) {
+      assert.equal(cardRelease(st(patch), bundled)?.releaseNotes, bundled.releaseNotes)
+    }
+  })
+
+  it('найденная версия показывает свои изменения, а не описание установленной', () => {
+    const release = cardRelease(st({ ...found, status: 'available' }), bundled)
+    assert.equal(release?.version, found.availableVersion)
+    assert.equal(release?.releaseNotes, found.releaseNotes)
+    assert.equal(release?.releaseUrl, found.releaseUrl)
+    assert.equal(cardRelease(st({ ...found, releaseNotes: null, releaseUrl: null }), bundled)?.releaseNotes, '')
+  })
+
+  it('при несовпадении версий после HMR не подставляет чужие заметки; ссылка ведёт на точную версию', () => {
+    assert.deepEqual(cardRelease(st({ currentVersion: '0.4.2' }), bundled), {
+      version: '0.4.2', releaseNotes: '', releaseUrl: 'https://github.com/NANDIorg/BigOrcaCocks/releases/tag/v0.4.2'
+    })
+    assert.equal(cardRelease(null, bundled), null)
+  })
+})
+
+describe('bannerView', () => {
+  it('нет состояния, idle, checking и dev — плашки нет', () => {
+    assert.equal(bannerView(null), null)
+    assert.equal(bannerView(base), null)
+    assert.equal(bannerView(st({ status: 'checking' })), null)
+    assert.equal(bannerView(st({ status: 'unsupported', unsupportedReason: 'dev' })), null)
+  })
+
+  it('available: «Доступна v…», «Что нового» и «Скачать»', () => {
+    const v = bannerView(st({ ...found, status: 'available' }))
+    assert.equal(v?.kind, 'available')
+    assert.equal(v?.title, 'Доступна v0.4.2')
+    assert.deepEqual(v?.actions, ['whatsNew', 'download'])
+    assert.equal(v?.primary, 'download')
+  })
+
+  it('available без заметок: «Что нового» не предлагается', () => {
+    const v = bannerView(st({ ...found, releaseNotes: null, status: 'available' }))
+    assert.deepEqual(v?.actions, ['download'])
+  })
+
+  it('downloading: прогресс и никаких кнопок; размер неизвестен — percent null', () => {
+    const v = bannerView(st({ ...found, status: 'downloading', percent: 42 }))
+    assert.equal(v?.kind, 'downloading')
+    assert.equal(v?.percent, 42)
+    assert.deepEqual(v?.actions, [])
+    assert.equal(bannerView(st({ ...found, status: 'downloading' }))?.percent, null)
+  })
+
+  it('ready: «Перезапустить и обновить» — главная кнопка', () => {
+    const v = bannerView(st({ ...found, status: 'ready' }))
+    assert.equal(v?.title, 'v0.4.2 готова')
+    assert.deepEqual(v?.actions, ['install', 'whatsNew'])
+    assert.equal(v?.primary, 'install')
+    assert.equal(v?.detail, undefined)
+  })
+
+  it('ready с отложенной установкой: подпись и «Отменить»', () => {
+    const quit = bannerView(st({ ...found, status: 'ready', installPending: 'quit' }))
+    assert.equal(quit?.detail, 'Установится при выходе из приложения')
+    assert.deepEqual(quit?.actions, ['install', 'cancelPending', 'whatsNew'])
+    const idle = bannerView(st({ ...found, status: 'ready', installPending: 'idle' }))
+    assert.equal(idle?.detail, 'Установится, когда агенты закончат')
+  })
+
+  it('installing: без кнопок', () => {
+    const v = bannerView(st({ ...found, status: 'installing' }))
+    assert.equal(v?.kind, 'installing')
+    assert.deepEqual(v?.actions, [])
+  })
+
+  it('error: текст ошибки и «Повторить»', () => {
+    const v = bannerView(st({ status: 'error', error: 'Не совпала контрольная сумма' }))
+    assert.equal(v?.kind, 'error')
+    assert.equal(v?.detail, 'Не совпала контрольная сумма')
+    assert.deepEqual(v?.actions, ['retry'])
+    assert.equal(v?.primary, 'retry')
+    assert.equal(bannerView(st({ status: 'error' }))?.detail, undefined)
+  })
+
+  it('manual-download (portable): «Скачать» со страницы релиза и причина', () => {
+    const v = bannerView(st({ ...found, status: 'unsupported', mode: 'manual-download', unsupportedReason: 'portable' }))
+    assert.equal(v?.kind, 'manual')
+    assert.match(v?.detail ?? '', /Portable/)
+    assert.deepEqual(v?.actions, ['whatsNew', 'openRelease'])
+    assert.equal(v?.primary, 'openRelease')
+  })
+
+  it('manual-download на macOS вне «Программ»: причина из unsupportedReason', () => {
+    const v = bannerView(st({ ...found, status: 'unsupported', mode: 'manual-download', unsupportedReason: 'not-in-applications' }))
+    assert.match(v?.detail ?? '', /«Программ»/)
+  })
+
+  it('unsupported без найденной версии или без ссылки на релиз — плашки нет', () => {
+    assert.equal(bannerView(st({ status: 'unsupported', mode: 'manual-download', unsupportedReason: 'portable' })), null)
+    assert.equal(bannerView(st({ ...found, releaseUrl: null, status: 'unsupported', mode: 'manual-download', unsupportedReason: 'portable' })), null)
+    assert.equal(bannerView(st({ ...found, status: 'unsupported', mode: 'auto', unsupportedReason: 'no-write-access' })), null)
+  })
+
+  it('английский интерфейс: те же состояния, английские подписи', () => {
+    setLocale('en')
+    assert.equal(bannerView(st({ ...found, status: 'available' }))?.title, 'v0.4.2 is available')
+    assert.equal(bannerView(st({ ...found, status: 'ready', installPending: 'quit' }))?.detail, 'Will be installed when you quit the app')
+  })
+})
+
+describe('needsAttention', () => {
+  it('просит внимания: available, ready, error, manual; не просит: скачивание, установка, пусто', () => {
+    assert.equal(needsAttention(st({ ...found, status: 'available' })), true)
+    assert.equal(needsAttention(st({ ...found, status: 'ready' })), true)
+    assert.equal(needsAttention(st({ status: 'error', error: 'x' })), true)
+    assert.equal(needsAttention(st({ ...found, status: 'downloading', percent: 3 })), false)
+    assert.equal(needsAttention(st({ ...found, status: 'installing' })), false)
+    assert.equal(needsAttention(base), false)
+    assert.equal(needsAttention(null), false)
+  })
+})
+
+describe('canCheck', () => {
+  it('проверка доступна в покое и при ошибке; занятые и неподдерживаемые сборки блокируются', () => {
+    for (const status of ['idle', 'available', 'error'] as const) assert.equal(canCheck(st({ status })), true, status)
+    for (const status of ['checking', 'downloading', 'ready', 'installing', 'unsupported'] as const) assert.equal(canCheck(st({ status })), false, status)
+    assert.equal(canCheck(null), false)
+  })
+
+  it('portable и macOS вне «Программ» позволяют вручную проверить релиз', () => {
+    assert.equal(canCheck(st({ status: 'unsupported', mode: 'manual-download', unsupportedReason: 'portable' })), true)
+    assert.equal(canCheck(st({ status: 'unsupported', mode: 'manual-download', unsupportedReason: 'not-in-applications' })), true)
+  })
+})
+
+describe('анонс релиза', () => {
+  it('берёт первый абзац без заголовка, markdown, картинок и адресов ссылок', () => {
+    assert.equal(releaseSummary('# Orca 1.1.1\n\n**Быстрее** запуск и [новые настройки](https://example.com). ![баннер](x.png)\n\n## Подробности\n- Остальное'), 'Быстрее запуск и новые настройки.')
+  })
+
+  it('если вступления нет, показывает первый пункт изменений', () => {
+    assert.equal(releaseSummary('## Исправления\n- Исправлен `терминал`.\n- Второе изменение.'), 'Исправлен терминал.')
+  })
+
+  it('пропускает HTML и блоки кода; пустое описание оставляет пустым', () => {
+    assert.equal(releaseSummary('<script>alert(1)</script>\n\n```sh\nsecret\n```\n\nНовый интерфейс.'), 'Новый интерфейс.')
+    assert.equal(releaseSummary('# Только заголовок\n\n![баннер](x.png)'), '')
+    assert.equal(releaseSummary(null), '')
+  })
+
+  it('короткий анонс не разрезает последнее слово', () => {
+    const summary = releaseSummary('Настройки стали удобнее. '.repeat(30))
+    assert.ok(summary.length <= 191)
+    assert.match(summary, /(?:Настройки|стали|удобнее\.)…$/)
+  })
+})
+
+describe('прогресс карточки', () => {
+  it('ручная проверка с автоматической загрузкой не скрывает прогресс или готовность', () => {
+    assert.equal(cardStatus(st({ status: 'downloading', percent: 42 }), true), 'downloading')
+    assert.equal(cardStatus(st({ status: 'ready' }), true), 'ready')
+    assert.equal(cardStatus(st({ status: 'installing' }), true), 'installing')
+  })
+  it('portable показывает проверку, хотя main сохраняет unsupported', () => {
+    assert.equal(cardStatus(st({ status: 'unsupported', mode: 'manual-download' }), true), 'checking')
+    assert.equal(cardStatus(st({ status: 'unsupported', mode: 'manual-download' }), false), 'unsupported')
+    assert.equal(cardStatus(null, false), 'loading')
+  })
+  it('неизвестный и некорректный прогресс не выдаёт за нулевой', () => {
+    assert.equal(updateProgress(null), null)
+    assert.equal(updateProgress(NaN), null)
+    assert.equal(updateProgress(Infinity), null)
+  })
+  it('округляет и ограничивает значения для полосы и aria-valuenow', () => {
+    assert.equal(updateProgress(42.8), 43)
+    assert.equal(updateProgress(-12), 0)
+    assert.equal(updateProgress(105), 100)
+  })
+})
+
+describe('statusLine', () => {
+  it('строка статуса по состояниям', () => {
+    assert.equal(statusLine(base), 'Обновлений не найдено.')
+    assert.equal(statusLine(st({ status: 'checking' })), 'Проверяем наличие обновлений…')
+    assert.equal(statusLine(st({ ...found, status: 'available' })), 'Доступна версия v0.4.2.')
+    assert.equal(statusLine(st({ status: 'error', error: 'нет сети' })), 'Ошибка: нет сети')
+    assert.equal(statusLine(st({ status: 'error' })), 'Не удалось проверить обновления.')
+    assert.match(statusLine(st({ ...found, status: 'downloading', percent: 50 })), /v0\.4\.2: 50\s?%\./)
+    assert.match(statusLine(st({ ...found, status: 'ready', installPending: 'idle' })), /готова к установке\. Установится, когда агенты закончат$/)
+  })
+
+  it('unsupported: причина, а найденная версия — впереди', () => {
+    assert.equal(statusLine(st({ status: 'unsupported', unsupportedReason: 'dev' })), unsupportedText('dev'))
+    assert.ok(statusLine(st({ ...found, status: 'unsupported', unsupportedReason: 'portable' })).startsWith('Доступна версия v0.4.2. '))
+  })
+
+  it('неизвестная причина (новый main) — общий текст, а не «undefined»', () => {
+    assert.match(unsupportedText(null), /недоступно/)
+  })
+})
+
+describe('вспомогательные', () => {
+  it('versionLabel не дублирует «v»', () => {
+    assert.equal(versionLabel('0.4.2'), 'v0.4.2')
+    assert.equal(versionLabel('v0.4.2'), 'v0.4.2')
+  })
+  it('строки версии используют кодовое имя серии для текущей и следующей версии', () => {
+    assert.equal(versionLabel('1.0.1'), 'v1.0.1 · Orca')
+    assert.equal(versionLabel('v1.1.2'), 'v1.1.2 · Sea Lion')
+    assert.equal(versionLabel('v1.1.2', false), 'v1.1.2')
+  })
+
+  it('pendingText: quit, idle и ничего', () => {
+    assert.equal(pendingText(null), undefined)
+    assert.ok(pendingText('quit')?.includes('выходе'))
+    assert.ok(pendingText('idle')?.includes('агенты'))
+  })
+
+  it('formatPercent: по языку, обрезает диапазон', () => {
+    assert.match(formatPercent(42), /^42\s?%$/)
+    assert.match(formatPercent(150), /^100\s?%$/)
+    assert.match(formatPercent(-5), /^0\s?%$/)
+    assert.match(formatPercent(NaN), /^0\s?%$/)
+    setLocale('en')
+    assert.equal(formatPercent(42), '42%')
+  })
+
+  it('isReleaseUrl: только http(s)', () => {
+    assert.equal(isReleaseUrl('https://github.com/x'), true)
+    assert.equal(isReleaseUrl('file:///etc/passwd'), false)
+    assert.equal(isReleaseUrl('javascript:alert(1)'), false)
+    assert.equal(isReleaseUrl(null), false)
+  })
+
+  it('updatesApi: старый preload без updates — null, а не падение', () => {
+    assert.equal(updatesApi(undefined), null)
+    assert.equal(updatesApi({}), null)
+    const api = { getState: async () => base } as unknown as NonNullable<Parameters<typeof updatesApi>[0]>['updates']
+    assert.equal(updatesApi({ updates: api }), api)
+  })
+
+  it('isStaleUpdatesError: preload новый, main старый', () => {
+    assert.equal(isStaleUpdatesError("No handler registered for 'updates:getState'"), true)
+    assert.equal(isStaleUpdatesError("No handler registered for 'docs:list'"), false)
+  })
+})

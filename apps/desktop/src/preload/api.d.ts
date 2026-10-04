@@ -5,6 +5,7 @@ declare global {
     /** Общий контракт включает assistantChat.sendWithWorkflow, workflowAssistant.save/onSaved и taskTypes.patch/rename;
      * новые методы проверяются перед вызовом после HMR; его версия проверяется снимком.
      * app.onMenuAction, app.getMenu, app.invokeMenu, app.dismissMenu, app.onWindowFullscreen и read-only app.windowChrome опциональны для старого preload.
+     * operator bridge optional для старого preload/main; handshake проверяется до общих commands.
      * attachments.capabilities, globalTasks.revealAttachment, globalTasks.openAttachment и recovery у старого preload отсутствуют — renderer проверяет их перед вызовом. */
     orca: OrcaApi
   }

@@ -1,0 +1,160 @@
+import { getUiApi } from './host'
+import { isPendingRequest, nodeLane, type ColumnKind, type GlobalTask, type GlobalTaskReturn, type HumanRequest, type Workflow } from '@orca-board/core'
+import type { OrcaApi } from '../shared/ipc'
+import { t } from './i18n'
+import { ipcErrorCode, ipcErrorMessage } from './ipcError'
+import { laneTitle } from './runStage'
+
+/**
+ * Что можно сделать с глобальной задачей на карточке и в деталях. «Проверка» — колонка kind=review
+ * глобального канбана: работа закрыта и ждёт приёмки человеком.
+ */
+export interface GlobalTaskActions {
+  /** «Запустить координатора»: на «Проверке» скрыта — там вместо неё «Вернуть в работу…» с уточнением. */
+  startCoordinator: boolean
+  /** «Подтвердить»: с «Проверки» в «Сделано». */
+  accept: boolean
+  /**
+   * «Вернуть в работу…»: с «Проверки» в работу с уточнением и повторным запуском координатора. Доступна и при
+   * живом прежнем координаторе: после `runs finish` или ручного переноса на «Проверку» его терминал закрывается
+   * лишь после тишины, а ввод человека в терминал продлевает окно. Выключенная кнопка оставляла человека
+   * без поля для уточнения на всё это время; возврат закрывает терминал сам.
+   */
+  returnToWork: boolean
+  /** Прежний координатор ещё жив: возврат закроет его терминал (main, `returnGlobalTaskToWork`). */
+  returnClosesCoordinator?: boolean
+  /**
+   * Решения ждут несколько approval прогона (параллельные пути разветвления на нодах `human`): «Подтвердить» и «Вернуть»
+   * скрыты — они решают один approval прогона, и какой из них, непонятно. Каждый решается во «Входящих» по своей ноде.
+   * Число запросов; нет — кнопки как обычно.
+   */
+  approvalsInInbox?: number
+}
+
+/**
+ * Доступные действия. kind — вид колонки, в которой карточка показана (с учётом «Нужен ответ»);
+ * live — у задачи есть живой координатор. У «Входящих» нет координатора и они не бывают на проверке.
+ * approvals — сколько approval прогона ждут решения (`runApprovalRequests`); больше одного — только у прогона с воркфлоу
+ * внутри разветвления, тогда кнопки решения уходят во «Входящие» (`approvalsInInbox`).
+ */
+export function globalTaskActions(
+  g: { inbox?: boolean; workflowScope?: GlobalTask['workflowScope'] },
+  kind: ColumnKind | undefined,
+  live: boolean,
+  approvals = 0
+): GlobalTaskActions {
+  if (g.inbox) return { startCoordinator: false, accept: false, returnToWork: false }
+  const review = kind === 'review'
+  if (review && approvals > 1 && isRunWorkflow(g)) {
+    return { startCoordinator: false, accept: false, returnToWork: false, approvalsInInbox: approvals }
+  }
+  return {
+    startCoordinator: !review && !live,
+    accept: review,
+    returnToWork: review,
+    ...(review && live ? { returnClosesCoordinator: true } : {})
+  }
+}
+
+/** История уточнений для показа: новые сверху. У задачи без возвратов — пусто. */
+export function returnsNewestFirst(g: { returns?: GlobalTaskReturn[] }): GlobalTaskReturn[] {
+  return [...(g.returns ?? [])].sort((a, b) => b.at - a.at)
+}
+
+/**
+ * Прогон с воркфлоу глобальной задачи (`workflowScope: 'run'`): «Проверка» — это approval ноды `human`. «Подтвердить»
+ * у него с полем «Решение / что делать дальше», «Вернуть» идёт по переходу графа, а не перезапуском координатора.
+ * Нет поля (прогон старого формата, «Входящие», старый main) — прежняя «Проверка».
+ */
+export function isRunWorkflow(g: Partial<Pick<GlobalTask, 'workflowScope' | 'inbox'>>): boolean {
+  return g.workflowScope === 'run' && g.inbox !== true
+}
+
+/**
+ * Ждущие approval уровня прогона (ноды `human`, без задачи), старые первыми. Обычно один; внутри разветвления — по
+ * одному на путь, стоящий на `human` (запросы различаются `nodeId`).
+ */
+export function runApprovalRequests(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest[] {
+  return (requests ?? [])
+    .filter((r) => r.runId === runId && r.taskId === undefined && r.kind === 'approval' && isPendingRequest(r))
+    .sort((a, b) => a.createdAt - b.createdAt)
+}
+
+/** Ждущий approval уровня прогона (нода `human`, без задачи): что человек подтверждает. Нет — undefined. */
+export function runApprovalRequest(requests: readonly HumanRequest[] | undefined, runId: string): HumanRequest | undefined {
+  return runApprovalRequests(requests, runId)[0]
+}
+
+/**
+ * Название пути разветвления, в котором стоит нода запроса (`HumanRequest.nodeId`): «Бэкенд». Путь — по графу прогона
+ * (`nodeLane`: нода принадлежит пути, даже когда позиции путей уже сменились), без графа (типы не загрузились, старый
+ * main) — по текущим позициям путей (`GlobalTask.lanes`). Нода вне разветвления, запрос без ноды — undefined.
+ */
+export function requestLaneTitle(
+  request: Pick<HumanRequest, 'nodeId'> | undefined,
+  workflow: Pick<Workflow, 'nodes' | 'edges'> | undefined,
+  lanes?: readonly { id: string; nodeId: string }[]
+): string | undefined {
+  const nodeId = request?.nodeId
+  if (!nodeId) return undefined
+  const lane = (workflow ? nodeLane(workflow, nodeId)?.laneId : undefined) ?? lanes?.find((l) => l.nodeId === nodeId)?.id
+  return lane !== undefined ? laneTitle(workflow, lane) : undefined
+}
+
+/**
+ * Путь, который решает «Подтвердить» / «Вернуть» глобальной задачи: только когда ждущий approval прогона ровно один и
+ * его нода — внутри пути. При нескольких окна решение не отправляют (`approvalsInInbox`), без путей — прежние тексты.
+ */
+export function reviewLaneTitle(
+  requests: readonly HumanRequest[],
+  g: Pick<GlobalTask, 'id'> & Partial<Pick<GlobalTask, 'lanes'>>,
+  workflow: Pick<Workflow, 'nodes' | 'edges'> | undefined
+): string | undefined {
+  const pending = runApprovalRequests(requests, g.id)
+  return pending.length === 1 ? requestLaneTitle(pending[0], workflow, g.lanes) : undefined
+}
+
+/**
+ * Подсказка под полем уточнения в «Вернуть в работу»: что произойдёт после отправки. `lane` — возвращается один путь
+ * разветвления (`reviewLaneTitle`): соседние пути не затронуты.
+ */
+export function returnHint(closesCoordinator: boolean, runWorkflow = false, lane?: string): string {
+  if (runWorkflow) return lane !== undefined ? t('global.return.hintLane', { lane }) : t('global.return.hintRun')
+  return t(closesCoordinator ? 'global.return.hintCloses' : 'global.return.hint')
+}
+
+/** Ошибка «старый main/preload без «Проверки»» на текущем языке интерфейса. */
+export function staleReviewMessage(): string {
+  return t('global.stale.review')
+}
+
+/**
+ * `accept` и `returnToWork` из `getUiApi().globalTasks` или понятная ошибка. В `pnpm dev` renderer
+ * обновляется по HMR, а preload остаётся старым — методов нет (правило 086a654).
+ */
+export function globalReviewApi(api: Partial<OrcaApi> | undefined): Pick<OrcaApi['globalTasks'], 'accept' | 'returnToWork'> {
+  const g = api?.globalTasks as Partial<OrcaApi['globalTasks']> | undefined
+  const accept = g?.accept
+  const returnToWork = g?.returnToWork
+  if (typeof accept !== 'function' || typeof returnToWork !== 'function') throw new Error(staleReviewMessage())
+  return { accept: (id, decision) => accept(id, decision), returnToWork: (id, text, cols, rows, images) => returnToWork(id, text, cols, rows, images) }
+}
+
+/** Старый main отказал в возврате при живом координаторе — как обойти, на текущем языке. */
+export function staleReturnLiveMessage(): string {
+  return t('global.stale.returnLive')
+}
+
+/**
+ * Ошибка IPC для человека (`e` — ошибка invoke или её текст): preload новый, а main старый — «No handler registered»
+ * → «перезапустите». Отказ в возврате при живом координаторе («ещё завершается») — объясняем, как обойти. Main
+ * с переводом присылает код `coordinator.finishing`; main до перевода — только русский текст, его сверяем как есть.
+ */
+export function reviewErrorMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e)
+  if (/No handler registered for 'globalTasks:(accept|returnToWork)'/.test(raw)) return staleReviewMessage()
+  if (ipcErrorCode(e) === 'coordinator.finishing' || /координатор этой глобальной задачи ещё завершается/.test(raw)) {
+    return staleReturnLiveMessage()
+  }
+  return ipcErrorMessage(e)
+}

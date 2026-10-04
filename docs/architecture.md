@@ -1,5 +1,25 @@
 # Архитектура orca-board
 
+## Общий client и UI
+
+`packages/client` — browser-safe typed operator client без React: explicit project/revision,
+prepared request identity для повторной доставки, handshake/capabilities, observer cursor,
+late generation guard и отдельные binary/writer channels. HTTP credentials задаёт host;
+IPC adapter получает trusted bridge. Выбор project/dialog/language принадлежит client.
+
+`packages/ui` содержит прежние React компоненты, CSS, i18n, assets и presentation helpers.
+`getUiApi()` читает injected binding, а не window.orca. `PlatformAdapter` содержит
+window/menu/updater, системные file actions и выбор каталога; бизнес-команды находятся
+в client. Desktop renderer — entrypoint `mountOrcaUi`; старый preload остаётся compatible
+API, optional/HMR checks сохранены. CRUD групп Desktop уже вызывает typed operator client,
+остальные legacy методы проходят общие runtime commands через прежние IPC adapters.
+
+IPC `operator:hello/call/select/snapshot/events/close/upload/binary/writer` зарегистрированы
+только для verified main frame. Ledger проверяется до Desktop backup; snapshot/replay,
+upload tickets, binary guards и sequence writer общие с headless. Close drops client leases,
+не завершает owner/диалог/PTY. CLI React не требует. Нового Web приложения ещё нет.
+
+
 Правила разработки (что нельзя, что обязательно, проверки) — в [CLAUDE.md](../CLAUDE.md).
 Ветки, PR и выпуск самого проекта — [git-flow.md](git-flow.md); исходный аудит инструкций —
 [development-audit.md](development-audit.md).
