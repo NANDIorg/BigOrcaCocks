@@ -6,44 +6,9 @@ import type { InitialCommitMode, ProjectBranchInfo, ProjectBranchList, ProjectBr
 import { canonicalGitCommonDir, createGitOperationQueue, type GitOperationQueue } from './git-operation-queue.ts'
 import { createGitProcessService, GitProcessError, type GitProcessService } from './git-process.ts'
 
-/** Коды прежних Git-отказов; способ отображения и класс ошибки задаёт host. */
-export type GitErrorCode = 'git.branchBusy' | 'git.branchNotFound' | 'git.dirtyTree' | 'git.noCommits' | 'git.noUpstream' | 'git.notFastForward' | 'git.notRepo' | 'git.opFailed' | 'git.timeout' | 'git.workersActive'
-
-export interface GitMessage {
-  key: GitErrorCode
-  params?: GitMessageParams
-}
-export type GitMessageParams = Record<string, string | number | GitMessage>
-
-export interface GitMessages {
-  error(key: GitErrorCode, params?: GitMessageParams): Error
-  untrackedLabel(): string
-}
-
-export interface ReviewInfo {
-  base: string
-  branch: string
-  stat: string
-  commits: string[]
-  dirty: boolean
-}
-
-/**
- * `git merge` не удался. `conflict` — git начал слияние и упёрся в конфликтующие файлы: его разрешают в ветке задачи
- * и сливают снова. Иначе git до слияния не дошёл (занят `index.lock`, незакоммиченное в цели, нет ветки, таймаут):
- * это не конфликт, повтор после устранения причины сольёт как есть.
- */
-export class MergeError extends Error {
-  readonly conflict: boolean
-
-  constructor(message: string, conflict: boolean) {
-    super(message)
-    this.conflict = conflict
-  }
-}
-
-/** Отказ git-операции ноды: текст `git <команда>: <причина>` уходит в `task.feedback` и исход `error`. */
-export class GitOpError extends Error {}
+import { MergeError, GitOpError, type GitMessages, type ReviewInfo } from './git-errors.ts'
+import { createGitWorkflowService } from './git-workflow.ts'
+export * from './git-errors.ts'
 
 /** Один экземпляр операций на owner; callbacks не привязывают runtime к глобальному языку Desktop. */
 export function createGitOperations(messages: GitMessages, operationQueue: GitOperationQueue = createGitOperationQueue(), processes: GitProcessService = createGitProcessService()) {
@@ -693,6 +658,7 @@ export function createGitOperations(messages: GitMessages, operationQueue: GitOp
   }
 
   return {
+    workflowGit: createGitWorkflowService(messages, operationQueue, processes),
     currentBranch, hasCommits, assertHasCommits, headBase, addTaskWorktree, projectBranchInfo,
     reviewInfo, commitWorktree, mergeBranch, removeWorktreeKeepBranch, removeWorktree,
     taskWorktreePath, localBranchExists, isBranchNameAcceptedByGit, gitCreateBranch, gitCheckout, gitCommit, gitPush, setupCommand,

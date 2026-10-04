@@ -65,6 +65,12 @@ unborn/ветки, результата fetch/pull/checkout/initialCommit про
 service. Перед следующей mutation guard повторяется после await; отозванная policy
 не маскируется Git domain error. Это ещё не завершает перенос workflow effects.
 
+Общий scoped async Git port готов: compound branch/commit/review/merge/cleanup
+выполняются одной transaction без вложенного ожидания очереди. Guard после каждого
+subprocess не разрешает следующий шаг устаревшего вызова, даже если native commit
+уже произошёл. Legacy workflow callers ещё не переключены; EffectToken и restart
+reconciliation остаются следующим переносом B.
+
 ## Создание и правка графа через ассистента
 
 В «Настройки → Типы задач» меню «Новый тип → Создать с ассистентом» открывает чат без пустого типа.

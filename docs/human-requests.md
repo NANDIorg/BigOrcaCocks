@@ -72,6 +72,11 @@ root; ожидание ответа человека в неё не входит
 не блокирует terminal output/event loop и мутации другого repo. Существующие policy
 и registration guards повторяются после ожидания очереди до mutation.
 
+Общий async workflow port позволяет выполнять commit/review/merge/cleanup одной
+Git transaction с guard после await. Read-only preview не занимает mutation queue.
+Ответ человека и ожидание permission не входят в transaction; existing review
+callers переключаются следующим переносом вместе с EffectToken/reconciliation.
+
 Общий GitProcessService ограничивает stdout/stderr, закрывает stdin и при остановке
 owner завершает принадлежащее ему дерево Git hooks. Отмена отличается от timeout;
 ни один process listener/таймер не удерживается после закрытия. Ожидание человека

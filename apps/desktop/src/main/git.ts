@@ -10,7 +10,7 @@ const operations = createGitOperations({
 })
 
 export const {
-  currentBranch, hasCommits, assertHasCommits, headBase, addTaskWorktree,
+  workflowGit, currentBranch, hasCommits, assertHasCommits, headBase, addTaskWorktree,
   projectBranchInfo, reviewInfo, commitWorktree, mergeBranch, removeWorktreeKeepBranch,
   removeWorktree, taskWorktreePath, localBranchExists, isBranchNameAcceptedByGit, gitCreateBranch,
   gitCheckout, gitCommit, gitPush, setupCommand, projectBranches,

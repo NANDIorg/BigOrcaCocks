@@ -386,6 +386,16 @@ Scope guard повторяется после ожидания и перед с�
 не превращается в «не репозиторий»/«нет upstream»/timeout. В Desktop старые sync exports
 сохранены для ещё не перенесённых workflow callers; отдельного Git owner не создаётся.
 
+`GitWorkflowService.transaction` даёт scoped async port для последовательности
+branch/worktree/commit/review/merge/cleanup, на том же executor и commonDir queue.
+Методы внутри callback не занимают очередь повторно; guard проверяется после каждого
+subprocess и перед следующим effect. Scoped port закрывается при завершении callback
+и отклоняет обращение к другому repo. `read` не удерживает mutation queue. Review
+проверяет отсутствие refs отдельно: ошибка diff (например, несвязанная история)
+не превращается в пустой список коммитов с возможной потерей ветки при cleanup. Desktop
+экспортирует `workflowGit` из прежнего singleton; переключение legacy consumers и
+EffectToken/reconciliation продолжаются в B.
+
 RunCommands дают list/listWithCounts/close с detached result и прежней core
 идемпотентностью close/status attribution. Shared listRunsWithCounts считает задачи
 за один проход, не потребляет события. AgentCommands используют общие discovery и

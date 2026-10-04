@@ -44,6 +44,11 @@ Async Git проекта использует owner queue общего commonDir
 job. Sync ветвление/merge global task и worker ещё переводятся на ту же очередь;
 готовность всего async рубежа этим шагом не объявляется.
 
+Scoped `workflowGit` использует ту же commonDir queue для многошагового Git effect,
+не повторяя enqueue из helper. После закрытия transaction port больше не запускает
+Git; foreign repo нельзя изменить из другой очереди. Реальные tests проверяют refs,
+worktree, conflict abort и push. Перенос global-task callers продолжается в B.
+
 Async Git subprocess теперь принадлежат общему GitProcessService: stop/отмена и
 таймаут завершают также hooks, а не только родителя. Успех внешнего effect при
 отмене не предполагается и не откатывается автоматически; EffectToken и restart
