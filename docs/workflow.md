@@ -1466,3 +1466,7 @@ dispatch; обычный повтор запуска вновь проходит
 а preview соответствует записываемому этапу.
 
 Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.
+
+### Reconnect operator clients
+
+Protocol/schema handshake предшествует effects. Общие mutations сохраняют intent и accepted result атомарно, revision проверяется перед новым invoke. Повтор уже завершённого запроса возвращает результат даже после изменения текущей revision; повтор с другим payload конфликтует. После crash незавершённый запрос остаётся uncertain, его нельзя автоматически повторить. Revision provider и события всех owner/agent путей подключаются в общей composition; observer не потребляет агентские check events.

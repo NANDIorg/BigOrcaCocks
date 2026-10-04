@@ -304,3 +304,7 @@ orca-board request resolve --request <id> --restart | --dismiss
 IPC: `requests:list({runId?, pending?})`, `requests:resolve(id, resolution)`, событие `requests:focus`.
 
 Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.
+
+### Повтор ответа после reconnect
+
+Общий operator session принимает host-verified principal и mutation identity. Один request id с прежним payload возвращает сохранённый accepted result; другой payload конфликтует. Pending запрос после restart требует явной сверки, без автоматического повторного ответа. Каждый клиент имеет собственные selection и observer subscription; disconnect не завершает процессы owner. Transport/UI wiring следует после общей composition.

@@ -801,3 +801,7 @@ CLI этой команды нет: координатор тип не меня�
   модалок) возвращает, фокус — обратно на карточку. Повторный клик по вкладке «Канбан» тоже возвращает.
 
 Внешние Git/PTY/file effects используют persistent `effect-journal.json` version1. При restart неизвестный результат matching позиции останавливает автоматический повтор; read-only recovery показывает ресурсы и generation, а revision-checked operator resolution разрешает дальнейшие действия без удаления файлов, веток или самостоятельного повторения операции. Scope подтверждает только собственные эффекты после успешной записи metadata; новые visits/dispatch не принимают старый результат.
+
+### Operator clients
+
+Выбор глобальной задачи/проекта остаётся состоянием клиента, а вызов общей команды содержит явный projectId и revision. Повтор mutation с тем же identity возвращает сохранённый результат; изменённый payload конфликтует, crash gap возвращает uncertain. Observer snapshots/replay независимы от agent check и consumedBy. Wiring owner composition и UI client выполняется следующими блоками.
