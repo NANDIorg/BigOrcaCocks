@@ -4575,10 +4575,13 @@ Preview сохраняет token, sandbox/CSP/range/path guards и не полу
 `apps/web/src/server/browser-updates.ts` хранит приватное состояние/задание вне профиля,
 сериализует проверки и queue, фиксирует версию и разделяет download/install. Routes
 `GET /updates`, `POST /updates/check|download|install` защищены теми же session/Host/Origin/CSRF
-и не принимают команды/пути. `orca-web-update.service` (oneshot, обычный User) читает
+и не принимают команды/пути. `orca-web-update.service` (oneshot, User установки) читает
 подтверждённое задание и выполняет prepare/install, переживая остановку main unit.
 Сервис установки проверяет sudoers через visudo: только три фиксированных systemctl
-вызова, без произвольного sudo. Старый CLI update использует те же prepare/install/lock.
+вызова, без произвольного sudo. Начиная с Web 2.0.1 root поддерживается с предупреждением
+в установщике, мастере и сервере; ему sudo/sudoers не требуются. `privileges.ts` выбирает
+прямые административные команды для root и прежний sudo для обычного пользователя.
+Старый CLI update использует те же prepare/install/lock.
 Общие UI карточка/плашка и UpdateState поддерживают mode server; Web adapter получает
 состояние через bounded HTTP и polling. Source host проверяет отдельный Web feed, но устанавливать
 кнопкой не может. Backup/owner/checksum/rollback остаются в Web host; runtime не знает systemd.

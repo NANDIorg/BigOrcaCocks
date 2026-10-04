@@ -9,30 +9,24 @@ HTTP API. Один сервер предназначен для одного и�
 ## Готовая установка
 
 Первый поддерживаемый сервер — Linux x64, Ubuntu 24.04. Рекомендуется обычный Unix-пользователь.
-Нужны Git, curl, tar, sha256sum и Python 3; sudo нужен для systemd и HTTPS. Node 24 и собранный native PTY
+Нужны Git, curl, tar, sha256sum и Python 3; обычному пользователю sudo нужен для systemd и HTTPS. Node 24 и собранный native PTY
 включены в архив. Исходники, pnpm и компилятор на сервере не нужны.
 
-Первый пакет — [Orca Web 2.0.0](https://github.com/NANDIorg/BigOrcaCocks/releases/tag/web/v2.0.0):
-`install-orca-web.sh`, `orca-web-linux-x64-2.0.0.tar.gz` и `SHA256SUMS`.
+Актуальный пакет — [Orca Web 2.0.1](https://github.com/NANDIorg/BigOrcaCocks/releases/tag/web/v2.0.1):
+`install-orca-web.sh`, `orca-web-linux-x64-2.0.1.tar.gz` и `SHA256SUMS`.
 Web выпускается отдельно под тегами `web/vX.Y.Z`; Desktop 2.0.0 не переупаковывается.
 Установщик не меняет существующую установку.
 
 Скачайте установщик из Web-выпуска и запустите:
 
 ```sh
-curl -fL https://github.com/NANDIorg/BigOrcaCocks/releases/download/web%2Fv2.0.0/install-orca-web.sh -o install-orca-web.sh
+curl -fL https://github.com/NANDIorg/BigOrcaCocks/releases/download/web%2Fv2.0.1/install-orca-web.sh -o install-orca-web.sh
 bash install-orca-web.sh
 ```
 
-Для установки под root используйте актуальный скрипт из `develop`: установщик
-из опубликованного Web 2.0.0 ещё запрещает такой запуск. В самом пакете Web 2.0.0
-мастер настройки и команды установки сервиса также требуют обычного пользователя;
-замена скрипта позволяет установить файлы, но не снимает эти ограничения пакета.
-
-```sh
-curl -fL https://raw.githubusercontent.com/NANDIorg/BigOrcaCocks/develop/apps/web/install-orca-web.sh -o install-orca-web.sh
-bash install-orca-web.sh
-```
+Ссылка на `install-orca-web.sh` из Web 2.0.0 также отдаёт исправленный установщик:
+по умолчанию он выбирает актуальный стабильный Web-пакет. Поддержка root в самом
+приложении появилась в 2.0.1; принудительно выбранный пакет 2.0.0 её не содержит.
 
 Установщик выбирает последний стабильный `web/vX.Y.Z` (максимальная версия среди 100 последних выпусков репозитория), проверяет SHA256,
 разворачивает готовый пакет и открывает мастер. Для конкретного выпуска задайте
@@ -88,9 +82,11 @@ journalctl -u orca-web.service -f
 Для доменов нужен Caddy в `/usr/bin/caddy`, DNS двух разных hostname на сервер и открытые
 80/443. Сгенерированные `Caddyfile` и `orca-web-proxy.service` обслуживают HTTPS отдельно
 от приложения. Cookies удаляются при проксировании preview. Установка сервиса требует
-sudo. Основной сервис и worker работают под обычным пользователем. Установка добавляет
+sudo для обычного пользователя; root выполняет системные команды напрямую.
+Основной сервис и worker работают под пользователем установки. Для обычного пользователя установка добавляет
 `orca-web-update.service` и sudoers с тремя фиксированными командами systemctl: запустить
-worker, остановить и запустить только `orca-web.service`; произвольного root-доступа нет.
+worker, остановить и запустить только `orca-web.service`; произвольного root-доступа через sudo нет.
+При установке под root sudoers не требуется; сервис и агенты имеют полные права root.
 Отдельный worker не зависит от жизненного цикла HTTP-панели.
 
 Если Caddy уже обслуживает сайты, добавьте подготовленные site blocks в его текущую
@@ -180,7 +176,8 @@ Source host требует node-pty для Node ABI: Desktop install root рас
 native dependency в `apps/web/dist` через `npm install --omit=dev` из этого каталога.
 
 Linux CI строит пакет командой `pnpm --filter @orca-board/web bundle:linux` и проверяет
-`node scripts/smoke-web-bundle.mjs apps/web/release` под обычным пользователем. Smoke
+`node scripts/smoke-web-bundle.mjs apps/web/release` под обычным пользователем и явно
+с `ORCA_WEB_SMOKE_ROOT=1` под root в disposable runner. Smoke
 использует временные профиль/репозиторий, TTY мастер со скрытым вводом, двух операторов, настоящий Git/PTY, проверяет
 установщик/checksum, upload/download/preview, duplicate writer, detach, рестарт и
 служебные команды. Никаких платных запросов агентам или обхода GUI.

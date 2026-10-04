@@ -30,7 +30,7 @@ tar -tzf "$work/$asset" > "$work/contents"
 if ! awk 'BEGIN { valid=1 } { if ($0 !~ /^orca-web(\/|$)/ || $0 ~ /(^|\/)\.\.(\/|$)/ || $0 ~ /(^|\/)\.(\/|$)/ || $0 ~ /\\/) valid=0 } END { exit !valid }' "$work/contents"; then echo 'Небезопасные пути archive' >&2; exit 1; fi
 tar -tvzf "$work/$asset" > "$work/details"
 if ! awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" { exit 1 }' "$work/details"; then echo 'Archive должен содержать только обычные файлы и каталоги' >&2; exit 1; fi
-tar -xzf "$work/$asset" -C "$work"
+tar -xzf "$work/$asset" --no-same-owner -C "$work"
 "$work/orca-web/node/bin/node" --input-type=module - "$work/orca-web" "$version" <<'JS'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, relative, isAbsolute } from 'node:path'

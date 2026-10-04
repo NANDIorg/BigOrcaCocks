@@ -23,7 +23,7 @@ orca-board — оркестратор, в котором задача на до�
 Доступны **Desktop для macOS и Windows** и **Web для своего Linux-сервера**.
 Они используют общий backend, клиент и React-интерфейс; Web запускает агентов на сервере.
 Установка, HTTPS и обновления из браузера — [docs/web.md](docs/web.md). Первый пакет —
-[Orca Web 2.0.0](https://github.com/NANDIorg/BigOrcaCocks/releases/tag/web/v2.0.0), отдельный выпуск `web/vX.Y.Z`;
+[Orca Web 2.0.1](https://github.com/NANDIorg/BigOrcaCocks/releases/tag/web/v2.0.1), отдельный выпуск `web/vX.Y.Z`;
 Desktop использует `vX.Y.Z` и обновляется независимо. Человеческий терминальный
 CLI будет добавлен позже; нынешняя команда `orca-board` служит агентам.
 
@@ -67,11 +67,12 @@ Desktop-сборки Linux нет; для Linux предусмотрен Web с 
 На macOS откройте DMG и перенесите Orca в «Программы»; на Windows запустите EXE-установщик
 или portable EXE. Запустите Orca, установите Git и CLI-агентов, войдите в их аккаунты.
 
-**Web:** на Ubuntu 24.04 x64 используйте обычного пользователя с sudo, Git, curl и Python 3.
+**Web:** на Ubuntu 24.04 x64 нужны Git, curl и Python 3. Рекомендуется обычный пользователь
+с sudo; root тоже поддерживается с предупреждением о полных правах доступа.
 Скачайте установщик и запустите мастер настройки:
 
 ```sh
-curl -fL https://github.com/NANDIorg/BigOrcaCocks/releases/download/web%2Fv2.0.0/install-orca-web.sh -o install-orca-web.sh
+curl -fL https://github.com/NANDIorg/BigOrcaCocks/releases/download/web%2Fv2.0.1/install-orca-web.sh -o install-orca-web.sh
 bash install-orca-web.sh
 orca-web service install
 ```
