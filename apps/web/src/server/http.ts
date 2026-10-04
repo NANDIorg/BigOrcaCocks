@@ -42,7 +42,7 @@ function equal(left: unknown, right: string): boolean {
 function loopback(address: string | undefined): boolean { return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1' }
 
 export function createWebRouter(options: { config: WebConfig; accounts: readonly WebAccount[]; sessions: WebSessions; operator: OperatorHttpHandler; now?: () => number;
-  version?: string; updates?: BrowserUpdates; directories?(path?: string): Promise<unknown>; static?(request: IncomingMessage, response: ServerResponse): Promise<boolean> }) {
+  version?: string; healthInstance?: string; updates?: BrowserUpdates; directories?(path?: string): Promise<unknown>; static?(request: IncomingMessage, response: ServerResponse): Promise<boolean> }) {
   const { config, accounts, sessions, operator } = options
   const expectedHost = new URL(config.origin).host
   const cookieName = config.mode === 'proxy' ? '__Host-orca-web-session' : 'orca-web-session'
@@ -95,7 +95,7 @@ export function createWebRouter(options: { config: WebConfig; accounts: readonly
     security(request, request.method !== 'GET' && request.method !== 'HEAD')
     if (!request.url?.startsWith('/')) throw new HttpError(400, 'protocol.invalidInput')
     const path = new URL(request.url, config.origin).pathname
-    if (path === '/health' && request.method === 'GET') { json(response, 200, { status: 'ready', version: options.version }); return }
+    if (path === '/health' && request.method === 'GET') { json(response, 200, { status: 'ready', version: options.version, instance: options.healthInstance }); return }
     if (path === '/auth/login' && request.method === 'POST') {
       const raw = await loginBody(request)
       if (!record(raw) || Object.keys(raw).some(key => !['login', 'password'].includes(key)) || typeof raw.login !== 'string' || raw.login.length > 128 || typeof raw.password !== 'string') throw new HttpError(400, 'protocol.invalidInput')

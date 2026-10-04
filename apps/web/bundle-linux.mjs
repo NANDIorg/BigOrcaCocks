@@ -24,7 +24,7 @@ try {
   execFileSync(join(bundle, 'node', 'bin', 'npm'), ['rebuild', 'node-pty', '--build-from-source'], { cwd: join(bundle, 'app'), env, stdio: 'inherit' })
   execFileSync(join(bundle, 'node', 'bin', 'node'), ['--input-type=module', '-e', "import('node-pty').then(() => process.stdout.write('native PTY: OK\\n'))"], { cwd: join(bundle, 'app'), env, stdio: 'inherit' })
   await cp(join(root, 'bin'), join(bundle, 'bin'), { recursive: true })
-  await writeFile(join(bundle, 'release.json'), JSON.stringify({ schemaVersion: 1, product: 'orca-web', version, platform: 'linux', arch: 'x64', nodeVersion }, null, 2))
+  await writeFile(join(bundle, 'release.json'), JSON.stringify({ schemaVersion: 1, product: 'orca-web', version, platform: 'linux', arch: 'x64', nodeVersion, setupWizardVersion: 2 }, null, 2))
   const name = `orca-web-linux-x64-${version}.tar.gz`
   // В поставке только обычные файлы/каталоги: ссылки npm разворачиваются при сборке.
   execFileSync('tar', ['--dereference', '--hard-dereference', '-czf', join(out, name), '-C', work, 'orca-web'])

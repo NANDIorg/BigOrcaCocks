@@ -60,7 +60,9 @@ jobs:
       - run: pnpm --filter @orca-board/web run bundle:linux
       - run: node scripts/smoke-web-bundle.mjs apps/web/release
       - name: Установка и мастер под root в чистом Linux runner
-        run: sudo -H env ORCA_WEB_SMOKE_ROOT=1 PATH="$PATH" node scripts/smoke-web-bundle.mjs apps/web/release
+        run: |
+          sudo -H env PATH="$PATH" node --test scripts/web-install.test.mjs
+          sudo -H env ORCA_WEB_SMOKE_ROOT=1 ORCA_WEB_TEST_PROVISION=1 PATH="$PATH" node scripts/smoke-web-bundle.mjs apps/web/release
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: web-installers

@@ -13,9 +13,13 @@ export function httpPreviewAddress(origin: string): PreviewAddress {
       return match ? { token: match[1], path: match[2] } : undefined
     } }
 }
-export function createPreviewServer(config: WebConfig, runtime: OperatorHttpRuntime): Server {
+export function createPreviewServer(config: WebConfig, runtime: OperatorHttpRuntime, health?: { version: string; instance: string }): Server {
   const server = createServer((request, response) => {
     if (request.headers.host !== new URL(config.previewOrigin).host || config.mode === 'proxy' && request.headers['x-forwarded-proto'] !== 'https') { response.statusCode = 403; response.end(); return }
+    if (health && request.url === '/health' && request.method === 'GET') {
+      response.setHeader('content-type', 'application/json'); response.setHeader('cache-control', 'no-store')
+      response.end(JSON.stringify({ status: 'ready', service: 'orca-web-preview', ...health })); return
+    }
     // Проверяем raw URL до Request/URL: они нормализуют encoded dot segments.
     const url = `${config.previewOrigin}${request.url ?? ''}`
     const resolved = runtime.preview.resolvePreviewRequest({ method: request.method ?? 'GET', url }, runtime.previewTokens)
