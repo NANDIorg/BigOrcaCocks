@@ -10,6 +10,7 @@
 
 Краткий вход для разработчика — [CONTRIBUTING.md](CONTRIBUTING.md).
 Карта общих пакетов и Node host — [docs/shared-foundation.md](docs/shared-foundation.md).
+Перед продолжением Web/CLI прочитай [точку остановки и следующий план](docs/orca-development-handoff.md).
 Бизнес-логику добавляй в core/runtime, общий интерфейс — в packages/ui;
 Electron и системные действия оставляй в Desktop host.
 Не работай напрямую в `master` / `develop`. Обычная задача — отдельный worktree

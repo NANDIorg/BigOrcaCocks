@@ -164,7 +164,9 @@ Root/Desktop alignment для Desktop сохраняется; чужие вер�
 
 1. Проверяет тег, обе версии, master, реестр морских имён и непустое описание
    `docs/releases/vX.Y.Z.md`. Формирует заголовок `Orca X.Y.Z · <имя серии>`.
-2. Ставит зависимости, выполняет `pnpm verify` и упаковывает приложение на macOS/Windows.
+2. Ставит зависимости, готовит отдельный Node native root через `scripts/node-native.mjs`
+   до параллельных suites, выполняет `pnpm verify` и упаковывает приложение на macOS/Windows.
+   Node tests и Electron packaging используют физически разные установки node-pty.
    Обе mac-архитектуры строятся одной job, чтобы `latest-mac.yml` включал обе.
    На macOS до упаковки проверяет credentials и импортированный Developer ID Application нужной Team.
    Builder подписывает весь код с hardened runtime и notarize/staple `.app` до ZIP/DMG.

@@ -4,6 +4,8 @@
 04.10.2026: реализация общего фундамента завершена. Web для собственного сервера,
 терминальный UI CLI и их развёртывание — следующие отдельные проекты.
 Карта фактических слоёв и запуск Node host — [shared-foundation.md](shared-foundation.md).
+PR #59 слит в `develop` (`fe94656`); его финальный `7ff3972` прошёл оба CI runs: 10/10 jobs SUCCESS.
+Точка продолжения после подготовки Desktop 2.0.0 — [orca-development-handoff.md](orca-development-handoff.md).
 
 ## Реализованные рубежи
 

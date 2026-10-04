@@ -233,6 +233,7 @@ scripts/           проверки Git Flow и macOS-релиза
 
 | Файл | О чём |
 |---|---|
+| [docs/orca-development-handoff.md](docs/orca-development-handoff.md) | точка остановки перед 2.0.0 и порядок продолжения Web/CLI после релиза |
 | [docs/shared-foundation.md](docs/shared-foundation.md) | карта общих слоёв, Node host, границы Desktop/Web/CLI и следующие шаги |
 | [docs/orca-foundation-progress.md](docs/orca-foundation-progress.md) | готовность фундамента и результаты проверок |
 | [docs/architecture.md](docs/architecture.md) | процессы, модель, IPC, сокет, CLI, сборка, грабли |

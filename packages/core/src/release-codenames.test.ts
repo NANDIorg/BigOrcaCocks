@@ -8,11 +8,14 @@ it('major/minor задаёт животное, patch и префикс v нас�
   assert.equal(releaseCodename('v1.1.7'), 'Sea Lion')
   assert.equal(releaseVersionLabel('v1.1.7'), 'v1.1.7 · Sea Lion')
   assert.equal(releaseTitle('1.1.0'), 'Orca 1.1.0 · Sea Lion')
+  assert.equal(releaseCodename('2.0.0'), 'Sea Otter')
+  assert.equal(releaseCodename('v2.0.7'), 'Sea Otter')
+  assert.equal(releaseTitle('2.0.0'), 'Orca 2.0.0 · Sea Otter')
 })
 it('неизвестная/некорректная версия не получает выдуманное животное', () => {
   for (const version of ['2.7.4', '01.1.0', '1.1', '1.1.0-beta.1', '<img src=x>']) assert.equal(releaseCodename(version), undefined)
   assert.equal(releaseVersionLabel('2.7.4'), '2.7.4')
-  assert.throws(() => releaseTitle('2.0.0'), /имя/)
+  assert.throws(() => releaseTitle('2.0.0', []), /имя/)
 })
 it('реестр запрещает повтор серий и имён с другим регистром/разделителем', () => {
   assert.throws(() => validateReleaseCodenames([{ series: '1.0', name: 'Orca' }, { series: '1.0', name: 'Sea Lion' }]), /серия/)
