@@ -89,6 +89,9 @@ function mergeEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>): Recor
 /** Реестр принадлежит runtime, а подписчики могут отсоединяться без остановки процессов. */
 export function createSessionRegistry(host: SessionHost) {
   const sessions = new Map<string, Session>()
+  const processes = new Set<PtyProcess>()
+  const exitWaiters = new Set<() => void>()
+  let stopping = false
   const observers = new Set<(event: SessionEvent) => void>()
   const pendingEvents: SessionEvent[] = []
   let emitting = false
@@ -140,12 +143,16 @@ export function createSessionRegistry(host: SessionHost) {
     opts: PtySessionOptions,
     onExit?: (id: string, code: number) => void
   ): string {
+    if (stopping) throw new Error('Реестр терминалов остановлен')
     const id = newId('pty')
     const env = mergeEnv(cleanEnv(), opts.env ?? {})
     const cwd = opts.cwd ?? process.env.HOME
     const size = { cols: opts.cols, rows: opts.rows }
-    const start = (c: PtyCommand): PtyProcess =>
-      host.spawn(c.command, c.args, { name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd, env })
+    const start = (c: PtyCommand): PtyProcess => {
+      const proc = host.spawn(c.command, c.args, { name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd, env })
+      processes.add(proc)
+      return proc
+    }
     const main: PtyCommand = { command: opts.command ?? defaultShell(), args: opts.args ?? [] }
     const session: Session = {
       info: { ...opts.meta, ptyId: id, createdAt: Date.now() },
@@ -162,6 +169,8 @@ export function createSessionRegistry(host: SessionHost) {
         emit({ type: 'data', ptyId: id, data })
       })
       proc.onExit(({ exitCode }) => {
+        processes.delete(proc)
+        if (!processes.size) { for (const resolve of exitWaiters) resolve(); exitWaiters.clear() }
         // Подготовка завершилась — запускаем основную команду. Если терминал закрыли (killPty) —
         // не запускаем, а сообщаем о выходе как обычно.
         if (!last && sessions.get(id) === session) {
@@ -217,6 +226,15 @@ export function createSessionRegistry(host: SessionHost) {
     for (const [id] of sessions) killPty(id)
   }
 
+  /** Sync kill убирает вкладку сразу; owner lease требует дождаться настоящего native exit. */
+  function stop(): Promise<void> {
+    stopping = true
+    for (const proc of [...processes]) proc.kill()
+    sessions.clear(); emitChanged()
+    const wait = processes.size ? new Promise<void>(resolve => { exitWaiters.add(resolve) }) : Promise.resolve()
+    return wait
+  }
+
   /** Хвост вывода без ANSI-кодов, последние `lines` строк. */
   function ptyTail(id: string, lines = 80): string {
     const raw = sessions.get(id)?.tail ?? ''
@@ -239,5 +257,5 @@ export function createSessionRegistry(host: SessionHost) {
     return s ? Date.now() - s.lastOutputAt : 0
   }
 
-  return { subscribe, listTerminals, terminalSnapshots, spawnPty, writePty, resizePty, killPty, killAll, ptyTail, isAlive, lastActivityAt, silentFor }
+  return { subscribe, listTerminals, terminalSnapshots, spawnPty, writePty, resizePty, killPty, killAll, stop, ptyTail, isAlive, lastActivityAt, silentFor }
 }

@@ -33,8 +33,10 @@ function desktop() {
   const state = {
     desktopInitialized: false, quitting: false,
     app: { isReady: () => true, getPath: () => '/unused', on: (_event: string, callback: () => void) => { handler = callback } },
+    assertProfileSchemas: () => { trace.push('schemas') },
     initializeEffectJournal: () => { trace.push('journal') },
     initializeDesktop: () => { trace.push('desktop'); initialized = true },
+    cleanupDesktop: async () => {},
     failDesktopStartup: (error: unknown) => { failures.push(error); state.quitting = true },
     showWindow: () => {
       if (!initialized) throw new TypeError('projects ещё не создан')
@@ -43,8 +45,8 @@ function desktop() {
   }
   const context = createContext(state)
   runInContext(javascript(registration.getText(source)), context)
-  const options = runInContext(javascript(`(${bootstrap.arguments[0].getText(source)})`), context) as { start(context: { dataDir: string; owner: { instanceId: string } }): Promise<void> }
-  return { state, failures, trace, start: () => options.start({ dataDir: '/unused', owner: { instanceId: 'test' } }), activate: () => handler(), shows: () => shows }
+  const options = runInContext(javascript(`(${bootstrap.arguments[0].getText(source)})`), context) as { start(context: { dataDir: string; owner: { instanceId: string }; deferCleanup(callback: () => Promise<void>): void }): Promise<void> }
+  return { state, failures, trace, start: () => options.start({ dataDir: '/unused', owner: { instanceId: 'test' }, deferCleanup() {} }), activate: () => handler(), shows: () => shows }
 }
 
 test('second-instance между Electron ready и приобретением profile не создаёт окно', () => {
@@ -62,7 +64,7 @@ test('second-instance во время initializer ждёт готовность;
   host.activate()
   assert.equal(host.shows(), 1)
   assert.deepEqual(host.failures, [])
-  assert.deepEqual(host.trace, ['journal', 'desktop'])
+  assert.deepEqual(host.trace, ['schemas', 'journal', 'desktop'])
 })
 
 test('second-instance после запроса quit не создаёт окно даже у готового Desktop', async () => {
@@ -87,5 +89,5 @@ test('journal preflight failure не вызывает Desktop initializer/backup
   const host = desktop(); const error = new Error('future journal')
   host.state.initializeEffectJournal = () => { throw error }
   await assert.rejects(host.start, value => value === error)
-  assert.deepEqual(host.trace, []); assert.deepEqual(host.failures, [error])
+  assert.deepEqual(host.trace, ['schemas']); assert.deepEqual(host.failures, [error])
 })

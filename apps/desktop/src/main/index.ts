@@ -12,12 +12,13 @@ import { defaultSocketPath, validateAttachments, coordinatorsToClose, getAgent, 
 import { sessionRegistry, writePty, killPty, killAll, silentFor, lastActivityAt, isAlive, setPtyWindow } from './pty'
 import { startWorker, startCoordinator, startAssistant, returnToWork, workerPath, pruneLaunchTempFiles, type WorkerEnvContext } from './worker'
 import { assistantCwd, assistantEnv, assistantLaunch } from './assistant'
-import { createAssistantConversation } from './assistant-conversation'
+import { createAssistantConversation, stopAssistantConversations } from './assistant-conversation'
+import { disposeAgentLauncher } from './agent-launch'
 import { AssistantSession } from './assistant-session'
 import { transcriptEnv } from './transcripts'
 import { workflowServices } from './workflow-services'
-import type { ResolveOutcome } from '@orca-board/runtime'
-import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createRecoveryCommands, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, createProjectGitCommands, createRunCommands, createAgentCommands, createSessionCommands, createSessionWriterLeases, createAssistantCommands, registeredProject, isRegisteredProjectCurrent, obsoleteEffect, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
+import type { ResolveOutcome, ProfileRuntime } from '@orca-board/runtime'
+import { createDialogRepository, DIALOGS_FILE, startProfileRuntime, createRuntimeServices, assertProfileSchemas, createLegacySocketDeps, createRecoveryCommands, createBoardCommands, createAgentSelection, createGlobalTaskCommands, createGlobalTaskRemoval, createCoordinatorCommands, createCoordinatorOperations, createWorkerCommands, createWorkerOperations, createTaskWorkerLifecycle, createReviewCommands, createHumanRequestCommands, createReviewOperations, createProfileCommands, createProjectConfigCommands, createWorkflowAssistantServices, createRuleCommands, createStatsCommands, statsProject, isStatsProjectCurrent, statsProjectDeps, createFileCommands, createProjectGitCommands, createRunCommands, createAgentCommands, createSessionCommands, createSessionWriterLeases, createAssistantCommands, registeredProject, isRegisteredProjectCurrent, obsoleteEffect, type ReviewOperationHost, type ReviewProject, type CoordinatorProject, type WorkerProject } from '@orca-board/runtime'
 import type { BoardCommands, GlobalTaskCommands, CoordinatorCommands, WorkerCommands, ReviewCommands, HumanRequestCommands, ClientCommandContext, ProfileCommands, ProjectConfigCommands, RuleCommands, StatsCommands, FileCommands, ProjectGitCommands, RunCommands, AgentCommands, SessionCommands, AssistantCommands, RecoveryCommands } from '@orca-board/contracts'
 import { registerDesktopBoardCommands } from './board-commands'
 import { registerDesktopGlobalTaskCommands } from './global-task-commands'
@@ -52,7 +53,7 @@ import { projectFileServices } from './project-files'
 import { currentBranch } from './git'
 import { mergeTarget, RunBranchSync } from './run-branch'
 import { runImagesRoot, revealTaskAttachment, openTaskAttachment } from './run-images'
-import { startSocketServer, askWaiting } from './socket'
+import { startSocketServer, askWaiting, stopAgentSocket } from './socket'
 import { ProjectManager, runnableWorkflow } from './projects'
 import { writeFileAtomic } from './persistence'
 import { agentInfos, assertAgentUsable, missingRoleText, pickRole } from './agents'
@@ -108,6 +109,9 @@ else app.on('second-instance', () => { if (desktopInitialized && !quitting) show
 
 let win: BrowserWindow | null = null
 let windowFullscreen = false
+let runtimeServices: ReturnType<typeof createRuntimeServices<AppSettings, AppSettingsPatch>>
+let desktopRuntime: ProfileRuntime<void> | undefined
+let desktopCleanup: Promise<void> | undefined
 let projects: ProjectManager
 let recoveryCommands: RecoveryCommands
 let boardCommands: BoardCommands
@@ -291,10 +295,20 @@ function liveWorkerCount(): number {
   return projects.loadedStores().reduce((n, [, store]) => n + store.activeDispatches().filter((d) => isAlive(d.ptyId)).length, 0)
 }
 
-function quitNow(): void {
+function cleanupDesktop(): Promise<void> {
+  if (desktopCleanup) return desktopCleanup
   quitting = true
   assistantSession.dispose()
-  killAll()
+  desktopCleanup = Promise.all([stopAgentSocket(), runtimeServices?.stop(), stopAssistantConversations(), sessionRegistry.stop(), gitProcesses.stop()])
+    .then(() => { disposeAgentLauncher() })
+  void desktopCleanup.catch(() => { desktopCleanup = undefined })
+  return desktopCleanup
+}
+
+async function quitNow(): Promise<void> {
+  quitting = true
+  await cleanupDesktop()
+  await desktopRuntime?.stop()
   // Обновление скачано и установка при выходе не снята — её установщик сам завершит приложение.
   if (updater.installOnQuit()) return
   app.quit()
@@ -317,7 +331,7 @@ async function requestQuit(): Promise<void> {
     }
     const parent = win && !win.isDestroyed() ? win : null
     const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts)
-    if (response === 0) quitNow()
+    if (response === 0) await quitNow()
   } finally {
     confirmingQuit = false
   }
@@ -367,130 +381,16 @@ function takeJustUpdated(): string | null {
  * Окружение агентов прогона `runId`: роли, правила и разрешения — из типа его глобальной задачи
  * (`projects.resolveRun`); без прогона («Входящие») — из типа проекта по умолчанию.
  */
-function executionContextFor(projectId: string) {
-  const captured = registeredProject(projects, projectId)
-  if (!captured) throw new Error(`project not found: ${projectId}`)
-  return { projectId, isCurrent: () => isRegisteredProjectCurrent(projects, captured) }
-}
-
-function ctx(projectId: string, runId?: string): WorkerEnvContext {
-  return typeCtx(projectId, projects.resolveRun(projectId, runId))
-}
-
-function typeCtx(projectId: string, type: ResolvedRunType): WorkerEnvContext {
-  return {
-    ...executionContextFor(projectId),
-    socketPath: SOCKET_PATH,
-    projectId,
-    permissionMode: type.permissionMode,
-    roles: type.roles,
-    typeTitle: type.title,
-    agentRules: type.agentRules,
-    runImagesRoot: runImagesRoot(app.getPath('userData')),
-    ...(runnableWorkflow(type.workflow) ? { workflow: runnableWorkflow(type.workflow) } : {})
-  }
-}
-
-/** Агенты с учётом настроек проекта; refresh — пересканировать PATH. */
-function projectAgents(projectId: string, refresh = false): AgentInfo[] {
-  return agentInfos(projects.get(projectId)?.enabledAgents, refresh)
-}
-
-/** Снимки показа проекта (`<userData>/showcase`, `showcase-snapshot.ts`): пишет `worker.done`, читают IPC `showcase:*`. */
-function showcaseSnapshots(projectId: string): ShowcaseSnapshots {
-  return { root: showcaseSnapshotsRoot(app.getPath('userData')), projectId }
-}
-
-function resolveProject(projectId?: string): { id: string; root: string; store: TaskStore } {
-  const p = projectId ? projects.get(projectId) : projects.active()
-  if (!p) throw projectId ? new Error(`project not found: ${projectId}`) : new OrcaError('projects.none')
-  return { id: p.id, root: p.root, store: projects.store(p.id) }
-}
-
-/** Legacy socket/workflow выбирают проект здесь, проверки и orchestration выполняет runtime. */
-function runWorker(taskId: string, projectId?: string, cols?: number, rows?: number, opts: { roleId?: string } = {}): ReturnType<typeof startWorker> {
-  const p = resolveProject(projectId)
-  return workerOperations.start(workerProject(p.id)!, taskId, { cols, rows, roleId: opts.roleId })
-}
-
-/** Host предоставляет ports конкретного проекта; создание callback не запускает workflow. */
-function workerProject(projectId: string): WorkerProject | undefined {
-  const project = projects.get(projectId)
-  return project ? { ...executionContextFor(projectId), store: projects.store(projectId), root: project.root,
-    environment: runId => ctx(projectId, runId), agents: () => projectAgents(projectId), workflow: workflowDeps(projectId) } : undefined
-}
-
-/**
- * Исполнитель воркфлоу проекта: store, репозиторий, тип прогона задачи (роли и граф) и запуск воркера
- * (docs/workflow.md). Граф будущей версии не исполняется — прогон без снимка пойдёт по дефолтному по ролям.
- */
-function workflowDeps(projectId: string): WorkflowDeps {
-  const p = resolveProject(projectId)
-  return {
-    ...executionContextFor(projectId), store: p.store,
-    repoRoot: p.root,
-    run: (runId) => {
-      const t = projects.resolveRun(p.id, runId)
-      const workflow = runnableWorkflow(t.workflow)
-      return { roles: t.roles, ...(workflow ? { workflow } : {}) }
-    },
-    startWorker: (taskId, opts) => runWorker(taskId, p.id, undefined, undefined, opts),
-    mergeTarget: (task) => mergeTarget(p.store, p.root, task, executionContextFor(projectId))
-  }
-}
-
-/**
- * Исполнитель воркфлоу глобальных задач проекта (`workflow-run.ts`): те же store, тип прогона и запуск воркера, плюс
- * координатор (его перезапускает граф на входе в «Работу»).
- */
-function runWorkflowDeps(projectId: string): RunWorkflowDeps {
-  const p = resolveProject(projectId)
-  const legacy = workflowDeps(projectId)
-  return {
-    ...executionContextFor(projectId), store: p.store,
-    repoRoot: p.root,
-    run: legacy.run,
-    startWorker: legacy.startWorker,
-    isAlive,
-    // Без `startRunWorkflow`: граф уже стоит на «Работе», повторный вход не нужен (и зациклил бы ensureCoordinator).
-    startCoordinator: async (runId) => {
-      await startCoordinator(p.store, p.root, ctx(p.id, runId), '', undefined, undefined, [], runId)
-    },
-    ...(legacy.mergeTarget ? { mergeTarget: legacy.mergeTarget } : {})
-  }
-}
-
-/**
- * Шаги воркфлоу по событиям store. Не внутри commit, где пришло событие: иначе `orca-board done` ждал бы мержа
- * и запуска проверки, а вложенные commit перемешали бы порядок событий у подписчиков. Каждое событие обрабатывает ровно один
- * исполнитель: граф прогона (проверки и вопросы этапов) — `workflow-run.ts`, старый формат и путь подзадачи — `workflow.ts`;
- * чужие задачи каждый пропускает по `taskEngine`.
- */
-function runWorkflowEvents(projectId: string, events: OrcaEvent[]): void {
-  if (!events.some(e => e.type === 'worker_done' || e.type === 'escalation' || e.type === 'question_answered')) return
-  const deps = runWorkflowDeps(projectId)
-  setImmediate(() => {
-    if (!deps.isCurrent?.()) return
-    void workflowServices.forProject(deps).handleEvents(events).catch(error => {
-      if (!obsoleteEffect(error) && deps.isCurrent?.()) console.error(`[orca] воркфлоу (${projectId}):`, error)
-    })
-  })
-}
-
-/**
- * Доска проекта открыта впервые за запуск: подзадачи, чей эффект (мерж, git, конец) или переход после `done` прервал
- * выход приложения, доводятся до ожидания (`resumeStuckStages`). В `setImmediate`: store открывается посреди чужого вызова
- * (IPC, сокет): отложенный запуск сохраняет порядок событий, эффекты дальше выполняются асинхронно.
- */
-function resumeProjectStages(projectId: string): void {
-  const deps = runWorkflowDeps(projectId)
-  setImmediate(() => {
-    if (!deps.isCurrent?.()) return
-    void workflowServices.forProject(deps).resumeStuckStages().catch(error => {
-      if (!obsoleteEffect(error) && deps.isCurrent?.()) console.error(`[orca] воркфлоу: не удалось добрать прерванные этапы (${projectId}):`, error)
-    })
-  })
-}
+const executionContextFor = (...args: Parameters<typeof runtimeServices.executionContextFor>) => runtimeServices.executionContextFor(...args)
+const ctx = (...args: Parameters<typeof runtimeServices.ctx>) => runtimeServices.ctx(...args)
+const typeCtx = (...args: Parameters<typeof runtimeServices.typeCtx>) => runtimeServices.typeCtx(...args)
+const projectAgents = (...args: Parameters<typeof runtimeServices.projectAgents>) => runtimeServices.projectAgents(...args)
+const showcaseSnapshots = (...args: Parameters<typeof runtimeServices.showcaseSnapshots>) => runtimeServices.showcaseSnapshots(...args)
+const resolveProject = (...args: Parameters<typeof runtimeServices.resolveProject>) => runtimeServices.resolveProject(...args)
+const runWorker = (...args: Parameters<typeof runtimeServices.runWorker>) => runtimeServices.runWorker(...args)
+const workerProject = (...args: Parameters<typeof runtimeServices.workerProject>) => runtimeServices.workerProject(...args)
+const workflowDeps = (...args: Parameters<typeof runtimeServices.workflowDeps>) => runtimeServices.workflowDeps(...args)
+const runWorkflowDeps = (...args: Parameters<typeof runtimeServices.runWorkflowDeps>) => runtimeServices.runWorkflowDeps(...args)
 
 /**
  * Решение по задаче на этапе проверки (`review accept|reject`, «Принять»/«Вернуть» на карточке проверки): проверка ветки
@@ -503,38 +403,9 @@ function reviewDecision(projectId: string, taskId: string, decision: 'accept' | 
 }
 
 /** Явный project port одинаков для IPC и callbacks socket; выбор окна не попадает в runtime. */
-function reviewProject(projectId: string): ReviewProject | undefined {
-  const project = projects.get(projectId)
-  return project ? { ...executionContextFor(projectId), store: projects.store(projectId), root: project.root, workflow: runWorkflowDeps(projectId) } : undefined
-}
-
-async function runCoordinator(
-  objective: string,
-  projectId?: string,
-  cols?: number,
-  rows?: number,
-  images: Attachment[] = [],
-  runId?: string,
-  typeId?: string
-): Promise<string> {
-  const p = resolveProject(projectId)
-  return (await coordinatorOperations.start(coordinatorProject(p.id)!, objective, cols, rows, images, runId, typeId)).ptyId
-}
-
-/** Host собирает ports одного явного проекта; runtime не знает выбора проекта в окне. */
-function coordinatorProject(projectId: string): CoordinatorProject | undefined {
-  const project = projects.get(projectId)
-  if (!project) return undefined
-  return {
-    ...executionContextFor(projectId), store: projects.store(projectId), root: project.root,
-    environment: runId => ctx(projectId, runId),
-    newRunEnvironment: typeId => {
-      const type = projects.runType(projectId, typeId)
-      return { ...typeCtx(projectId, projects.resolveType(projectId, type.typeId)), type }
-    },
-    workflow: runWorkflowDeps(projectId)
-  }
-}
+const reviewProject = (...args: Parameters<typeof runtimeServices.reviewProject>) => runtimeServices.reviewProject(...args)
+const runCoordinator = (...args: Parameters<typeof runtimeServices.runCoordinator>) => runtimeServices.runCoordinator(...args)
+const coordinatorProject = (...args: Parameters<typeof runtimeServices.coordinatorProject>) => runtimeServices.coordinatorProject(...args)
 
 /** Чат живёт независимо от окна и выбранного проекта. Amp/Shell используют отдельный PTY. */
 const assistantSession = new AssistantSession({
@@ -567,76 +438,6 @@ function removeGlobalTask(p: { id: string; store: TaskStore; root: string }, run
   return globalTaskRemoval({ ...p, ...executionContextFor(p.id) }, runId, cascade)
 }
 
-/** Раз в минуту: живой воркер без вывода дольше STUCK_MS → эскалация. */
-function watchStuck(): void {
-  setInterval(() => {
-    for (const [, store] of projects.loadedStores()) {
-      for (const d of store.activeDispatches()) {
-        if (!isAlive(d.ptyId)) continue
-        const silent = silentFor(d.ptyId)
-        if (silent > STUCK_MS) store.markStuck(d.id, silent)
-      }
-    }
-  }, 60_000)
-}
-
-/**
- * Раз в 5 с: терминал координатора завершённого прогона (run_done), чей агент сам не выходит
- * после финального ответа (Codex), закрывается после его сигнала `runs finish` и короткой тишины
- * (без сигнала — только после долгой тишины). Решение — в coordinatorsToClose, killPty идемпотентен.
- * Там же прогоны после run_done, чей координатор уже не жив (закрыли терминал, перезапуск приложения),
- * уходят на «Проверку» — settleIdleRuns.
- */
-function watchFinishedCoordinators(): void {
-  setInterval(() => {
-    for (const [projectId, store] of projects.loadedStores()) {
-      const snap = store.snapshot()
-      const due = coordinatorsToClose({
-        ...snap,
-        isDone: (status) => store.columnKind(status) === 'done',
-        lingers: (agent) => (agent ? getAgent(agent)?.lingersAfterAnswer === true : false),
-        lastActivityAt,
-        now: Date.now()
-      })
-      for (const { ptyId } of due) killPty(ptyId)
-      store.settleIdleRuns(isAlive)
-      // Воркфлоу прогона: координатор умер, не закрыв этап `stage finish` — этап закрывается без сводки.
-      if (snap.runs.some(hasIdleStage)) {
-        try {
-          const deps = runWorkflowDeps(projectId)
-          void settleIdleRunStages(deps).catch(error => { if (!obsoleteEffect(error) && deps.isCurrent?.()) console.error(`[orca] закрытие этапа (${projectId}):`, error) })
-        } catch (e) {
-          // Проект могли закрыть между тиками; исключение из таймера уронило бы main.
-          console.error(`[orca] воркфлоу прогона: не удалось закрыть этап без координатора (${projectId}):`, (e as Error).message)
-        }
-      }
-    }
-  }, 5_000)
-}
-
-/** Пауза между текстом и Enter: иначе TUI агента принимает Enter за часть вставки и не отправляет сообщение. */
-const SUBMIT_DELAY_MS = 150
-
-/**
- * Ответ на вопрос воркера, чей `orca-board ask` уже не ждёт (инструмент агента оборвал команду по
- * таймауту — человек отвечает дольше; или `--no-wait`): в терминал живого воркера — короткий пинок с командой,
- * по которой он заберёт ответ сам (основной путь — ask/переподключение). Ждёт ask — ответ уйдёт через сокет.
- */
-function deliverAnswers(projectId: string, events: OrcaEvent[]): void {
-  const store = projects.store(projectId)
-  for (const e of events) {
-    if (e.type !== 'question_answered' || !e.dispatchId) continue
-    const questionId = String(e.payload.questionId ?? '')
-    if (askWaiting(questionId)) continue
-    const d = store.getDispatch(e.dispatchId)
-    if (!d || d.endedAt || !isAlive(d.ptyId)) continue
-    const requestId = typeof e.payload.requestId === 'string' ? e.payload.requestId : undefined
-    writePty(d.ptyId, answerNudge(questionId, requestId))
-    setTimeout(() => writePty(d.ptyId, '\r'), SUBMIT_DELAY_MS)
-  }
-}
-
-/** Отправить в renderer, когда он сможет принять: новое окно ещё грузится. */
 function sendWhenReady(w: BrowserWindow, existed: boolean, channel: string, payload: unknown): void {
   if (existed && !w.webContents.isLoading()) w.webContents.send(channel, payload)
   else w.webContents.once('did-finish-load', () => w.webContents.send(channel, payload))
@@ -869,20 +670,27 @@ async function initializeDesktop(): Promise<void> {
   // До первого запуска агентов: system prompt прошлых запусков на Windows (`win32Launch`) больше никто не читает.
   pruneLaunchTempFiles()
   projects = new ProjectManager(app.getPath('userData'))
-  const authorize = (context: ClientCommandContext) => Boolean(win && !win.isDestroyed()
+  const authorize = (context: ClientCommandContext) => Boolean(!quitting && win && !win.isDestroyed()
     && context.clientId === `desktop:${win.webContents.id}` && context.actor.kind === 'operator' && context.actor.id === 'local-user')
-  sessionCommands = createSessionCommands({ authorize, project: id => projects.get(id), sessions: sessionRegistry, journal: getEffectJournal,
-    leases: sessionWriterLeases, defaultCwd: homedir(),
-    env: project => ({ ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}), ORCA_SOCKET: SOCKET_PATH,
-      ...(project ? { ORCA_PROJECT: project.id } : {}), PATH: workerPath() }),
-    onExit: (id, code) => projects.loadedStores().forEach(([, store]) => store.ptyExited(id, code))
+  runtimeServices = createRuntimeServices<AppSettings, AppSettingsPatch>({ projects,
+    dataDir: app.getPath('userData'), socketPath: SOCKET_PATH, ownerId: requiredEffectJournal().ownerId, version: app.getVersion(),
+    resources: executionResources, processes: gitProcesses, journal: requiredEffectJournal(),
+    workers: { startWorker, startCoordinator, returnToWork, startAssistant, workerPath }, sessions: sessionRegistry,
+    discovery: { agentInfos }, authorize, writerLeases: sessionWriterLeases,
+    askWaiting, stuckMs: STUCK_MS,
+    messages: { execution: { error: (key, params) => new OrcaError(key, params) },
+      workflow: { error: (key, params) => new OrcaError(key, params), text: mt,
+        displayError: error => error instanceof OrcaError ? mt(error.key, error.params) : error instanceof Error ? error.message : String(error) },
+      selection: { error: (key, params) => new OrcaError(key, params) }, error: key => new OrcaError(key) },
+    profile: { settingsKeys: ['keepInBackground', 'updates'], workflowAssistant: createWorkflowAssistantServices({ messages: { Error: OrcaError } }) },
+    sessionEnv: projectId => ({ ...(app.isPackaged ? { ORCA_NODE: process.execPath } : {}), ORCA_SOCKET: SOCKET_PATH,
+      ...(projectId ? { ORCA_PROJECT: projectId } : {}), PATH: workerPath() })
   })
+  ;({ sessionCommands, profileCommands, projectConfigCommands, recoveryCommands, projectGitCommands, runCommands, agentCommands,
+    boardCommands, globalTaskCommands, globalTaskRemoval, coordinatorCommands, coordinatorOperations, workerCommands, workerOperations,
+    reviewCommands, humanRequestCommands, reviewOperations } = runtimeServices)
   assistantCommands = createAssistantCommands({ authorize, session: assistantSession,
     buildWorkflowContext: raw => buildWorkflowAssistantContext(projects, raw) })
-  profileCommands = createProfileCommands<AppSettings, AppSettingsPatch>({ manager: () => projects, authorize,
-    settingsKeys: ['keepInBackground', 'updates'], workflowAssistant: createWorkflowAssistantServices({ messages: { Error: OrcaError } }),
-    exportMeta: () => ({ appVersion: app.getVersion(), exportedAt: new Date().toISOString() }) })
-  projectConfigCommands = createProjectConfigCommands({ manager: () => projects, authorize })
   ruleCommands = createRuleCommands({ project: id => projects.get(id), authorize, rules: ruleServices })
   statsCommands = createStatsCommands({ project: id => statsProject(projects, id), authorize,
     isCurrent: project => isStatsProjectCurrent(projects, project), stats: statsServices,
@@ -899,55 +707,6 @@ async function initializeDesktop(): Promise<void> {
       reveal: path => { shell.showItemInFolder(path) }
     }
   })
-  recoveryCommands = createRecoveryCommands({ journal: requiredEffectJournal, processes: gitProcesses, authorize,
-    project: id => { const project = projects.get(id); return project ? { ...executionContextFor(id), id, root: project.root, store: projects.store(id) } : undefined },
-    isCurrent: project => project.isCurrent?.() === true })
-  projectGitCommands = createProjectGitCommands({ project: id => projects.get(id), authorize,
-    isCurrent: project => projects.get(project.id) === project, git: executionResources.git, liveAgents: liveAgentCount })
-  runCommands = createRunCommands({ project: id => projects.get(id) ? { store: projects.store(id) } : undefined, authorize })
-  agentCommands = createAgentCommands({ project: id => projects.get(id), authorize, discovery: { agentInfos },
-    preflight: { validate: validateWorkerRole }, resolveRun: (id, runId) => projects.resolveRun(id, runId), store: id => projects.store(id) })
-  const selection = createAgentSelection({ error: (key, params) => new OrcaError(key, params) })
-  const removal = {
-    resources: executionResources, dataDir: app.getPath('userData'),
-    messages: { error: (key: 'global.coordinatorAlive') => new OrcaError(key) },
-    sessions: { isAlive, kill: killPty }
-  }
-  globalTaskRemoval = createGlobalTaskRemoval(removal)
-  boardCommands = createBoardCommands({
-    project: id => projects.get(id) ? {
-      store: projects.store(id), roles: () => projects.resolveRun(id), agents: () => projectAgents(id)
-    } : undefined,
-    authorize, selection
-  })
-  globalTaskCommands = createGlobalTaskCommands({
-    ...removal, authorize, selection,
-    isCurrent: project => project.isCurrent?.() === true,
-    project: id => {
-      const project = projects.get(id)
-      return project ? {
-        ...executionContextFor(id), store: projects.store(id), root: project.root,
-        runType: typeId => projects.runType(id, typeId),
-        roles: runId => projects.resolveRun(id, runId), agents: () => projectAgents(id)
-      } : undefined
-    }
-  })
-  const coordinatorHost = {
-    workers: { startCoordinator, returnToWork }, workflow: workflowServices.run,
-    resources: executionResources,
-    messages: { error: (key: 'workflow.runFinished' | 'workflow.coordinatorNotRunning') => new OrcaError(key) }
-  }
-  coordinatorOperations = createCoordinatorOperations(coordinatorHost)
-  coordinatorCommands = createCoordinatorCommands({ ...coordinatorHost, project: coordinatorProject, authorize, isCurrent: project => project.isCurrent?.() === true })
-  const workerHost = { workers: { startWorker }, workflow: workflowServices.task,
-    preflight: { validate: validateWorkerRole }, lifecycle: taskWorkerLifecycle, resources: executionResources }
-  workerOperations = createWorkerOperations(workerHost)
-  workerCommands = createWorkerCommands({ ...workerHost, project: workerProject, authorize, isCurrent: project => project.isCurrent?.() === true })
-  const reviewHost: ReviewOperationHost = { workflow: workflowServices, resources: executionResources,
-    lifecycle: taskWorkerLifecycle, messages: { error: (key, params) => new OrcaError(key, params) } }
-  reviewOperations = createReviewOperations(reviewHost)
-  reviewCommands = createReviewCommands({ ...reviewHost, project: reviewProject, authorize, isCurrent: project => project.isCurrent?.() === true })
-  humanRequestCommands = createHumanRequestCommands({ ...reviewHost, project: reviewProject, authorize, isCurrent: project => project.isCurrent?.() === true })
   syncMainAppearance()
   setMainLocale(projects.settings().language)
   refreshApplicationMenu()
@@ -962,16 +721,10 @@ async function initializeDesktop(): Promise<void> {
   projects.onChange((projectId, store) => {
     if (win && !win.isDestroyed()) win.webContents.send('board:changed', { projectId, snapshot: store.snapshot() })
     // Любой путь в done (review accept, task move, tasks:move из UI) проходит через commit store — ловим здесь.
-    taskWorkerLifecycle.closeDoneWorkers(store)
     // Закрытие и «Сделано» глобальной задачи — тоже любой путь (runs finish, перенос, выход координатора).
-    const project = projects.get(projectId)
-    if (project) void runBranchSync.sync(store, project.root, executionContextFor(projectId)).catch(error => { if (!obsoleteEffect(error)) console.error(`[orca] уборка ветки прогона (${projectId}):`, error) })
     refreshTray()
   })
   projects.onEvents(notify)
-  projects.onEvents(deliverAnswers)
-  projects.onEvents(runWorkflowEvents)
-  projects.onStoreOpened(resumeProjectStages)
   // Настройки/проекты/типы/роли/шаблоны нод правит и CLI/ассистент через сокет — окно должно узнать об этом
   // так же, как о своих собственных IPC-правках (docs/assistant-chat.md → «Настройки»).
   projects.onDataChange(() => {
@@ -1003,9 +756,7 @@ async function initializeDesktop(): Promise<void> {
         quitting = false
       },
       quit: () => {
-        assistantSession.dispose()
-        killAll()
-        app.quit()
+        void cleanupDesktop().then(async () => { await desktopRuntime?.stop(); app.quit() }).catch(error => console.error(error))
       },
       takeJustUpdated
     }
@@ -1016,96 +767,9 @@ async function initializeDesktop(): Promise<void> {
   })
   updater.start()
   registerIpc()
-  startSocketServer(SOCKET_PATH, {
-    libraryTaskTypes: () => ({ taskTypes: projects.taskTypes(), defaultTypeId: projects.defaultTaskTypeId() }),
-    workflowGet: (id) => projects.workflowGet(id),
-    workflowValidate: (definition, selection) => projects.workflowValidate(definition, selection),
-    workflowSet: (id, revision, definition) => projects.workflowSet(id, revision, definition),
-    workflowCreate: (input) => projects.workflowCreate(input),
-    resolve: (projectId) => {
-      const p = resolveProject(projectId)
-      return {
-        store: p.store,
-        startWorker: (taskId) => runWorker(taskId, p.id),
-        stopWorker: (taskId) => workerOperations.stop({ ...p, projectId: p.id }, taskId),
-        review: (taskId) => reviewOperations.info(reviewProject(p.id)!, taskId),
-        accept: (taskId, decision) => reviewDecision(p.id, taskId, 'accept', decision),
-        reject: (taskId, feedback) => reviewDecision(p.id, taskId, 'reject', feedback),
-        finishStage: (runId, summary, nodeId) => finishRunStage(runWorkflowDeps(p.id), runId, summary, nodeId),
-        decide: (taskId, option, reason) => runDecision(runWorkflowDeps(p.id), taskId, option, reason),
-        escalateDecision: (taskId, reason) => escalateDecision(runWorkflowDeps(p.id), taskId, reason),
-        resolveRequest: (id, resolution) => resolveRequest(p.id, id, resolution),
-        startCoordinator: (objective, runId, typeId) => runCoordinator(objective, p.id, undefined, undefined, [], runId, typeId),
-        deleteGlobalTask: (runId, cascade) => removeGlobalTask(p, runId, cascade),
-        snapshotShowcase: (dispatchId, files, text) => snapshotDispatchShowcase(p.store, showcaseSnapshots(p.id), dispatchId, files, text),
-        agents: () => projectAgents(p.id),
-        resolveRun: (runId) => projects.resolveRun(p.id, runId),
-        taskTypes: () => ({ taskTypes: projects.projectTaskTypes(p.id), defaultTypeId: projects.projectDefaultTypeId(p.id) }),
-        runType: (typeId) => projects.runType(p.id, typeId),
-        saveTaskTypeRules: (typeId, roleId, text) => projects.saveTaskTypeRules(typeId, roleId, text),
-        columns: () => projects.columns(p.id),
-        workflow: (typeId) => projects.taskTypeWorkflow(typeId ?? projects.projectDefaultTypeId(p.id)),
-        // Настройки: библиотека типов задач, роли, шаблоны нод — общая для всех проектов, `p` только определяет,
-        // через какой проект команда пришла (docs/assistant-chat.md → «2. Контракт CLI/сокета для настроек»).
-        typesCreate: (input) => projects.saveTaskType({ ...input, settings: {} }),
-        typesRename: (id, patch) => projects.renameTaskType(id, patch),
-        typesSetDefault: (id) => projects.setDefaultTaskType(id),
-        typesDuplicate: (id) => projects.duplicateTaskType(id),
-        typesUsage: (id) => projects.taskTypeUsage(id),
-        typesDelete: (id) => projects.deleteTaskType(id),
-        rolesAdd: (typeId, input) => projects.addRole(typeId, input),
-        rolesUpdate: (typeId, roleId, patch) => projects.updateRole(typeId, roleId, patch),
-        rolesRemove: (typeId, roleId) => projects.removeRole(typeId, roleId),
-        permissionMode: (typeId) => projects.permissionMode(typeId),
-        setPermissionMode: (typeId, mode) => {
-          projects.patchTaskType(typeId, { permissionMode: mode })
-          return projects.permissionMode(typeId)
-        },
-        nodeTemplates: () => projects.nodeTemplates(),
-        deleteNodeTemplate: (id) => projects.deleteNodeTemplate(id),
-        setActive: () => projects.setActive(p.id),
-        removeProject: () => {
-          projects.remove(p.id)
-          return { removed: p.id }
-        },
-        // Сокет уже сверил id с реестром агентов (project.agents.set в socket.ts) — здесь как есть.
-        setEnabledAgents: (ids) => projects.setEnabledAgents(p.id, ids as AgentKind[]),
-        setColumns: (columns) => projects.setColumns(p.id, columns),
-        setProjectTaskTypes: (input) => projects.setProjectTaskTypes(p.id, input),
-        projectRulesGet: (file) => readRule(p.root, file),
-        projectRulesSet: (file, text) => writeRule(p.root, file, text)
-      }
-    },
-    projects: () => {
-      const activeId = projects.active()?.id
-      const counts = projects.inProgressCounts()
-      return projects.list().map((p) => {
-        const type = projects.projectDefaultType(p.id)
-        return {
-          id: p.id,
-          name: p.name,
-          root: p.root,
-          active: p.id === activeId,
-          inProgress: counts[p.id] ?? 0,
-          defaultTypeId: type.id,
-          defaultTypeTitle: type.title
-        }
-      })
-    },
-    settings: () => projects.settings(),
-    // Как `app:setSettings` в registerIpc: язык, трей и апдейтер должны узнать о правке независимо от того,
-    // пришла ли она из renderer или от ассистента через `settings set`.
-    setSettings: (patch) => {
-      const settings = projects.setSettings(patch)
-      setMainLocale(settings.language)
-      refreshApplicationMenu()
-      refreshTray()
-      updater.settingsChanged()
-      return settings
-    }
-  })
-  watchStuck()
-  watchFinishedCoordinators()
+  startSocketServer(SOCKET_PATH, createLegacySocketDeps(runtimeServices, ruleServices, snapshotDispatchShowcase, () => {
+    setMainLocale(projects.settings().language); refreshApplicationMenu(); refreshTray(); updater.settingsChanged()
+  }))
   createTray({
     open: () => showWindow(),
     quit: () => void requestQuit(),
@@ -1131,22 +795,25 @@ function failDesktopStartup(error: unknown): void {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock || quitting) return
-  await startProfileRuntime({
+  desktopRuntime = await startProfileRuntime({
     dataDir: app.getPath('userData'),
     start: async context => {
       if (quitting) return
+      context.deferCleanup(cleanupDesktop)
       try {
+        assertProfileSchemas(context.dataDir)
         initializeEffectJournal(context.dataDir, context.owner.instanceId)
         await initializeDesktop()
         desktopInitialized = true
       } catch (error) {
-        // Частичный Desktop startup может уже открыть IPC/PTY: процесс выходит до освобождения guard.
+        // Даже частично созданные native resources закрываются до освобождения profile guard.
+        await cleanupDesktop()
         failDesktopStartup(error)
         throw error
       }
     }
   })
-  // Legacy IPC/socket живут до quit, поэтому Desktop удерживает ownership до выхода процесса.
+  // Native resources закрываются раньше lease; окна и системный updater остаются Desktop.
 }).catch(failDesktopStartup)
 
 // Cmd+Q, «Выйти» из меню приложения, app.quit() — всё идёт через подтверждение.
@@ -1157,11 +824,11 @@ app.on('before-quit', (e) => {
     return
   }
   e.preventDefault()
-  void requestQuit()
+  void requestQuit().catch(error => console.error(error))
 })
 
 app.on('window-all-closed', () => {
   // Фоновый режим: окно закрыто, приложение, PTY и уведомления живут; вернуться — Dock или трей.
   if (projects?.settings().keepInBackground ?? true) return
-  quitNow()
+  void quitNow().catch(error => console.error(error))
 })

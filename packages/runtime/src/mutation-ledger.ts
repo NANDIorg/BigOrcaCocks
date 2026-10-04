@@ -63,7 +63,7 @@ export function createMutationLedger(options: { dataDir: string; ownerId: string
       const key = JSON.stringify([input.actorId, input.clientId, input.id]); const digest = createHash('sha256').update(payload).digest('hex')
       const running = active.get(key); const previous = records.find(r => r.key === key)
       if (running && running.digest !== digest || previous && previous.digest !== digest) protocolError('protocol.requestConflict', 'Конфликт payload повторного запроса')
-      if (running) return running.promise.then(structuredClone)
+      if (running) return running.promise.then(value => structuredClone(value))
       if (previous) return structuredClone(previous.result)
       if (now() - input.issuedAt > ttl || input.issuedAt > now() + 60_000) protocolError('protocol.requestExpired', 'Срок безопасного повтора запроса истек')
       const retained = records.filter(r => r.result.status === 'uncertain' || now() - r.updatedAt <= ttl)
@@ -82,7 +82,7 @@ export function createMutationLedger(options: { dataDir: string; ownerId: string
         return structuredClone(result)
       })
       active.set(key, { digest, promise }); void promise.finally(() => active.delete(key)).catch(() => {})
-      return promise.then(structuredClone)
+      return promise.then(value => structuredClone(value))
     })
   }
   return {

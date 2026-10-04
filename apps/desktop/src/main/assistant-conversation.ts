@@ -8,3 +8,4 @@ const conversations = createAssistantConversationServices({
 })
 export const createAssistantConversation = conversations.create
 export const structuredLaunch = conversations.structuredLaunch
+export const stopAssistantConversations = conversations.stop

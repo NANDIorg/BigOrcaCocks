@@ -29,6 +29,40 @@ API здесь нет. Application services/runtime с явным project/client
 полный headless host и product-aware релизные инструменты выполняются следующими этапами.
 Web и самостоятельный терминальный чат CLI строятся после готовности этой базы.
 
+## Общая composition и самостоятельный Node host
+
+`createRuntimeServices` собирает workflow/lifecycle и command API из host ports.
+Desktop и `createOrcaRuntime` используют эту фабрику и общий `createAgentSocketServices`:
+переходы задач, review/merge, координаторы и старый agent CLI не имеют второго backend.
+Desktop сохраняет окна, уведомления, настройки updater и native file actions.
+Runtime импортируется без запуска daemon и без Electron/native PTY imports.
+
+`apps/headless` собирает установленный ESM artifact для Node24: runtime/core/contracts,
+skills и прежний plain JS agent CLI встроены; `node-pty` устанавливается только у host.
+Запуск получает canonical profile lease, read-only schema preflight до backup/миграций,
+общий graph и отдельный приватный operator HTTP endpoint на loopback. Ресурсы и
+профиль задаёт host, по умолчанию профиль `~/.orca-board/profiles/default`.
+Endpoint/token записываются в profile file с правами600; агент не получает operator token.
+Будущий Web host задаст проверенную server session через authenticate port.
+
+Operator protocol использует capabilities, request id/revision и persistent dedup;
+снимок устанавливает observer barrier до чтения. Reconnect/disconnect освобождает
+управление PTY, сохраняя процесс. Binary attachments передаются raw, RPC содержит
+только immutable client-bound upload ticket; ввод PTY имеет отдельную sequence
+и не пишет журнал на каждую клавишу. Ответы передаются с backpressure.
+Legacy agent socket сохраняет envelope/HELP, проверяет занятость endpoint перед
+удалением stale socket и закрывается вместе с собственными pending handlers.
+
+Stop закрывает ingress, timers/subscriptions, providers/PTY/Git и ждёт native exit
+до отдачи lease. Desktop делает тот же cleanup при quit и ошибке частичного startup.
+Node version backups располагаются отдельно по product, не меняют Desktop
+lastRunVersion/тост обновления и не сравнивают версии разных продуктов.
+
+Linux installed smoke вне workspace проверил настоящий PTY/Git, прежний CLI,
+observer snapshot, повтор writer packet ровно один раз, disconnect и owner restart
+без DISPLAY/Electron. Проверка финального artifact, client/UI и независимых
+релизных сборок остаётся итоговым этапом; нового Web UI здесь ещё нет.
+
 ## Общий Node runtime: хранение, резервные копии и Git
 
 `packages/runtime` (`@orca-board/runtime`) содержит существующие atomic file writes,

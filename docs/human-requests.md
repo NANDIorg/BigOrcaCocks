@@ -1,5 +1,10 @@
 # Запросы к человеку (`HumanRequest`)
 
+Ответы человеку и возобновление задач у Desktop и Node host проходят общие
+runtime commands/lifecycle. Старый agent socket использует ту же фабрику handlers,
+сохраняя ask/check envelope; отдельный operator endpoint не выдаёт агенту
+право recovery или управления чужим client writer lease.
+
 Всё, что ждёт решения человека, хранится как одна запись `HumanRequest`: вопрос воркера, сданный ответ
 задачи-ответа, упавший воркер, этап воркфлоу «человек» (`approval`, `docs/workflow.md`) и выбор ветки «Решения ИИ», когда агент не выбрал (`decision`). Статус хранится явно (`pending → resolved | cancelled`) и не выводится из колонок,
 вопросов или живости координатора. Колонка «Нужен ответ» на обеих досках, счётчик `GlobalTask.waiting`,

@@ -1,5 +1,10 @@
 # Двухуровневый канбан: глобальные задачи и подзадачи
 
+Desktop и самостоятельный Node host собирают один `createRuntimeServices` graph:
+global task/workers/review/merge и lifecycle callbacks общие. Operator clients
+имеют собственный project/dialog selection; observer snapshot не забирает события
+координатора. Disconnect не закрывает PTY/run и не удаляет worktree.
+
 Контракт слоя данных и API для UI (renderer пишется отдельно). Верхний уровень доски — **глобальные
 задачи**, внутри каждой — своя доска **подзадач** (обычных `Task`, на которых работают воркеры).
 Обе доски используют **реальные колонки проекта** (`Project.columns`, `columns list`), а не фиксированный

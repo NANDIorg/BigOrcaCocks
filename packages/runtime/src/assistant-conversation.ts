@@ -88,8 +88,20 @@ export interface ConversationServicesDeps {
 
 /** Каждый host задаёт своё окружение и сообщения; все provider conversations имеют отдельное состояние. */
 export function createAssistantConversationServices(deps: ConversationServicesDeps) {
+  const conversations = new Set<Conversation>()
+  let stopped = false
   return {
-    create(options: ConversationOptions): AssistantConversation { return new Conversation(options, deps) },
+    create(options: ConversationOptions): AssistantConversation {
+      if (stopped) throw new Error('Служба диалогов остановлена')
+      const conversation = new Conversation(options, deps); conversations.add(conversation)
+      void conversation.finished.then(() => conversations.delete(conversation))
+      return conversation
+    },
+    async stop(): Promise<void> {
+      stopped = true
+      const owned = [...conversations]; for (const conversation of owned) conversation.dispose()
+      await Promise.all(owned.map(conversation => conversation.finished))
+    },
     structuredLaunch(command: string, args: string[], env: NodeJS.ProcessEnv, platform = deps.platform) {
       return structuredLaunch(deps, command, args, env, platform)
     }
@@ -104,6 +116,8 @@ class Conversation implements AssistantConversation {
   private readonly ready: Promise<void>
   private child?: ChildProcessWithoutNullStreams
   private closed = false
+  readonly finished: Promise<void>
+  private finishExit!: () => void
   private failed = false
   private active = false
   private cancelling = false
@@ -136,7 +150,8 @@ class Conversation implements AssistantConversation {
     this.options = options
     this.deps = deps
     this.protocol = options.agent === 'claude' ? 'claude' : options.agent === 'codex' ? 'codex' : 'acp'
-    this.ready = Promise.resolve().then(() => this.start()).catch((error: unknown) => { this.fail(errorText(error)); throw error })
+    this.finished = new Promise(resolve => { this.finishExit = resolve })
+    this.ready = Promise.resolve().then(() => { if (this.closed) { this.finishExit(); return }; return this.start() }).catch((error: unknown) => { if (!this.child) this.finishExit(); this.fail(errorText(error)); throw error })
     // Создание синхронное: ошибка старта попадёт в snapshot, даже если send ещё не вызван.
     void this.ready.catch(() => undefined)
   }
@@ -475,6 +490,8 @@ class Conversation implements AssistantConversation {
     this.child.stdin.on('error', (error: Error) => this.fail(error.message))
     this.child.on('error', (error: Error) => this.fail(this.deps.messages('assistantTransport.startFailed', { command, error: error.message })))
     this.child.on('close', (code: number | null) => {
+      if (this.killTimer) { clearTimeout(this.killTimer); this.killTimer = undefined }
+      this.finishExit()
       if (!this.closed && !this.failed) this.fail(this.deps.messages('assistantTransport.processExited', { command, code: code ?? 'signal', detail: this.stderr.trim() }).trim())
       else if (this.replyFlushTimer) this.stopChild()
     })

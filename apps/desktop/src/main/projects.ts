@@ -2,11 +2,12 @@ import { createProjectServices } from '@orca-board/runtime'
 import type { AppSettings, AppSettingsPatch } from '../shared/ipc'
 import { OrcaError, mt } from './i18n'
 import { desktopProjectSettings } from './project-settings'
+import { gitProcesses } from './git'
 
 /** Единственный набор классов Desktop: instanceof сохраняется в IPC и сокете. */
 export const { ProjectManager, WorkflowValidationError } = createProjectServices<AppSettings, AppSettingsPatch>({
   messages: { Error: OrcaError, text: mt },
-  settings: desktopProjectSettings
+  settings: desktopProjectSettings, processes: gitProcesses
 })
 export type ProjectManager = InstanceType<typeof ProjectManager>
 export type WorkflowValidationError = InstanceType<typeof WorkflowValidationError>

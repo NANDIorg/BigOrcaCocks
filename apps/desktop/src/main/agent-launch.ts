@@ -8,3 +8,4 @@ const launcher = createAgentLauncher({
 process.once('exit', launcher.dispose)
 
 export const launchAgent = launcher.launchAgent
+export const disposeAgentLauncher = launcher.dispose

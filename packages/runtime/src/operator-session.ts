@@ -1,4 +1,5 @@
 import type { ClientCommandContext, OperatorCall, OperatorMetadata, OperatorReply } from '@orca-board/contracts'
+import type { AttachmentInput } from '@orca-board/core'
 import { clientCommandContextFrom } from './project-commands.ts'
 import { assertOperatorHello, protocolError, protocolObject, protocolText } from './operator-handshake.ts'
 import { operatorError, type MutationLedger } from './mutation-ledger.ts'
@@ -52,7 +53,7 @@ export function createOperatorSession(options: OperatorSessionOptions) {
       if (next.projectId) projectAllowed(next.projectId)
       selection = next
     },
-    async call(raw: unknown): Promise<OperatorReply> {
+    async call(raw: unknown, upload?: (id: string) => AttachmentInput): Promise<OperatorReply> {
       let id = ''
       try {
         guard(); const call = callFrom(raw); id = call.id; const descriptor = commands.get(call.method)
@@ -62,7 +63,16 @@ export function createOperatorSession(options: OperatorSessionOptions) {
         const invoke = async () => {
           guard(); if (call.projectId) projectAllowed(call.projectId)
           if (descriptor.mutation && call.revision !== options.getRevision(call.projectId, descriptor.scope === 'dialog' ? String(call.args[0]) : undefined)) protocolError('command.stale', 'Revision изменилась; обновите snapshot')
-          return await descriptor.invoke(structuredClone(context), call.args, call.projectId)
+          const materialize = (value: unknown): unknown => {
+            if (Array.isArray(value)) return value.map(materialize)
+            if (!protocolObject(value)) return value
+            if (Object.keys(value).length === 1 && typeof value.uploadId === 'string') {
+              if (!upload) protocolError('protocol.uploadExpired', 'Upload transport недоступен')
+              return upload(value.uploadId)
+            }
+            return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, materialize(item)]))
+          }
+          return await descriptor.invoke(structuredClone(context), call.args.map(materialize), call.projectId)
         }
         if (!descriptor.mutation) return { id, ok: true, result: structuredClone(await invoke()) }
         const outcome = await options.ledger.execute({ ...call, clientId: context.clientId, actorId: context.actor.id }, invoke)
@@ -70,10 +80,15 @@ export function createOperatorSession(options: OperatorSessionOptions) {
         return { id, ok: false, error: outcome.status === 'rejected' ? outcome.error : { code: 'protocol.outcomeUncertain' } }
       } catch (error) { return { id, ok: false, error: operatorError(error) } }
     },
-    subscribe(cursor: unknown): ObserverSubscription { guard(); const sub = options.events.subscribe(cursor, filter); subscriptions.add(sub); return sub },
+    subscribe(cursor: unknown): ObserverSubscription {
+      guard(); const source = options.events.subscribe(cursor, filter)
+      const sub = { take: source.take, close() { source.close(); subscriptions.delete(sub) } }; subscriptions.add(sub); return sub
+    },
     snapshot<T>(read: (context: ClientCommandContext, selection: { projectId?: string; dialogId?: string }) => T) {
       guard(); const result = options.events.snapshot(() => read(structuredClone(context), structuredClone(selection)), filter)
-      subscriptions.add(result.subscription); return result
+      const source = result.subscription
+      const sub = { take: source.take, close() { source.close(); subscriptions.delete(sub) } }; subscriptions.add(sub)
+      return { ...result, subscription: sub }
     },
     close(): void {
       if (closed) return; closed = true

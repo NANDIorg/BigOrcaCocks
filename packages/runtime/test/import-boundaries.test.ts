@@ -90,7 +90,7 @@ it('package entrypoint сохраняет данные в обычном Node б
     writeFileAtomic(process.argv[1], '{"headless":true}')
     if (readJsonFile(process.argv[1], 'test').status !== 'ok') process.exit(2)
     const git = createGitOperations({ error: key => new Error(key), untrackedLabel: () => 'Untracked:' })
-    if (git.projectBranchInfo(process.argv[2]).isGitRepo) process.exit(3)
+    if ((await git.projectBranchInfo(process.argv[2])).isGitRepo) process.exit(3)
     const messages = { Error, text: key => key }
     const { ProjectManager } = createProjectServices({ messages, settings: createRuntimeSettings(messages) })
     const manager = new ProjectManager(process.argv[2] + '/profile')

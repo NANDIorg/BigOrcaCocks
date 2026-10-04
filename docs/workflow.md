@@ -1,5 +1,11 @@
 # Воркфлоу задачи
 
+`createRuntimeServices` объединяет workflow effects, фоновые transitions и
+agent socket callbacks для Desktop и Node host. Shutdown отключает callbacks,
+отменяет owned Git и ждёт native providers/PTY до освобождения profile lease;
+late workflow results после начала stop отклоняются общим execution guard.
+Это перенос прежнего движка, без изменения workflow schema или agent HELP.
+
 Этот документ описывает внутренний граф приложения. **Два формата.** Версия 2 (`WORKFLOW_VERSION = 2`) — граф
 **глобальной задачи**: позицию на графе хранит `Run.stage`, подзадачи по графу не ходят; её контракт — в разделе
 «Воркфлоу глобальной задачи (версия 2)» ниже. Версия 1 — граф **по подзадачам**: каждая рабочая подзадача идёт по нему

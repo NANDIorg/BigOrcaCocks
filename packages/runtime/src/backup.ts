@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { join } from 'node:path'
 import { writeFileAtomic } from './persistence.ts'
 import { DIALOGS_FILE } from './dialog-repository.ts'
+import type { OperatorProduct } from '@orca-board/contracts'
 
 /** Сколько бэкапов хранится: старше удаляются при создании нового. */
 export const BACKUPS_KEEP = 3
@@ -53,7 +54,7 @@ export function readLastRunVersion(userData: string): string | undefined {
 }
 
 /** Копия projects.json, dialogs.json и boards/*.json до миграций, без разбора схемы. */
-export function copyStateTo(userData: string, version: string): string | undefined {
+export function copyStateTo(userData: string, version: string, backupRoot = join(userData, 'backups')): string | undefined {
   const files: Array<[string, string]> = []
   const projects = join(userData, PROJECTS_FILE)
   if (existsSync(projects)) files.push([projects, PROJECTS_FILE])
@@ -64,7 +65,7 @@ export function copyStateTo(userData: string, version: string): string | undefin
     for (const f of readdirSync(boards)) if (f.endsWith('.json')) files.push([join(boards, f), join('boards', f)])
   }
   if (files.length === 0) return undefined
-  const dir = join(userData, 'backups', dirName(version))
+  const dir = join(backupRoot, dirName(version))
   // Повторный бэкап той же версии (откат и новое обновление) заменяет старый целиком, а не смешивается с ним.
   rmSync(dir, { recursive: true, force: true })
   for (const [src, rel] of files) {
@@ -76,10 +77,10 @@ export function copyStateTo(userData: string, version: string): string | undefin
 }
 
 /** Оставляет `keep` самых свежих каталогов в backups/ (по времени изменения, при равенстве — по имени). */
-export function pruneBackups(userData: string, keep: number = BACKUPS_KEEP): string[] {
-  const root = join(userData, 'backups')
+export function pruneBackups(userData: string, keep: number = BACKUPS_KEEP, root = join(userData, 'backups')): string[] {
   if (!existsSync(root)) return []
   const dirs = readdirSync(root)
+    .filter(name => root !== join(userData, 'backups') || name !== 'products')
     .map((name) => ({ name, mtime: statSync(join(root, name)).mtimeMs }))
     .filter((d) => statSync(join(root, d.name)).isDirectory())
     .sort((a, b) => b.mtime - a.mtime || (a.name < b.name ? 1 : -1))
@@ -119,4 +120,24 @@ export function backupOnVersionChange(userData: string, currentVersion: string):
   stampLastRunVersion(userData, currentVersion)
   // Без записи о прошлой версии сравнивать нечего: «обновились с неизвестной» — тост не про это, бэкап всё равно сделан.
   return { previous: last, backupDir, updated: last !== undefined && compareVersions(last, currentVersion) < 0 }
+}
+
+/** Desktop сохраняет legacy lastRunVersion; другие продукты имеют независимый backup/version namespace. */
+export function backupOnProductVersionChange(userData: string, product: OperatorProduct): VersionBackupResult {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(product.name) || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(product.version)) throw new Error('Некорректный продукт или версия backup')
+  const file = join(userData, 'product-versions.json'); let versions: Record<string, string> = {}
+  if (existsSync(file)) {
+    const raw: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('Повреждённая схема product versions')
+    const value = raw as Record<string, unknown>
+    if (value.schemaVersion !== 1 || Object.keys(value).some(k => !['schemaVersion', 'versions'].includes(k)) || typeof value.versions !== 'object' || value.versions === null || Array.isArray(value.versions) || Object.values(value.versions).some(v => typeof v !== 'string')) throw new Error('Неподдерживаемая схема product versions')
+    versions = value.versions as Record<string, string>
+  }
+  const previous = Object.hasOwn(versions, product.name) ? versions[product.name] : undefined
+  if (previous === product.version) return { previous, updated: false }
+  const root = join(userData, 'backups', 'products', product.name)
+  const backupDir = copyStateTo(userData, previous ?? UNKNOWN_VERSION, root)
+  pruneBackups(userData, BACKUPS_KEEP, root)
+  writeFileAtomic(file, JSON.stringify({ schemaVersion: 1, versions: { ...versions, [product.name]: product.version } }, null, 2))
+  return { previous, backupDir, updated: previous !== undefined && compareVersions(previous, product.version) < 0 }
 }
