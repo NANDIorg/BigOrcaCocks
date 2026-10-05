@@ -1,13 +1,11 @@
-import { createInterface } from 'node:readline/promises'
 import { emitKeypressEvents, type Key } from 'node:readline'
 import { stdin, stdout } from 'node:process'
 
 /** Password остаётся в памяти процесса; argv/env и echo терминала не используются. */
 export async function readPassword(prompt: string): Promise<string> {
   if (!stdin.isTTY || !stdout.isTTY) throw new Error('Введите пароль в интерактивном терминале')
-  stdout.write(prompt); emitKeypressEvents(stdin)
+  emitKeypressEvents(stdin)
   const previous = stdin.isRaw
-  stdin.setRawMode(true); stdin.resume()
   return new Promise((resolve, reject) => {
     let value = ''
     const clean = () => { stdin.off('keypress', pressed); stdin.setRawMode(previous); stdin.pause(); stdout.write('\n') }
@@ -18,5 +16,7 @@ export async function readPassword(prompt: string): Promise<string> {
       if (!key.ctrl && !key.meta && text && !/[\x00-\x1f\x7f]/.test(text)) value += text
     }
     stdin.on('keypress', pressed)
+    // Подсказка означает готовность к вводу: отключаем echo и ставим обработчик до её вывода.
+    stdin.setRawMode(true); stdin.resume(); stdout.write(prompt)
   })
 }
