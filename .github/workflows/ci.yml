@@ -70,6 +70,13 @@ jobs:
       - name: Installed Linux Web artifact без Electron и DISPLAY
         if: runner.os == 'Linux'
         run: node scripts/test-web-artifact.mjs
+      - name: Проверка установщика Web и интерактивной перенастройки
+        if: runner.os == 'Linux'
+        run: |
+          pnpm --filter @orca-board/web run bundle:linux
+          node scripts/smoke-web-bundle.mjs apps/web/release
+          sudo -H env PATH="$PATH" node --test scripts/web-install.test.mjs
+          sudo -H env ORCA_WEB_SMOKE_ROOT=1 ORCA_WEB_TEST_PROVISION=1 PATH="$PATH" node scripts/smoke-web-bundle.mjs apps/web/release
 
 
   quality:

@@ -2,10 +2,10 @@ import { readFile } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
+import { homedir, userInfo } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { createAgentDiscovery } from '@orca-board/runtime'
-import { configFile, setup, installService, installAppService } from './setup.ts'
+import { configFile, setup, installService, installAppService, installationDirectory } from './setup.ts'
 import { loadWebConfig } from './config.ts'
 import { runWebServer } from './start.ts'
 import { updateWeb } from './update.ts'
@@ -15,11 +15,26 @@ import { addWebAccount } from './accounts.ts'
 import { readPassword } from './password.ts'
 import { localHealth } from './health.ts'
 import { warnRoot } from './privileges.ts'
+import { provisionWeb } from './provision.ts'
+import { installAgents, loginAgent } from './agents-setup.ts'
 
 const command = process.argv[2] ?? 'help'
 try {
-  if (command === 'setup') await setup()
+  if (command === 'setup' || command === 'configure') {
+    const automatic = await setup({ reconfigure: command === 'configure' })
+    if (automatic && process.env.ORCA_WEB_INSTALLER !== '1') {
+      const options = { configFile: configFile(), base: installationDirectory(), user: userInfo().username, home: homedir() }
+      if (process.getuid?.() === 0) await provisionWeb(options)
+      else throw new Error('Для автоматических системных изменений повторите проверенный установщик через административное SSH-подключение.')
+    }
+  }
+  else if (command === 'provision' || command === 'provision-app') {
+    if (process.argv.length !== 7) throw new Error('Автонастройка: provision CONFIG BASE USER HOME')
+    await provisionWeb({ configFile: process.argv[3], base: process.argv[4], user: process.argv[5], home: process.argv[6], appOnly: command === 'provision-app' })
+  }
   else if (command === 'start') await runWebServer(configFile())
+  else if (command === 'agents' && process.argv[3] === 'install') await installAgents()
+  else if (command === 'agents' && process.argv[3] === 'login' && process.argv[4]) loginAgent(process.argv[4])
   else if (command === 'service' && process.argv[3] === 'install') await installService()
   else if (command === 'service' && process.argv[3] === 'install-app') await installAppService()
   else if (command === 'update') await updateWeb()
@@ -51,7 +66,7 @@ try {
     const agents = createAgentDiscovery({ env: process.env, home: homedir() }).agentInfos(undefined)
     const manifest = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8')) as { version: string }
     process.stdout.write(`Orca Web ${manifest.version}: Node ${process.versions.node}, native PTY загружен\n${config.origin}\nАгенты: ${agents.filter(agent => agent.installed).map(agent => agent.id).join(', ') || 'установите CLI выбранного агента и войдите под пользователем сервиса'}\n`)
-  } else if (command === 'help') process.stdout.write('orca-web setup | start | status | doctor | update | user add | service install | service install-app\n')
+  } else if (command === 'help') process.stdout.write('orca-web setup | configure | start | status | doctor | update | user add | service install | service install-app | agents install | agents login codex|claude\n')
   else throw new Error('Неизвестная команда. Выполните orca-web help')
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : 'Ошибка Orca Web'}\n`); process.exitCode = 1

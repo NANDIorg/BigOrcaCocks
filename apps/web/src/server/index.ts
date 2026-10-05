@@ -7,6 +7,7 @@ import { parseWebConfig, type WebConfig } from './config.ts'
 import { loadWebAccounts } from './accounts.ts'
 import { createWebSessions } from './sessions.ts'
 import { createWebRouter, type WebRouter } from './http.ts'
+import { randomUUID } from 'node:crypto'
 import { record } from './private-json.ts'
 import { createProjectRootPolicy } from './project-roots.ts'
 import { createStaticHandler } from './static.ts'
@@ -37,9 +38,10 @@ export async function startWeb(options: StartWebOptions): Promise<{ url: string;
   const sessions = createWebSessions({ onRevoke: session => router?.revokeClients(session) })
   const operator = createOperatorHttpHandler({ runtime: host.runtime.value, maxClients: 64, authenticate: request => router?.authenticateOperator(request) ?? null, beforeCall: roots.beforeCall })
   const updates = createBrowserUpdates({ version: manifest.version, managed: await managedWebInstallation(options.resourceDir) })
-  router = createWebRouter({ config, accounts, sessions, operator, updates, version: manifest.version, directories: roots.list, static: createStaticHandler(join(options.resourceDir, 'browser'), config.previewOrigin) })
+  const health = { version: manifest.version, instance: randomUUID() }
+  router = createWebRouter({ config, accounts, sessions, operator, updates, version: manifest.version, healthInstance: health.instance, directories: roots.list, static: createStaticHandler(join(options.resourceDir, 'browser'), config.previewOrigin) })
   const server = createServer({ maxHeaderSize: 16 * 1024 }, router.handle)
-  const previewServer = createPreviewServer(config, host.runtime.value)
+  const previewServer = createPreviewServer(config, host.runtime.value, health)
   server.requestTimeout = 30_000; server.headersTimeout = 10_000; server.maxHeadersCount = 32
   let shutdown: Promise<void> | undefined; let stopped = false; let serverClosed = false
   function stop(): Promise<void> {
