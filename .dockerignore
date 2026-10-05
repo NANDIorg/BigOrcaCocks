@@ -1,0 +1,10 @@
+# Контекст образа Orca Web (apps/web/docker/Dockerfile).
+.git
+**/node_modules
+**/dist
+**/out
+**/release
+.native
+.worktrees
+.orca-worktrees
+review
