@@ -17,12 +17,12 @@ export function createAgentCommands(host: AgentCommandHost): AgentCommands {
   const project = createProjectCommandExecutor(host)
   return {
     list: (context, projectId, refresh = false) => client(context, 'agents.list', () => {
-      const id = projectId === undefined ? undefined : commandString(projectId, 'projectId')
-      if (typeof refresh !== 'boolean') commandInputError('refresh')
+      const id = projectId == null ? undefined : commandString(projectId, 'projectId')
+      if (refresh != null && typeof refresh !== 'boolean') commandInputError('refresh')
       return () => {
         const p = id === undefined ? undefined : host.project(id)
         if (id !== undefined && !p) throw new CommandError('command.projectNotFound', { projectId: id })
-        return host.discovery.agentInfos(p?.enabledAgents, refresh)
+        return host.discovery.agentInfos(p?.enabledAgents, refresh ?? false)
       }
     }),
     preflight: (context, roleId, runId) => project(context, 'agents.preflight', () => {
