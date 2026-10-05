@@ -1,7 +1,13 @@
 import { isIP } from 'node:net'
 import { join, isAbsolute, normalize } from 'node:path'
 
-export interface WizardIO { ask(prompt: string): Promise<string>; write(value: string): void }
+export interface WizardChoice { value: string; label: string; hint?: string }
+export interface WizardIO {
+  ask(prompt: string, fallback?: string): Promise<string>; write(value: string): void
+  select?(prompt: string, choices: WizardChoice[], fallback: string): Promise<string>
+  intro?(): void; step?(current: number, total: number, title: string): void
+  summary?(rows: [string, string][]): void
+}
 export interface SetupChoices { projectRoot: string; mode: 'local' | 'proxy'; domain?: string; previewDomain?: string; login?: string; email?: string; provision: boolean; gitName?: string; gitEmail?: string }
 export interface SetupContext {
   home: string; root: boolean; installer: boolean; rootAcknowledged?: boolean
@@ -26,25 +32,40 @@ export function parseHostname(value: string): string {
 const cancelled = () => new Error('Настройка отменена. Существующие аккаунты и конфигурация сохранены.')
 async function field(io: WizardIO, prompt: string, validate: (value: string) => string, fallback = ''): Promise<string> {
   for (;;) {
-    try { return validate((await io.ask(prompt)).trim() || fallback) }
+    const value = (await io.ask(prompt, fallback)).trim() || fallback
+    try { return validate(value) }
     catch (error) { io.write(`${error instanceof Error ? error.message : 'Некорректное значение'}\n`) }
   }
+}
+const step = (io: WizardIO, current: number, title: string) => {
+  if (io.step) io.step(current, 5, title)
+  else io.write(`\nШаг ${current}/5 · ${title}\n`)
+}
+async function selection(io: WizardIO, prompt: string, choices: WizardChoice[], fallback: string): Promise<string> {
+  if (io.select) return io.select(prompt, choices, fallback)
+  io.write(choices.map(choice => `${choice.value}. ${choice.label}${choice.hint ? ` — ${choice.hint}` : ''}\n`).join(''))
+  return field(io, prompt, value => {
+    if (!choices.some(choice => choice.value === value)) throw new Error(`Выберите ${choices.map(choice => choice.value).join(' или ')}`)
+    return value
+  }, fallback)
 }
 
 /** Сбор решения отделён от записи: отказ на любом предупреждении не меняет конфигурацию. */
 export async function collectSetup(io: WizardIO, context: SetupContext): Promise<SetupChoices> {
-  io.write('\n╭──────────────────────────────────────────╮\n│  Orca Web · пошаговая настройка сервера   │\n╰──────────────────────────────────────────╯\n\n')
+  if (io.intro) io.intro()
+  else io.write('\nOrca Web · пошаговая настройка сервера\n\n')
   if (context.root && !context.rootAcknowledged) {
     io.write('Предупреждение: Orca и CLI-агенты получат права root, включая файлы сайта и всего сервера. Каталог проектов не является sandbox. Рекомендуется обычный пользователь.\n')
     if ((await io.ask('Для продолжения введите ROOT (Enter — отмена): ')).trim() !== 'ROOT') throw cancelled()
   }
-  io.write('Шаг 1/5 · Как открывать Orca\n1. Через SSH — закрытый доступ, без домена и открытых портов (рекомендуется).\n2. Через домен и HTTPS — форма входа доступна из интернета.\n')
+  step(io, 1, 'Как открывать Orca')
   const defaultAccess = context.existing?.mode === 'proxy' ? '2' : '1'
-  const access = await field(io, `Способ доступа [${defaultAccess}]: `, value => {
-    if (!['1', '2'].includes(value)) throw new Error('Выберите 1 (SSH) или 2 (домен)')
-    return value
-  }, defaultAccess)
-  io.write('\nШаг 2/5 · Где находятся проекты\nЭто родительская папка Git-репозиториев: каждый проект — отдельная папка внутри неё.\nЭто не каталог установки Orca. Папку можно поменять позже командой orca-web configure; файлы проектов не перемещаются.\nАгенты могут работать со всеми файлами, доступными пользователю сервиса.\n')
+  const access = await selection(io, `Способ доступа [${defaultAccess}]: `, [
+    { value: '1', label: 'Через SSH', hint: 'Закрытый доступ, без домена и открытых портов. Рекомендуется.' },
+    { value: '2', label: 'Через домен и HTTPS', hint: 'Форма входа будет доступна из интернета.' },
+  ], defaultAccess)
+  step(io, 2, 'Где находятся проекты')
+  io.write('Это родительская папка Git-репозиториев: каждый проект — отдельная папка внутри неё.\nЭто не каталог установки Orca. Папку можно поменять позже командой orca-web configure; файлы проектов не перемещаются.\nАгенты могут работать со всеми файлами, доступными пользователю сервиса.\n\n')
   const defaultRoot = context.existing?.projectRoots[0] ?? join(context.home, 'projects')
   const projectRoot = await field(io, `Папка с Git-проектами [${defaultRoot}]: `, value => {
     const expanded = value === '~' ? context.home : value.startsWith('~/') ? join(context.home, value.slice(2)) : value
@@ -52,7 +73,7 @@ export async function collectSetup(io: WizardIO, context: SetupContext): Promise
     return normalize(expanded)
   }, defaultRoot)
   const choices: SetupChoices = { projectRoot, mode: access === '1' ? 'local' : 'proxy', provision: false }
-  io.write('\nШаг 3/5 · Адрес и защита\n')
+  step(io, 3, 'Адрес и защита')
   if (choices.mode === 'proxy') {
     io.write('Нужны два свободных поддомена: панель и предпросмотр файлов. Например, orca.example.com и preview.example.com.\nЕсли сайт уже работает, используйте отдельные поддомены, а не основной адрес сайта.\n')
     const previous = context.existing?.mode === 'proxy' ? new URL(context.existing.origin).hostname : ''
@@ -65,7 +86,7 @@ export async function collectSetup(io: WizardIO, context: SetupContext): Promise
     io.write('Предупреждение: любой сможет открыть форму входа и пытаться подобрать пароль. Проекты и терминал требуют авторизации; гарантии отсутствия уязвимостей нет. Используйте уникальный длинный пароль.\nHTTPS-сертификаты публикуют имена доменов; автоматический выпуск использует условия центра сертификации.\n')
     if ((await io.ask('Для доступа через интернет введите OPEN (Enter — отмена): ')).trim() !== 'OPEN') throw cancelled()
   } else io.write('Orca слушает только 127.0.0.1. Доступ с компьютера — через уже имеющееся SSH-подключение; в конце будет готовая команда.\n')
-  io.write('\nШаг 4/5 · Вход в панель и автоматизация\n')
+  step(io, 4, 'Вход и автоматизация')
   if (!(context.accountsExist ?? Boolean(context.existing))) choices.login = await field(io, 'Логин первого оператора [operator]: ', value => {
     if (!/^[a-z0-9][a-z0-9._-]{2,63}$/.test(value)) throw new Error('Логин: 3–64 строчных латинских символа, цифры, точка, дефис или подчёркивание')
     return value
@@ -90,7 +111,11 @@ export async function collectSetup(io: WizardIO, context: SetupContext): Promise
   const closingPublicAccess = context.existing?.mode === 'proxy' && choices.mode === 'local'
   const provisionDefault = context.installer || closingPublicAccess ? 'y' : 'n'
   io.write('Автоматизация установит systemd-сервис и настроит поддерживаемый HTTPS-прокси. Для системных изменений нужны root или sudo.\n')
-  choices.provision = (await field(io, `Настроить автозапуск${choices.mode === 'proxy' ? ' и HTTPS' : ''} автоматически [${provisionDefault === 'y' ? 'Y/n' : 'y/N'}]: `, value => {
+  const provisionPrompt = `Настроить автозапуск${choices.mode === 'proxy' ? ' и HTTPS' : ''} автоматически [${provisionDefault === 'y' ? 'Y/n' : 'y/N'}]: `
+  choices.provision = (io.select ? await io.select(provisionPrompt, [
+    { value: 'y', label: 'Да, настроить автоматически', hint: 'Orca будет запускаться при включении сервера.' },
+    { value: 'n', label: 'Нет, запускать вручную', hint: 'Позже можно повторить orca-web configure.' },
+  ], provisionDefault) : await field(io, provisionPrompt, value => {
     if (!['y', 'n', 'да', 'нет'].includes(value.toLowerCase())) throw new Error('Ответьте y или n')
     return ['y', 'да'].includes(value.toLowerCase()) ? 'y' : 'n'
   }, provisionDefault)) === 'y'
@@ -102,8 +127,15 @@ export async function collectSetup(io: WizardIO, context: SetupContext): Promise
     io.write('Предупреждение: автонастройка перезапустит работающую Orca. Активные задания и терминалы будут остановлены; сохранённые данные останутся.\n')
     if ((await io.ask('Для перезапуска введите RESTART (Enter — отмена): ')).trim() !== 'RESTART') throw cancelled()
   }
-  io.write(`\nШаг 5/5 · Проверьте настройки\nПроекты: ${choices.projectRoot}\nДоступ: ${choices.mode === 'local' ? 'закрытый, SSH → http://localhost:3737' : `https://${choices.domain}`}\n${choices.previewDomain ? `Предпросмотр: https://${choices.previewDomain}\n` : ''}Автонастройка: ${choices.provision ? 'да' : 'нет'}\n`)
-  if (!['', 'y', 'да'].includes((await io.ask('Применить настройки [Y/n]: ')).trim().toLowerCase())) throw cancelled()
+  step(io, 5, 'Проверьте настройки')
+  const rows: [string, string][] = [['Проекты', choices.projectRoot], ['Доступ', choices.mode === 'local' ? 'закрытый, SSH → http://localhost:3737' : `https://${choices.domain}`],
+    ...(choices.previewDomain ? [['Предпросмотр', `https://${choices.previewDomain}`] as [string, string]] : []), ['Автонастройка', choices.provision ? 'да' : 'нет']]
+  if (io.summary) io.summary(rows)
+  else io.write(rows.map(([label, value]) => `${label}: ${value}\n`).join(''))
+  const apply = io.select ? await io.select('Применить настройки [Y/n]: ', [
+    { value: 'y', label: 'Применить настройки' }, { value: 'n', label: 'Отменить', hint: 'Текущие настройки и аккаунты сохранятся.' },
+  ], 'y') : await io.ask('Применить настройки [Y/n]: ')
+  if (!['', 'y', 'да'].includes(apply.trim().toLowerCase())) throw cancelled()
   return choices
 }
 

@@ -2,14 +2,38 @@
 # Готовый Web artifact: на сервере не нужны исходники, pnpm и компилятор.
 set -euo pipefail
 umask 077
+ui_bold= ui_dim= ui_reset=
+if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
+  ui_bold=$'\033[1m'; ui_dim=$'\033[2m'; ui_reset=$'\033[0m'
+fi
+ui_columns=${COLUMNS:-80}
+if [[ -t 1 ]] && command -v tput >/dev/null; then ui_columns=$(tput cols 2>/dev/null || printf '80'); fi
+[[ $ui_columns =~ ^[0-9]+$ ]] || ui_columns=80
+ui_width=$((ui_columns - 6))
+if (( ui_width > 72 )); then ui_width=72; fi
+if (( ui_width < 18 )); then ui_width=18; fi
+printf -v ui_rule '%*s' "$ui_width" ''; ui_rule=${ui_rule// /─}
+ui_stage() {
+  local remaining=$1 line
+  printf '\n  %s╭%s╮%s\n' "$ui_dim" "$ui_rule" "$ui_reset"
+  while [[ -n $remaining ]]; do
+    line=${remaining:0:ui_width-4}; remaining=${remaining:ui_width-4}
+    printf '  %s│%s  %s%s%s%*s  %s│%s\n' "$ui_dim" "$ui_reset" "$ui_bold" "$line" "$ui_reset" "$((ui_width-4-${#line}))" '' "$ui_dim" "$ui_reset"
+  done
+  printf '  %s╰%s╯%s\n\n' "$ui_dim" "$ui_rule" "$ui_reset"
+}
+ui_stage 'O R C A  /  W E B'
+printf '  Установка на ваш сервер\n  %sПользователь → Зависимости → Пакет → Настройка%s\n\n' "$ui_dim" "$ui_reset"
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then echo 'Поддерживается Linux x64 (Ubuntu 24.04).' >&2; exit 1; fi
 confirm() {
+  printf '\n  %s!  Подтверждение%s\n\n' "$ui_bold" "$ui_reset"
   printf '%s\n' "$1"
+  printf '  › '
   local answer
   read -r answer || { echo 'Установка отменена.' >&2; exit 1; }
   [[ $answer == "$2" ]] || { echo 'Установка отменена.' >&2; exit 1; }
 }
-echo 'Orca Web · подготовка сервера'
+ui_stage '01 / 03  Пользователь сервера'
 service_user=$(id -un)
 service_home=$HOME
 root_ack=${ORCA_WEB_ACK_ROOT:-0}
@@ -53,6 +77,7 @@ if [[ $(id -u) == 0 ]]; then
     root_ack=1
   fi
 fi
+ui_stage '02 / 03  Подготовка окружения'
 missing=()
 for tool in curl tar sha256sum python3 git; do command -v "$tool" >/dev/null || missing+=("$tool"); done
 if [[ ${#missing[@]} != 0 ]]; then
@@ -146,6 +171,7 @@ for path in sys.argv[1:]:
 PY
 }
 repo=NANDIorg/BigOrcaCocks
+ui_stage '03 / 03  Загрузка и проверка пакета'
 version=${ORCA_WEB_VERSION:-}
 if [[ -z $version ]]; then
   version=$(curl --fail --silent --show-error --proto '=https' --tlsv1.2 "https://api.github.com/repos/$repo/releases?per_page=100" | python3 -c 'import json,re,sys; tags=[r["tag_name"][5:] for r in json.load(sys.stdin) if not r.get("draft",True) and not r.get("prerelease",True) and re.fullmatch(r"web/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)",r.get("tag_name",""))]; print(max(tags,key=lambda v:tuple(map(int,v.split(".")))) if tags else "")')
@@ -156,7 +182,9 @@ work=$(mktemp -d /tmp/orca-web-install.XXXXXXXX)
 trap 'rm -rf -- "$work"' EXIT
 asset="orca-web-linux-x64-$version.tar.gz"
 prefix="https://github.com/$repo/releases/download/web%2Fv$version"
-curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 "$prefix/$asset" -o "$work/$asset"
+download_progress=(--silent --show-error)
+if [[ -t 2 && ${TERM:-dumb} != dumb ]]; then download_progress=(--progress-bar --show-error); fi
+curl --fail --location "${download_progress[@]}" --proto '=https' --tlsv1.2 "$prefix/$asset" -o "$work/$asset"
 curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 "$prefix/SHA256SUMS" -o "$work/SHA256SUMS"
 checksum=$(awk -v name="$asset" '$2 == name && length($1) == 64 { print $1 }' "$work/SHA256SUMS")
 if [[ ! $checksum =~ ^[a-f0-9]{64}$ ]]; then echo 'Нет контрольной суммы Web artifact' >&2; exit 1; fi
@@ -166,6 +194,7 @@ if ! awk 'BEGIN { valid=1 } { if ($0 !~ /^orca-web(\/|$)/ || $0 ~ /(^|\/)\.\.(\/
 tar -tvzf "$work/$asset" > "$work/details"
 if ! awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" { exit 1 }' "$work/details"; then echo 'Archive должен содержать только обычные файлы и каталоги' >&2; exit 1; fi
 tar -xzf "$work/$asset" --no-same-owner -C "$work"
+printf '  %s✓ SHA256 и структура архива проверены%s\n' "$ui_bold" "$ui_reset"
 # Права поставки не зависят от umask машины сборки и не открывают запись другим UID.
 /usr/bin/chmod -R go-w "$work/orca-web"
 "$work/orca-web/node/bin/node" --input-type=module - "$work/orca-web" "$version" <<'JS'
@@ -283,15 +312,18 @@ if [[ -e $link || -L $link ]]; then
     confirm "Предупреждение: $link занят другим файлом. Он будет сохранён; используйте $base/bin/orca-web. Для продолжения введите CONTINUE:" CONTINUE
   fi
 else run_target /usr/bin/ln -s "$base/bin/orca-web" "$link"; fi
-echo "Orca Web $version установлена для пользователя $service_user."
+ui_stage "✓ Orca Web $version установлена"
+printf '  Пользователь: %s\n  Каталог: %s\n\n' "$service_user" "$base"
 if [[ ${ORCA_WEB_NO_SETUP:-0} != 1 ]]; then
   command=setup
   if [[ -e $config_file ]]; then command=configure; fi
   run_target "$base/bin/orca-web" "$command"
   automatic=$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1]))["provision"]))' "$(dirname "$config_file")/setup-plan.json")
   if [[ $automatic == 1 ]]; then
+    ui_stage 'Автозапуск и проверка доступа'
     admin_provision provision
   fi
   run_target "$base/bin/orca-web" agents install
 fi
-echo "Команда управления: $base/bin/orca-web"
+ui_stage '✓ Установка завершена'
+printf '  Команда управления\n  %s%s%s\n\n' "$ui_bold" "$base/bin/orca-web" "$ui_reset"

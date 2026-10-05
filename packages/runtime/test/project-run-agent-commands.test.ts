@@ -46,7 +46,7 @@ test('application guards reject forged context and payload before lookup/effect'
   await assert.rejects(f.gitCommands.checkout(ctx, ''), code('command.invalidInput'))
   await assert.rejects(f.gitCommands.initialCommit(ctx, 'invalid' as 'empty'), code('command.invalidInput'))
   assert.throws(() => f.runs.close(ctx, ''), code('command.invalidInput'))
-  assert.throws(() => f.agents.list(operator, null as unknown as string), code('command.invalidInput'))
+  assert.throws(() => f.agents.list(operator, false as unknown as string), code('command.invalidInput'))
   assert.throws(() => f.agents.list(operator, undefined, 'yes' as unknown as boolean), code('command.invalidInput'))
   assert.throws(() => f.agents.preflight(ctx, ''), code('command.invalidInput'))
   assert.equal(f.lookups(), 0); assert.equal(f.manager.loadedStores().length, 0)

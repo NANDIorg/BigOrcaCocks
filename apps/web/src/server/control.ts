@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { homedir, userInfo } from 'node:os'
 import { execFileSync } from 'node:child_process'
@@ -10,17 +7,21 @@ import { loadWebConfig } from './config.ts'
 import { runWebServer } from './start.ts'
 import { updateWeb } from './update.ts'
 import { runBrowserUpdateWorker, recoverBrowserUpdate } from './browser-updates.ts'
-import { createInterface } from 'node:readline/promises'
 import { addWebAccount } from './accounts.ts'
-import { readPassword } from './password.ts'
 import { localHealth } from './health.ts'
 import { warnRoot } from './privileges.ts'
 import { provisionWeb } from './provision.ts'
 import { installAgents, loginAgent } from './agents-setup.ts'
+import { createTerminalUi } from './terminal-ui.ts'
+import { parseWebArguments, printWebHelp, webVersion } from './command-help.ts'
 
 const command = process.argv[2] ?? 'help'
 try {
-  if (command === 'setup' || command === 'configure') {
+  const invocation = parseWebArguments(process.argv.slice(2))
+  const args = invocation.kind === 'command' ? invocation.args : []
+  if (invocation.kind === 'help') await printWebHelp(invocation.scope)
+  else if (invocation.kind === 'version') process.stdout.write(`Orca Web ${await webVersion()}\n`)
+  else if (command === 'setup' || command === 'configure') {
     const automatic = await setup({ reconfigure: command === 'configure' })
     if (automatic && process.env.ORCA_WEB_INSTALLER !== '1') {
       const options = { configFile: configFile(), base: installationDirectory(), user: userInfo().username, home: homedir() }
@@ -29,14 +30,13 @@ try {
     }
   }
   else if (command === 'provision' || command === 'provision-app') {
-    if (process.argv.length !== 7) throw new Error('Автонастройка: provision CONFIG BASE USER HOME')
-    await provisionWeb({ configFile: process.argv[3], base: process.argv[4], user: process.argv[5], home: process.argv[6], appOnly: command === 'provision-app' })
+    await provisionWeb({ configFile: args[1], base: args[2], user: args[3], home: args[4], appOnly: command === 'provision-app' })
   }
   else if (command === 'start') await runWebServer(configFile())
-  else if (command === 'agents' && process.argv[3] === 'install') await installAgents()
-  else if (command === 'agents' && process.argv[3] === 'login' && process.argv[4]) loginAgent(process.argv[4])
-  else if (command === 'service' && process.argv[3] === 'install') await installService()
-  else if (command === 'service' && process.argv[3] === 'install-app') await installAppService()
+  else if (command === 'agents' && args[1] === 'install') await installAgents()
+  else if (command === 'agents' && args[1] === 'login') loginAgent(args[2])
+  else if (command === 'service' && args[1] === 'install') { await installService(); createTerminalUi().success('Автозапуск настроен', ['Сервисы Orca установлены и запущены.']) }
+  else if (command === 'service' && args[1] === 'install-app') { await installAppService(); createTerminalUi().success('Автозапуск настроен', ['Сервис Orca установлен и запущен.']) }
   else if (command === 'update') await updateWeb()
   else if (command === 'update-worker' || command === 'update-recover') {
     if (process.platform !== 'linux' || process.env.ORCA_WEB_MANAGED !== '1') throw new Error('Worker запускается настроенным сервисом Linux')
@@ -44,30 +44,38 @@ try {
     if (command === 'update-worker') await runBrowserUpdateWorker()
     else await recoverBrowserUpdate()
   }
-  else if (command === 'user' && process.argv[3] === 'add') {
+  else if (command === 'user' && args[1] === 'add') {
     const config = await loadWebConfig(configFile())
     if (!process.stdin.isTTY) throw new Error('Добавление аккаунта выполняется в интерактивном терминале')
-    const prompt = createInterface({ input: process.stdin, output: process.stdout })
-    const login = await prompt.question('Логин оператора: '); prompt.close()
-    const password = await readPassword('Пароль (не отображается): ')
-    if (password !== await readPassword('Повторите пароль: ')) throw new Error('Пароли не совпадают')
+    const ui = createTerminalUi(); ui.panel('Новый оператор', ['Аккаунт даёт доступ к панели и проектам этого сервера.'])
+    const login = await ui.ask('Логин оператора: ')
+    const password = await ui.password('Пароль (не отображается): ')
+    if (password !== await ui.password('Повторите пароль: ')) throw new Error('Пароли не совпадают')
     await addWebAccount({ configDir: config.configDir, login, password })
-    process.stdout.write(`Аккаунт создан. Перезапустите сервис: ${process.getuid?.() === 0 ? '' : 'sudo '}systemctl restart orca-web.service\n`)
+    ui.success('Аккаунт создан', [`Оператор: ${login}`, `Перезапустите сервис: ${process.getuid?.() === 0 ? '' : 'sudo '}systemctl restart orca-web.service`])
   }
   else if (command === 'status') {
     const config = await loadWebConfig(configFile())
     await localHealth(config)
-    process.stdout.write(`Orca Web работает: ${config.origin}\n`)
+    createTerminalUi().success('Orca Web работает', [`Панель: ${config.origin}`, `Предпросмотр: ${config.previewOrigin}`])
   } else if (command === 'doctor') {
     if (Number(process.versions.node.split('.')[0]) !== 24) throw new Error('Требуется bundled Node 24')
     createRequire(import.meta.url)('node-pty')
     const config = await loadWebConfig(configFile())
-    execFileSync('git', ['--version'], { stdio: 'inherit', timeout: 5000 })
+    const git = execFileSync('git', ['--version'], { encoding: 'utf8', timeout: 5000 }).trim()
     const agents = createAgentDiscovery({ env: process.env, home: homedir() }).agentInfos(undefined)
-    const manifest = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8')) as { version: string }
-    process.stdout.write(`Orca Web ${manifest.version}: Node ${process.versions.node}, native PTY загружен\n${config.origin}\nАгенты: ${agents.filter(agent => agent.installed).map(agent => agent.id).join(', ') || 'установите CLI выбранного агента и войдите под пользователем сервиса'}\n`)
-  } else if (command === 'help') process.stdout.write('orca-web setup | configure | start | status | doctor | update | user add | service install | service install-app | agents install | agents login codex|claude\n')
+    const ui = createTerminalUi()
+    ui.panel(`Orca Web ${await webVersion()}  /  Проверка окружения`, [`Node ${process.versions.node}`, git, 'Терминалы: native PTY загружен', `Панель: ${config.origin}`])
+    ui.heading('Установленные CLI-агенты')
+    const installed = agents.filter(agent => agent.installed && agent.id !== 'shell')
+    for (const agent of installed) ui.entry(agent.title, agent.version || agent.id)
+    if (!installed.length) ui.write('CLI-агенты не найдены. Установить: orca-web agents install\n')
+    else ui.write('\nВход в Codex или Claude: orca-web agents login <codex|claude>\n')
+  }
   else throw new Error('Неизвестная команда. Выполните orca-web help')
 } catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : 'Ошибка Orca Web'}\n`); process.exitCode = 1
+  const message = error instanceof Error ? error.message : 'Ошибка Orca Web'
+  if (process.stderr.isTTY && ['setup', 'configure', 'provision', 'provision-app', 'agents'].includes(command)) createTerminalUi(process.stderr).failure(message)
+  else process.stderr.write(`${message}\n`)
+  process.exitCode = 1
 }

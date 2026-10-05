@@ -1,4 +1,3 @@
-import { createInterface } from 'node:readline/promises'
 import { stdin, stdout } from 'node:process'
 import { mkdir, access, writeFile } from 'node:fs/promises'
 import { homedir, userInfo } from 'node:os'
@@ -6,7 +5,7 @@ import { join, resolve, dirname } from 'node:path'
 import { parseWebConfig, loadWebConfig } from './config.ts'
 import { createPrivateJson, replacePrivateJson, readPrivateJson, record } from './private-json.ts'
 import { initializeWebAccount } from './accounts.ts'
-import { readPassword } from './password.ts'
+import { createTerminalUi } from './terminal-ui.ts'
 import { serviceUnit, caddyConfig, proxyUnit, updateWorkerUnit, updateSudoers } from './deployment.ts'
 import { execFileSync } from 'node:child_process'
 import { pinRecovery } from './update.ts'
@@ -28,22 +27,19 @@ export async function setup(options: { reconfigure?: boolean } = {}): Promise<bo
   let accountsExist = false
   try { await loadWebAccounts(join(configDirectory(), 'accounts.json')); accountsExist = true }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-  const ask = createInterface({ input: stdin, output: stdout })
+  const ui = createTerminalUi()
   let pendingPrevious: ReturnType<typeof parseWebConfig> | undefined
   try { pendingPrevious = parseWebConfig(await readPrivateJson(join(configDirectory(), 'setup-previous.json'), 16 * 1024)) }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { ask.close(); throw error } }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
   const gitValue = (key: string): string => { try { return execFileSync('git', ['config', '--global', '--get', key], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }).trim() } catch { return '' } }
   const gitName = gitValue('user.name'); const gitEmail = gitValue('user.email')
   const running = existing ? await localHealth(existing).then(value => record(value) && value.status === 'ready', () => false) : false
-  let choices: Awaited<ReturnType<typeof collectSetup>>
-  try {
-    choices = await collectSetup({ ask: prompt => ask.question(prompt), write: value => { stdout.write(value) } }, {
-      home: homedir(), root: process.getuid?.() === 0, installer: process.env.ORCA_WEB_INSTALLER === '1',
-      rootAcknowledged: process.env.ORCA_WEB_ACK_ROOT === '1', existing,
-      gitIdentityMissing: !gitName || !gitEmail, gitName, gitEmail,
-      accountsExist, running,
-    })
-  } finally { ask.close() }
+  const choices = await collectSetup(ui, {
+    home: homedir(), root: process.getuid?.() === 0, installer: process.env.ORCA_WEB_INSTALLER === '1',
+    rootAcknowledged: process.env.ORCA_WEB_ACK_ROOT === '1', existing,
+    gitIdentityMissing: !gitName || !gitEmail, gitName, gitEmail,
+    accountsExist, running,
+  })
   if (choices.provision && process.getuid?.() !== 0 && process.env.ORCA_WEB_INSTALLER !== '1') throw new Error('Для автонастройки повторите установщик через административное SSH-подключение. Он проверит пакет в отдельном root-каталоге; установленный пользовательский код не запускается через sudo. Текущие настройки сохранены. Для смены папки без системных изменений выберите n и перезапустите сервис.')
   if (pendingPrevious && !choices.provision) throw new Error('Предыдущая автонастройка прервана. Повторите установщик с автонастройкой, чтобы завершить изменения или восстановить прежний конфиг. Текущие настройки сохранены.')
   const root = choices.projectRoot
@@ -54,11 +50,12 @@ export async function setup(options: { reconfigure?: boolean } = {}): Promise<bo
     origin: choices.domain ? `https://${choices.domain}` : `http://localhost:${existing?.port ?? 3737}`,
     ...(choices.previewDomain ? { previewOrigin: `https://${choices.previewDomain}` } : {}) })
   if (!accountsExist) {
+    ui.panel('Защитите вход в панель', ['Пароль оператора сохраняется только как хеш.', 'Ввод скрыт. Нужно не менее 12 символов.'])
     let password: string
     for (;;) {
-      password = await readPassword('Пароль (от 12 символов, не отображается): ')
-      if (Array.from(password).length < 12 || Buffer.byteLength(password) > 256) { stdout.write('Нужно от 12 символов, максимум 256 байт.\n'); continue }
-      if (password !== await readPassword('Повторите пароль: ')) { stdout.write('Пароли не совпадают. Повторите ввод.\n'); continue }
+      password = await ui.password('Пароль (от 12 символов, не отображается): ')
+      if (Array.from(password).length < 12 || Buffer.byteLength(password) > 256) { ui.write('Нужно от 12 символов, максимум 256 байт.\n'); continue }
+      if (password !== await ui.password('Повторите пароль: ')) { ui.write('Пароли не совпадают. Повторите ввод.\n'); continue }
       break
     }
     await initializeWebAccount({ configDir: config.configDir, login: choices.login!, password })
@@ -74,7 +71,7 @@ export async function setup(options: { reconfigure?: boolean } = {}): Promise<bo
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await createPrivateJson(previousFile, existing) }
     }
     await replacePrivateJson(configFile(), config)
-    stdout.write(`Резервная копия прежних настроек: ${backup}\n`)
+    ui.write(`Резервная копия прежних настроек: ${backup}\n`)
   }
   const plan = { schemaVersion: 1, provision: choices.provision, email: choices.email ?? '' }
   const planFile = join(config.configDir, 'setup-plan.json')
@@ -83,14 +80,18 @@ export async function setup(options: { reconfigure?: boolean } = {}): Promise<bo
   await writeTemplates()
   if (choices.gitName) execFileSync('git', ['config', '--global', 'user.name', choices.gitName], { stdio: 'inherit', timeout: 5000 })
   if (choices.gitEmail) execFileSync('git', ['config', '--global', 'user.email', choices.gitEmail], { stdio: 'inherit', timeout: 5000 })
-  stdout.write(`\nНастройки сохранены: ${configFile()}\n`)
+  ui.success('Настройки сохранены', [configFile(), `Проекты: ${config.projectRoots.join(', ')}`])
   if (!choices.provision) {
     if (existing) stdout.write(`Перезапустите Orca для применения настроек. Для systemd: ${process.getuid?.() === 0 ? '' : 'sudo '}systemctl stop orca-web.service, затем ${process.getuid?.() === 0 ? '' : 'sudo '}systemctl start orca-web.service. Если Orca запущена вручную, перезапустите её в исходном терминале.\n`)
     else stdout.write(`Запуск вручную: ${join(installationDirectory(), 'bin', 'orca-web')} start\n`)
   }
-  if (config.mode === 'local') stdout.write(sshInstructions(process.env.ORCA_WEB_SSH_TARGET, config.port, config.previewPort))
-  if (config.mode === 'proxy') stdout.write(`DNS: записи A/AAAA для ${choices.domain} и ${choices.previewDomain} должны вести на этот сервер. HTTPS будет проверен отдельно.\n`)
-  stdout.write('Изменить настройки позже: orca-web configure\nПроверить Git, CLI-агенты и окружение: orca-web doctor\n')
+  if (config.mode === 'local') {
+    ui.panel('Открыть Orca через SSH', ['Команду ниже выполните на своём компьютере.'])
+    // Команду не разбиваем переносами renderer: её можно скопировать целиком.
+    stdout.write(sshInstructions(process.env.ORCA_WEB_SSH_TARGET, config.port, config.previewPort))
+  }
+  if (config.mode === 'proxy') ui.panel('Подключить домены', [`DNS: записи A/AAAA для ${choices.domain} и ${choices.previewDomain} должны вести на этот сервер.`, 'HTTPS будет проверен отдельно.'])
+  ui.write('\nИзменить настройки позже: orca-web configure\nПроверить Git, CLI-агенты и окружение: orca-web doctor\n')
   return choices.provision
 }
 export async function writeTemplates(): Promise<void> {

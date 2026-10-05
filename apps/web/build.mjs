@@ -5,8 +5,10 @@ import { dirname, join } from 'node:path'
 
 const root = dirname(fileURLToPath(import.meta.url)); const out = join(root, 'dist')
 rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true })
+// Inquirer → mute-stream использует CommonJS require('stream') внутри ESM chunk.
 const result = await build({ entryPoints: { index: join(root, 'src/server/index.ts'), control: join(root, 'src/server/control.ts'), admin: join(root, 'src/server/admin.ts') }, outdir: out,
   bundle: true, splitting: true, format: 'esm', platform: 'node', target: 'node24', outExtension: { '.js': '.mjs' }, packages: 'bundle', external: ['node-pty'], metafile: true,
+  banner: { js: "import { createRequire as __orcaBundleRequire } from 'node:module'; const require = __orcaBundleRequire(import.meta.url);" },
   plugins: [{ name: 'web-host-boundaries', setup(builder) { builder.onResolve({ filter: /^electron(?:\/|$)/ }, args => ({ errors: [{ text: `Web не импортирует ${args.path}` }] })) } }] })
 writeFileSync(join(out, 'build-meta.json'), JSON.stringify(result.metafile))
 cpSync(join(root, '../../skills'), join(out, 'skills'), { recursive: true })
