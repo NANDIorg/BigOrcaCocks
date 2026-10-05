@@ -37,6 +37,10 @@ try {
   }
   const tools = join(fixture, 'tools'); const operatorHome = join(fixture, 'operator')
   await mkdir(tools); await mkdir(operatorHome)
+  execFileSync('useradd', ['--no-create-home', '--user-group', peer]); peerCreated = true
+  const peerUid = execFileSync('id', ['-u', peer], { encoding: 'utf8' }).trim()
+  // Default ACL, в отличие от umask, наследуется mkdir даже после PAM umask 077.
+  await writeFile(join(tools, 'useradd'), `#!/usr/bin/python3\nimport os,struct,subprocess,sys\nsubprocess.run(['/usr/sbin/useradd']+sys.argv[1:],check=True)\nif sys.argv[-1]==${JSON.stringify(user)}:\n tags=[(1,7,0xffffffff),(2,7,${peerUid}),(4,5,0xffffffff),(16,7,0xffffffff),(32,5,0xffffffff)]\n os.setxattr('/home/'+sys.argv[-1],'system.posix_acl_default',struct.pack('<I',2)+b''.join(struct.pack('<HHI',*item) for item in tags))\n`, { mode: 0o755 })
   await writeFile(join(tools, 'curl'), `#!/usr/bin/env node\nimport {copyFileSync} from 'node:fs';\nconst args=process.argv.slice(2); const at=args.indexOf('-o'); const name=args[at-1].split('/').at(-1); if (!['orca-web-linux-x64-${wanted}.tar.gz','SHA256SUMS'].includes(name)) throw new Error('Unexpected download'); copyFileSync(${JSON.stringify(releases)}+'/'+name,args[at+1]);\n`, { mode: 0o755 })
   const env = { ...process.env, HOME: operatorHome, ORCA_WEB_VERSION: wanted, PATH: `${tools}:${process.env.PATH}`, TERM: 'xterm', GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'root inherited identity', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 'root@example.invalid' }
   for (const key of ['ORCA_WEB_HOME', 'ORCA_WEB_CONFIG', 'ORCA_WEB_NO_SETUP', 'ORCA_WEB_ACK_ROOT']) delete env[key]
@@ -74,21 +78,17 @@ try {
   for (const path of [installedBase, join(installedBase, 'bin'), join(installedBase, 'releases')]) {
     const info = await stat(path)
     assert.equal(info.uid, uid); assert.equal(info.mode & 0o002, 0, `Installer directory must not be world writable: ${path}`)
-    if (info.mode & 0o020) {
-      assert.equal(info.gid, Number(account[3]), 'Group write must belong to the service private group')
-      const acl = execFileSync('/usr/bin/python3', ['-I', '-c', 'import os,sys; print([(key,os.getxattr(sys.argv[1],key).hex()) for key in os.listxattr(sys.argv[1]) if key.startswith("system.posix_acl")])', path], { encoding: 'utf8' }).trim()
-      process.stdout.write(`Installer permissions: ${path} mode=${(info.mode & 0o777).toString(8)} uid=${info.uid} gid=${info.gid} ACL=${acl}\n`)
-    }
+    assert.equal(info.mode & 0o077, 0, `New installer directories must mask inherited ACL access: ${path}`)
   }
   assert.equal(existsSync(join(home, '.codex')), false)
   assert.equal(execFileSync('runuser', ['-u', user, '--', 'env', '-i', `HOME=${home}`, 'PATH=/usr/bin:/bin', 'git', 'config', '--global', '--get', 'user.name'], { cwd: home, encoding: 'utf8' }).trim(), 'Orca Smoke')
   // Системные XDG-каталоги могут иметь запись для личной группы пользователя.
+  execFileSync('/usr/bin/python3', ['-I', '-c', 'import os,sys; os.removexattr(sys.argv[1],"system.posix_acl_access")', join(home, '.local')])
   await chmod(join(home, '.local'), 0o775)
   const existingUser = [...(customBase ? [] : [['Пользователь сервиса', '1'], ['Имя обычного пользователя', user]]), ['Для использования введите USE', 'USE']]
   await drive([...existingUser, ['Способ доступа', '1'], ['Папка с Git-проектами', ''], ['Настроить автозапуск', automatic], ...(provision ? [['Для перезапуска введите RESTART', 'RESTART']] : []), ['Применить настройки', 'y'], ['Какие CLI установить', '0']])
   assert.equal(await readFile(accountFile, 'utf8'), accounts)
   // Та же запись становится небезопасной, если в группе появляется другой UID.
-  execFileSync('useradd', ['--no-create-home', '--user-group', peer]); peerCreated = true
   execFileSync('usermod', ['--append', '--groups', user, peer])
   const sharedGroup = await drive(existingUser, null)
   assert.match(sharedGroup, /Небезопасные права/)
@@ -98,7 +98,6 @@ try {
   assert.match(await drive(existingUser, null), /Небезопасные права/)
   const peerGroup = execFileSync('getent', ['group', peer], { encoding: 'utf8' }).trim().split(':')[2]
   execFileSync('usermod', ['--gid', peerGroup, peer])
-  const peerUid = execFileSync('id', ['-u', peer], { encoding: 'utf8' }).trim()
   const aclPath = join(home, '.local')
   execFileSync('/usr/bin/python3', ['-I', '-c', 'import os,struct,sys; tags=[(1,7,0xffffffff),(2,2,int(sys.argv[2])),(4,7,0xffffffff),(16,7,0xffffffff),(32,5,0xffffffff)]; os.setxattr(sys.argv[1],"system.posix_acl_access",struct.pack("<I",2)+b"".join(struct.pack("<HHI",*item) for item in tags))', aclPath, peerUid])
   const aclDenied = spawnSync('/bin/bash', [join(releases, 'install-orca-web.sh')], { cwd: fixture, env: { ...env, ORCA_WEB_HOME: installedBase, ORCA_WEB_NO_SETUP: '1' }, encoding: 'utf8', timeout: 30_000 })

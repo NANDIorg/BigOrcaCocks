@@ -47,7 +47,7 @@ export async function setup(options: { reconfigure?: boolean } = {}): Promise<bo
   if (choices.provision && process.getuid?.() !== 0 && process.env.ORCA_WEB_INSTALLER !== '1') throw new Error('Для автонастройки повторите установщик через административное SSH-подключение. Он проверит пакет в отдельном root-каталоге; установленный пользовательский код не запускается через sudo. Текущие настройки сохранены. Для смены папки без системных изменений выберите n и перезапустите сервис.')
   if (pendingPrevious && !choices.provision) throw new Error('Предыдущая автонастройка прервана. Повторите установщик с автонастройкой, чтобы завершить изменения или восстановить прежний конфиг. Текущие настройки сохранены.')
   const root = choices.projectRoot
-  try { await mkdir(root, { recursive: true }); await access(root, constants.R_OK | constants.W_OK | constants.X_OK) }
+  try { await mkdir(root, { recursive: true, mode: 0o700 }); await access(root, constants.R_OK | constants.W_OK | constants.X_OK) }
   catch (error) { throw new Error(`Пользователь ${userInfo().username} не может читать и изменять папку проектов ${root}. Укажите доступный ему каталог.`, { cause: error }) }
   const config = parseWebConfig({ schemaVersion: 1, configDir: configDirectory(), dataDir: existing?.dataDir ?? join(homedir(), '.orca-board', 'profiles', 'default'), projectRoots: existing && root === existing.projectRoots[0] ? existing.projectRoots : [root],
     mode: choices.mode, port: existing?.port ?? 3737, previewPort: existing?.previewPort ?? 3738,

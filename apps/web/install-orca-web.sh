@@ -131,6 +131,20 @@ run_target() {
   if [[ $(id -u) == 0 && $service_uid != 0 ]]; then runuser -u "$service_user" -- env -i "${target_env[@]}" "TERM=${TERM:-xterm}" "LANG=${LANG:-C.UTF-8}" "USER=$service_user" "LOGNAME=$service_user" /bin/sh -c 'umask 077; cd "$HOME" && exec "$@"' orca-web-target "$@"
   else env "${target_env[@]}" "$@"; fi
 }
+private_directories() {
+  # Default ACL игнорирует umask: 0700 задаётся при создании каждого нового предка.
+  run_target /usr/bin/python3 -I - "$@" <<'PY'
+import os,stat,sys
+for path in sys.argv[1:]:
+ current='/'
+ for part in os.path.normpath(path).split('/')[1:]:
+  current=os.path.join(current,part)
+  try: os.mkdir(current,0o700)
+  except FileExistsError:
+   info=os.lstat(current)
+   if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode): raise SystemExit('Каталог установки не может быть симлинком: '+current)
+PY
+}
 repo=NANDIorg/BigOrcaCocks
 version=${ORCA_WEB_VERSION:-}
 if [[ -z $version ]]; then
@@ -230,7 +244,7 @@ if [[ $existing == 1 && -e $config_file ]]; then
     if [[ $installed_version != "$version" ]]; then echo 'Выбранная версия не активирована. Используйте стабильный опубликованный выпуск.' >&2; exit 1; fi
   fi
 else
-  if ! run_target /usr/bin/mkdir -p "$base" 2>/dev/null; then
+  if ! private_directories "$base" 2>/dev/null; then
     if [[ $(id -u) != 0 || $service_uid == 0 ]]; then echo 'Нет доступа к каталогу установки.' >&2; exit 1; fi
     # Custom base под /srv: root создаёт только новые каталоги в собственном дереве.
     # В существующие пользовательские каталоги root не пишет и через ссылки не проходит.
@@ -243,12 +257,12 @@ for part in path.split('/')[1:]:
   info=os.lstat(current)
   if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode & 0o022: raise SystemExit('Root не изменяет существующий пользовательский каталог: '+current)
  except FileNotFoundError:
-  os.mkdir(current,0o755); created.append(current)
+  os.mkdir(current,0o700 if current==path else 0o755); created.append(current)
 if path not in created: raise SystemExit('Каталог установки уже существует и недоступен пользователю; исправьте права вручную.')
 os.chown(path,uid,-1)
 PY
   fi
-  run_target /usr/bin/mkdir -p "$base/releases" "$base/bin" "$service_home/.local/bin"
+  private_directories "$base/releases" "$base/bin" "$service_home/.local/bin"
   if [[ -e $base/releases/$version ]]; then
     echo 'Каталог версии уже существует после незавершённой установки. Проверяю его…'
     cmp "$work/orca-web/release.json" "$base/releases/$version/release.json" || { echo 'Каталог версии отличается от пакета; сохранён без изменения.' >&2; exit 1; }
