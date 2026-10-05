@@ -74,12 +74,29 @@ if [[ $service_uid == 0 && $root_ack != 1 ]]; then
 fi
 # Root не пишет через симлинки/общедоступные каталоги пользователя сервиса.
 python3 - "$base" "$service_home" "$config_file" "$service_uid" <<'PY'
-import grp,os,pwd,stat,sys
+import errno,grp,os,pwd,stat,struct,sys
 uid=int(sys.argv[4])
+accounts=pwd.getpwall()
+def group_uids(gid):
+    group=grp.getgrgid(gid)
+    return {item.pw_uid for item in accounts if item.pw_gid==gid}|{pwd.getpwnam(name).pw_uid for name in group.gr_mem}
+def trusted_acl(path):
+    try: value=os.getxattr(path,'system.posix_acl_access')
+    except OSError as error:
+        if error.errno in (errno.ENODATA,errno.ENOTSUP): return True
+        raise
+    if len(value)<4 or (len(value)-4)%8 or struct.unpack_from('<I',value)[0]!=2: return False
+    for tag,permissions,identity in struct.iter_unpack('<HHI',value[4:]):
+        if not permissions & 2: continue
+        if tag==2 and identity not in (0,uid): return False
+        if tag==8:
+            try: writers=group_uids(identity)
+            except KeyError: return False
+            if not writers or not writers<={0,uid}: return False
+    return True
 private_gid=None
 account=pwd.getpwuid(uid); group=grp.getgrgid(account.pw_gid)
-members={item.pw_uid for item in pwd.getpwall() if item.pw_gid==account.pw_gid}
-members.update(pwd.getpwnam(name).pw_uid for name in group.gr_mem)
+members=group_uids(account.pw_gid)
 if group.gr_name==account.pw_name and members<={0,uid}: private_gid=account.pw_gid
 base=os.path.normpath(sys.argv[1])
 paths=sys.argv[1:4]+[base+'/bin',base+'/bin/orca-web',base+'/releases',sys.argv[2]+'/.local/bin']
@@ -99,7 +116,7 @@ for value in paths:
         if info.st_uid not in (0,uid): raise SystemExit('Небезопасный владелец пути: '+current)
         sticky=stat.S_ISDIR(info.st_mode) and info.st_mode & stat.S_ISVTX and info.st_uid==0
         # Запись личной группы не даёт доступа посторонним; для root допустимы только UID 0.
-        private_group=info.st_uid==uid and info.st_gid==private_gid and not info.st_mode & 0o002
+        private_group=info.st_uid==uid and info.st_gid==private_gid and not info.st_mode & 0o002 and trusted_acl(current)
         if info.st_mode & 0o022 and not sticky and not private_group: raise SystemExit('Небезопасные права пути: '+current)
 PY
 ssh_target=${ORCA_WEB_SSH_TARGET:-}

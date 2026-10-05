@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 
 // Изменение passwd/home разрешено только в disposable Linux smoke, запускаемом явно.
@@ -71,7 +71,15 @@ try {
   assert.equal(config.mode, 'local'); assert.equal(config.origin, 'http://localhost:3737')
   assert.equal((await stat(configFile)).uid, uid); assert.equal((await stat(accountFile)).mode & 0o777, 0o600)
   assert.equal((await stat(join(installedBase, 'current/app/control.mjs'))).uid, uid)
-  for (const path of [installedBase, join(installedBase, 'bin'), join(installedBase, 'releases')]) assert.equal((await stat(path)).mode & 0o022, 0, `Installer directory must not be group/world writable: ${path}`)
+  for (const path of [installedBase, join(installedBase, 'bin'), join(installedBase, 'releases')]) {
+    const info = await stat(path)
+    assert.equal(info.uid, uid); assert.equal(info.mode & 0o002, 0, `Installer directory must not be world writable: ${path}`)
+    if (info.mode & 0o020) {
+      assert.equal(info.gid, Number(account[3]), 'Group write must belong to the service private group')
+      const acl = execFileSync('/usr/bin/python3', ['-I', '-c', 'import os,sys; print([(key,os.getxattr(sys.argv[1],key).hex()) for key in os.listxattr(sys.argv[1]) if key.startswith("system.posix_acl")])', path], { encoding: 'utf8' }).trim()
+      process.stdout.write(`Installer permissions: ${path} mode=${(info.mode & 0o777).toString(8)} uid=${info.uid} gid=${info.gid} ACL=${acl}\n`)
+    }
+  }
   assert.equal(existsSync(join(home, '.codex')), false)
   assert.equal(execFileSync('runuser', ['-u', user, '--', 'env', '-i', `HOME=${home}`, 'PATH=/usr/bin:/bin', 'git', 'config', '--global', '--get', 'user.name'], { cwd: home, encoding: 'utf8' }).trim(), 'Orca Smoke')
   // Системные XDG-каталоги могут иметь запись для личной группы пользователя.
@@ -88,8 +96,18 @@ try {
   execFileSync('gpasswd', ['--delete', peer, user], { stdio: 'pipe' })
   execFileSync('usermod', ['--gid', account[3], peer])
   assert.match(await drive(existingUser, null), /Небезопасные права/)
+  const peerGroup = execFileSync('getent', ['group', peer], { encoding: 'utf8' }).trim().split(':')[2]
+  execFileSync('usermod', ['--gid', peerGroup, peer])
+  const peerUid = execFileSync('id', ['-u', peer], { encoding: 'utf8' }).trim()
+  const aclPath = join(home, '.local')
+  execFileSync('/usr/bin/python3', ['-I', '-c', 'import os,struct,sys; tags=[(1,7,0xffffffff),(2,2,int(sys.argv[2])),(4,7,0xffffffff),(16,7,0xffffffff),(32,5,0xffffffff)]; os.setxattr(sys.argv[1],"system.posix_acl_access",struct.pack("<I",2)+b"".join(struct.pack("<HHI",*item) for item in tags))', aclPath, peerUid])
+  const aclDenied = spawnSync('/bin/bash', [join(releases, 'install-orca-web.sh')], { cwd: fixture, env: { ...env, ORCA_WEB_HOME: installedBase, ORCA_WEB_NO_SETUP: '1' }, encoding: 'utf8', timeout: 30_000 })
+  execFileSync('/usr/bin/python3', ['-I', '-c', 'import os,sys; os.removexattr(sys.argv[1],"system.posix_acl_access")', aclPath])
+  assert.notEqual(aclDenied.status, 0, 'A named ACL writer must not bypass private-group validation')
+  assert.match(aclDenied.stderr, /Небезопасные права/)
   execFileSync('userdel', [peer], { stdio: 'pipe' })
-  execFileSync('groupdel', [peer]); peerCreated = false
+  if (spawnSync('getent', ['group', peer], { stdio: 'ignore' }).status === 0) execFileSync('groupdel', [peer])
+  peerCreated = false
   await chmod(join(home, '.local'), 0o777)
   assert.match(await drive(existingUser, null), /Небезопасные права/)
   await chmod(join(home, '.local'), 0o775)
