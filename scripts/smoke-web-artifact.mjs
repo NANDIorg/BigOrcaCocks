@@ -37,7 +37,11 @@ const post = (path, value, headers = {}) => request(path, { method: 'POST', data
 let host; let cli
 try {
   host = await module.startWeb({ config, resourceDir: artifact })
-  assert.equal((await request('/health')).json().version, manifest.version)
+  const health = (await request('/health')).json(); assert.equal(health.version, manifest.version)
+  if (health.instance) {
+    const previewHealth = (await request('/health', { targetPort: previewPort, host: new URL(config.previewOrigin).host })).json()
+    assert.equal(previewHealth.instance, health.instance); assert.equal(previewHealth.version, manifest.version); assert.equal(previewHealth.service, 'orca-web-preview')
+  }
   assert.equal((await request('/')).status, 200)
   assert.equal((await request('/auth/session')).status, 401)
   assert.equal((await request('/package.json')).status, 404)
