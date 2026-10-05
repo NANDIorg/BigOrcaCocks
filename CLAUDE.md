@@ -57,8 +57,8 @@ orca-board; `skills/*.md` — инструкции самого продукта
 - **Не запускать `pnpm pack`**: это встроенная команда pnpm. Сборка — `pnpm --filter @orca-board/desktop run pack`.
 - **Не менять версию** вне задачи на релиз. Релиз — коммит `chore: release vX.Y.Z`, версия меняется
   одновременно в `/package.json` и `apps/desktop/package.json` для Desktop; Web меняет только
-  `apps/web/package.json`, CLI — `packages/cli/package.json`, через PR подготовки в `release/*`
-  или `hotfix/*`. Существующие теги не передвигать. Полный порядок — в `docs/git-flow.md`.
+  `apps/web/package.json`, CLI — `packages/cli/package.json`, в ветке подготовки `release/*`
+  (срочный выпуск — тоже `release/*`, от `master`). Существующие теги не передвигать. Полный порядок — в `docs/git-flow.md`.
   Desktop использует `vX.Y.Z`, Web — `web/vX.Y.Z`, CLI — `cli/vX.Y.Z`; выпуски независимы.
   Порядок Web-поставки — [docs/web.md](docs/web.md).
 - **Не повторять и не переназначать морские кодовые имена Orca.** Источник —
@@ -165,29 +165,28 @@ pnpm verify      # перед PR: check:git-flow + typecheck + test + build (к�
 ## Git и ветки
 
 - **Обычная сессия агента:** отдельный worktree, `feature/<issue>-<slug>` от актуального
-  `origin/develop`; результат — PR в `develop`. `master` — выпущенные версии, `develop` — интеграция,
-  `release/X.Y.Z` — подготовка выпуска, `hotfix/X.Y.Z` — срочное исправление от `origin/master`.
-  Стабилизация общих release/hotfix-веток — через `fix/*` и PR. Работать прямо в общих ветках нельзя.
+  `origin/develop`. Ветка и worktree **локальные**: результат по умолчанию — проверенные коммиты в локальной
+  ветке; push и PR в `develop` — только по явному поручению человека. `master` — выпущенные версии,
+  `develop` — интеграция, `release/X.Y.Z` — подготовка выпуска (обычного — от `origin/develop`, срочного —
+  от `origin/master`). Отдельных удалённых `hotfix/*` и `fix/*` нет. Работать прямо в `master` / `develop` нельзя.
 - **Воркер Orca (`ORCA_DISPATCH_ID`):** используй назначенный worktree на `orca/<taskId>`,
   не переключай ветку, не создавай внешний PR. Локально мержит приложение — в ветку глобальной задачи
   (`feature/<runId>-<slug>`, `src/main/run-branch.ts`), а не в ветку root. Процесс —
   «Работа через Orca» в `docs/git-flow.md`.
-- **Координатор Orca (`ORCA_ROLE=coordinator`):** приложение ветку фичи не пушит — это делаешь ты. Когда все
-  подзадачи слиты в ветку глобальной задачи, перед `orca-board runs finish`: в её worktree
-  `pnpm install --frozen-lockfile` и `pnpm verify`; зелёный — пушь ветку под коротким именем:
-  `git push -u origin HEAD:feature/<name>`, где `<name>` — 2–4 слова латиницей по сути фичи (`feature/project-groups`,
-  `feature/branch-menu`). Имя уже есть на remote — выбери другое. PR открывай из этой ветки:
-  `gh pr create --head feature/<name> --base develop` (заголовок — Conventional Commits, тело — по
-  `.github/pull_request_template.md`, честно отметь, что не проверено: UI глазами, CI). Ссылку на PR — в сводку `runs finish`. Красный verify,
-  отказ push или gh (нет gh, нет логина, нет прав) — не пушь и не обходи, причину — в сводку. Сам не мержи,
-  не делай approve и не пушь служебные `orca/*`. Правило только для этого репозитория: в skills его не переносить.
+- **Координатор Orca (`ORCA_ROLE=coordinator`):** ветку фичи не пушит и PR не открывает — ни сам, ни
+  по готовности всех подзадач. Ветка глобальной задачи остаётся локальной; в сводке `runs finish` укажи её имя
+  и результат `pnpm verify`. Публикация (push и PR) — только по явному поручению человека, отдельной сессией.
+  Сам не мержи, не делай approve и не пушь служебные `orca/*`. Правило только для этого репозитория: в skills его не переносить.
 - У каждого разработчика свой clone. У каждой рабочей ветки один владелец; разные пишущие агенты
   не делят worktree. Не трогай чужие правки и не переключай root проекта при живых воркерах Orca.
-- Агент самостоятельно делает проверки, коммиты, push своей ветки и готовит PR с явной базой.
-  Для мержа нужен зелёный CI (`git-flow`, `quality`), approval второго разработчика и полномочие
+- Агент самостоятельно делает проверки и коммиты в своей локальной ветке. Push и PR — только по явному
+  поручению; тогда PR с явной базой. Для мержа нужен зелёный CI (`git-flow`, `quality`), approval второго разработчика и полномочие
   на слияние. Самоодобрение от другой модели под тем же аккаунтом не считается ревью коллеги.
-- Только merge commits; после release/hotfix обязательно перенеси `master` обратно в `develop`
-  и активную release-ветку через отдельные `sync/*` PR. Шаги и конфликты версий — в `docs/git-flow.md`.
+- **На remote постоянно только `master` и `develop`**; дополнительно — максимум одна активная `release/*`
+  без защиты. Завершённая PR-ветка удаляется сразу после мержа (автоудаление GitHub) или отмены PR; release-ветка —
+  после обратного переноса.
+- Только merge commits; после выпуска обязательно перенеси `master` обратно в `develop` через `sync/*` PR.
+  Шаги и конфликты версий — в `docs/git-flow.md`.
 - Коммиты — Conventional Commits на русском: `feat(renderer): …`, `feat(main,cli): …`, `fix: …`,
   `docs: …`, `refactor: …`, `chore: release vX.Y.Z`. Scope — слой: `core`, `main`, `cli`, `renderer`, `skills`.
   В теле — список изменений по файлам, для `fix` — **первопричина** (образец — 086a654).
