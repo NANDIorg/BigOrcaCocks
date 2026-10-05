@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 
 async function wizard() { return import('../src/server/wizard.ts') }
 const context = { home: '/home/orca', root: false, installer: true }
@@ -13,7 +14,7 @@ function io(answers: string[]) {
 test('Enter выбирает SSH, объясняет проекты и подтверждает план до применения', async () => {
   const { collectSetup } = await wizard(); const terminal = io(['', '', 'operator', '', ''])
   const result = await collectSetup(terminal, context)
-  assert.equal(result.mode, 'local'); assert.equal(result.projectRoot, '/home/orca/projects')
+  assert.equal(result.mode, 'local'); assert.equal(result.projectRoot, join(context.home, 'projects'))
   assert.equal(result.provision, true); assert.equal(result.login, 'operator')
   assert.match(terminal.output.join(''), /поменять/i); assert.match(terminal.output.join(''), /репозитор/i)
   assert.match(terminal.prompts.at(-1)!, /Применить/)
@@ -42,9 +43,9 @@ test('публичный мастер принимает разные домен
 test('повторный мастер сохраняет аккаунт и существующий путь по умолчанию', async () => {
   const { collectSetup } = await wizard()
   const terminal = io(['', '', '', ''])
-  const existing = { projectRoots: ['/srv/git'], mode: 'local' as const, origin: 'http://localhost:3737', previewOrigin: 'http://127.0.0.1:3738' }
+  const existing = { projectRoots: [join(context.home, 'repos')], mode: 'local' as const, origin: 'http://localhost:3737', previewOrigin: 'http://127.0.0.1:3738' }
   const result = await collectSetup(terminal, { ...context, existing })
-  assert.equal(result.projectRoot, '/srv/git'); assert.equal(result.login, undefined)
+  assert.equal(result.projectRoot, existing.projectRoots[0]); assert.equal(result.login, undefined)
   assert.ok(terminal.prompts.every(prompt => !prompt.includes('Логин')))
 })
 
