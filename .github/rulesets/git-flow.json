@@ -7,13 +7,7 @@
     "ref_name": {
       "include": [
         "refs/heads/master",
-        "refs/heads/develop",
-        "refs/heads/release/*",
-        "refs/heads/hotfix/*",
-        "refs/heads/release/cli/*",
-        "refs/heads/release/web/*",
-        "refs/heads/hotfix/cli/*",
-        "refs/heads/hotfix/web/*"
+        "refs/heads/develop"
       ],
       "exclude": []
     }
