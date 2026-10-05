@@ -102,8 +102,8 @@ if [[ -z $ssh_target && -n ${SSH_CONNECTION:-} ]]; then
 fi
 run_target() {
   local target_env=("HOME=$service_home" "ORCA_WEB_HOME=$base" "ORCA_WEB_CONFIG=$config_file" ORCA_WEB_INSTALLER=1 "ORCA_WEB_ACK_ROOT=$root_ack" "ORCA_WEB_SSH_TARGET=$ssh_target" "ORCA_WEB_SSH_PORT=$ssh_port" "PATH=$base/current/node/bin:$service_home/.local/bin:/usr/local/bin:/usr/bin:/bin")
-  # Исходный каталог SSH (например, /root) может быть недоступен новому пользователю.
-  if [[ $(id -u) == 0 && $service_uid != 0 ]]; then runuser -u "$service_user" -- env -i "${target_env[@]}" "TERM=${TERM:-xterm}" "LANG=${LANG:-C.UTF-8}" "USER=$service_user" "LOGNAME=$service_user" /bin/sh -c 'cd "$HOME" && exec "$@"' orca-web-target "$@"
+  # PAM может сбросить umask; исходный каталог SSH (например, /root) недоступен пользователю.
+  if [[ $(id -u) == 0 && $service_uid != 0 ]]; then runuser -u "$service_user" -- env -i "${target_env[@]}" "TERM=${TERM:-xterm}" "LANG=${LANG:-C.UTF-8}" "USER=$service_user" "LOGNAME=$service_user" /bin/sh -c 'umask 077; cd "$HOME" && exec "$@"' orca-web-target "$@"
   else env "${target_env[@]}" "$@"; fi
 }
 repo=NANDIorg/BigOrcaCocks

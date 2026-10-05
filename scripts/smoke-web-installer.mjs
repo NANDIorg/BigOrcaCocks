@@ -69,6 +69,7 @@ try {
   assert.equal(config.mode, 'local'); assert.equal(config.origin, 'http://localhost:3737')
   assert.equal((await stat(configFile)).uid, uid); assert.equal((await stat(accountFile)).mode & 0o777, 0o600)
   assert.equal((await stat(join(installedBase, 'current/app/control.mjs'))).uid, uid)
+  for (const path of [join(home, '.local'), installedBase, join(installedBase, 'bin'), join(installedBase, 'releases')]) assert.equal((await stat(path)).mode & 0o022, 0, `Installer directory must not be group/world writable: ${path}`)
   assert.equal(existsSync(join(home, '.codex')), false)
   assert.equal(execFileSync('runuser', ['-u', user, '--', 'env', '-i', `HOME=${home}`, 'PATH=/usr/bin:/bin', 'git', 'config', '--global', '--get', 'user.name'], { cwd: home, encoding: 'utf8' }).trim(), 'Orca Smoke')
   const existingUser = [...(customBase ? [] : [['Пользователь сервиса', '1'], ['Имя обычного пользователя', user]]), ['Для использования введите USE', 'USE']]
