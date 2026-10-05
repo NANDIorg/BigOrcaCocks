@@ -15,3 +15,7 @@ release/
 .native/
 
 apps/web/release/
+
+apps/web/docker/.env
+apps/web/docker/projects/
+apps/web/docker/compose.override.yaml

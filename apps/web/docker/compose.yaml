@@ -1,0 +1,20 @@
+# Orca Web за внешним reverse proxy: docs/web-docker.md.
+# Запуск из этого каталога: cp .env.example .env, заполните .env, затем docker compose up -d --build.
+services:
+  orca-web:
+    build:
+      context: ../../..
+      dockerfile: apps/web/docker/Dockerfile
+    image: orca-web:local
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Только loopback хоста: снаружи панель доступна через reverse proxy с HTTPS.
+      - "${ORCA_BIND:-127.0.0.1}:${ORCA_PANEL_PORT:-8080}:8080"
+      - "${ORCA_BIND:-127.0.0.1}:${ORCA_PREVIEW_PORT:-8081}:8081"
+    volumes:
+      - orca-home:/home/orca
+      - ${ORCA_PROJECTS_DIR:-./projects}:/projects
+
+volumes:
+  orca-home:
