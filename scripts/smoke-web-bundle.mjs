@@ -19,6 +19,8 @@ try {
   execFileSync('bash', [join(releases, 'install-orca-web.sh')], { env, stdio: 'inherit' })
   for (const file of ['app', 'app/control.mjs', 'node/bin/node']) assert.equal(statSync(join(prefix, 'current', file)).uid, process.getuid(), `Владелец установленного ${file} должен совпадать с пользователем установки`)
   execFileSync(join(prefix, 'bin/orca-web'), ['help'], { env, stdio: 'inherit' })
+  // Повторная установка проверяет права текущего пакета, включая вариант root.
+  execFileSync('bash', [join(releases, 'install-orca-web.sh')], { env, stdio: 'inherit' })
   const bundledNode = join(prefix, 'current/node/bin/node')
   execFileSync(bundledNode, [join(root, 'scripts/smoke-web-setup.mjs'), join(prefix, 'current')], { cwd: fixture, env, stdio: 'inherit', timeout: 30_000 })
   execFileSync(bundledNode, [join(root, 'scripts/smoke-web-artifact.mjs'), join(prefix, 'current/app')], { cwd: fixture, env, stdio: 'inherit', timeout: 120_000 })

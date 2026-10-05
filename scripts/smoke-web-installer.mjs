@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, readFile, stat, rm, unlink, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, stat, rm, unlink, symlink, chmod } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -12,6 +12,8 @@ if (process.platform !== 'linux' || process.getuid() !== 0 || process.env.ORCA_W
 const [directory, artifact, wanted] = process.argv.slice(2)
 const releases = resolve(directory); const release = resolve(artifact)
 const user = `orcasmoke${randomBytes(4).toString('hex')}`
+const peer = `orcaprobe${randomBytes(4).toString('hex')}`
+let peerCreated = false
 const fixture = await mkdtemp(join(tmpdir(), 'orca-installer-tty-'))
 const native = createRequire(join(release, 'app/package.json'))('node-pty')
 const password = 'installer-smoke-secret-123'
@@ -69,12 +71,28 @@ try {
   assert.equal(config.mode, 'local'); assert.equal(config.origin, 'http://localhost:3737')
   assert.equal((await stat(configFile)).uid, uid); assert.equal((await stat(accountFile)).mode & 0o777, 0o600)
   assert.equal((await stat(join(installedBase, 'current/app/control.mjs'))).uid, uid)
-  for (const path of [join(home, '.local'), installedBase, join(installedBase, 'bin'), join(installedBase, 'releases')]) assert.equal((await stat(path)).mode & 0o022, 0, `Installer directory must not be group/world writable: ${path}`)
+  for (const path of [installedBase, join(installedBase, 'bin'), join(installedBase, 'releases')]) assert.equal((await stat(path)).mode & 0o022, 0, `Installer directory must not be group/world writable: ${path}`)
   assert.equal(existsSync(join(home, '.codex')), false)
   assert.equal(execFileSync('runuser', ['-u', user, '--', 'env', '-i', `HOME=${home}`, 'PATH=/usr/bin:/bin', 'git', 'config', '--global', '--get', 'user.name'], { cwd: home, encoding: 'utf8' }).trim(), 'Orca Smoke')
+  // Системные XDG-каталоги могут иметь запись для личной группы пользователя.
+  await chmod(join(home, '.local'), 0o775)
   const existingUser = [...(customBase ? [] : [['Пользователь сервиса', '1'], ['Имя обычного пользователя', user]]), ['Для использования введите USE', 'USE']]
   await drive([...existingUser, ['Способ доступа', '1'], ['Папка с Git-проектами', ''], ['Настроить автозапуск', automatic], ...(provision ? [['Для перезапуска введите RESTART', 'RESTART']] : []), ['Применить настройки', 'y'], ['Какие CLI установить', '0']])
   assert.equal(await readFile(accountFile, 'utf8'), accounts)
+  // Та же запись становится небезопасной, если в группе появляется другой UID.
+  execFileSync('useradd', ['--no-create-home', '--user-group', peer]); peerCreated = true
+  execFileSync('usermod', ['--append', '--groups', user, peer])
+  const sharedGroup = await drive(existingUser, null)
+  assert.match(sharedGroup, /Небезопасные права/)
+  assert.equal(await readFile(accountFile, 'utf8'), accounts)
+  execFileSync('gpasswd', ['--delete', peer, user], { stdio: 'pipe' })
+  execFileSync('usermod', ['--gid', account[3], peer])
+  assert.match(await drive(existingUser, null), /Небезопасные права/)
+  execFileSync('userdel', [peer], { stdio: 'pipe' })
+  execFileSync('groupdel', [peer]); peerCreated = false
+  await chmod(join(home, '.local'), 0o777)
+  assert.match(await drive(existingUser, null), /Небезопасные права/)
+  await chmod(join(home, '.local'), 0o775)
   if (ownsProvisionFixture) {
     const unit = await readFile('/etc/systemd/system/orca-web.service', 'utf8')
     assert.ok(unit.includes(`User=${user}\n`))
@@ -101,6 +119,11 @@ try {
   process.stdout.write('Fresh-user installer TTY smoke PASS: automatic Linux user, clean environment, SSH default, hidden password, ownership and safe rerun\n')
 } finally {
   terminal?.kill()
+  if (peerCreated) {
+    try { execFileSync('gpasswd', ['--delete', peer, user], { stdio: 'pipe' }) } catch {}
+    try { execFileSync('userdel', [peer], { stdio: 'pipe' }) } catch {}
+    try { execFileSync('groupdel', [peer], { stdio: 'pipe' }) } catch {}
+  }
   if (ownsProvisionFixture) {
     try { execFileSync('systemctl', ['stop', 'orca-web']) } catch {}
     try { execFileSync('systemctl', ['disable', 'orca-web']) } catch {}

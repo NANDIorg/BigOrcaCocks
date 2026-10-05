@@ -39,7 +39,7 @@ if [[ $(id -u) == 0 ]]; then
         if getent passwd "$service_user" >/dev/null; then
           confirm "Предупреждение: пользователь $service_user уже существует. Orca получит доступ к его файлам и CLI-авторизации. Для использования введите USE:" USE
         else
-          useradd --create-home --shell /bin/bash "$service_user"
+          useradd --create-home --user-group --shell /bin/bash "$service_user"
           echo "Создан пользователь $service_user без пароля; SSH-ключи и credentials root не копируются."
         fi
         service_home=$(getent passwd "$service_user" | cut -d: -f6)
@@ -74,10 +74,15 @@ if [[ $service_uid == 0 && $root_ack != 1 ]]; then
 fi
 # Root не пишет через симлинки/общедоступные каталоги пользователя сервиса.
 python3 - "$base" "$service_home" "$config_file" "$service_uid" <<'PY'
-import os,stat,sys
+import grp,os,pwd,stat,sys
 uid=int(sys.argv[4])
+private_gid=None
+account=pwd.getpwuid(uid); group=grp.getgrgid(account.pw_gid)
+members={item.pw_uid for item in pwd.getpwall() if item.pw_gid==account.pw_gid}
+members.update(pwd.getpwnam(name).pw_uid for name in group.gr_mem)
+if group.gr_name==account.pw_name and members<={0,uid}: private_gid=account.pw_gid
 base=os.path.normpath(sys.argv[1])
-paths=sys.argv[1:4]+[base+'/bin',base+'/bin/orca-web',base+'/releases']
+paths=sys.argv[1:4]+[base+'/bin',base+'/bin/orca-web',base+'/releases',sys.argv[2]+'/.local/bin']
 if uid==0 and os.path.lexists(base+'/current'):
     if os.lstat(base+'/current').st_uid!=0: raise SystemExit('Root не запускает код обычного пользователя')
     release=os.path.realpath(base+'/current')
@@ -92,7 +97,10 @@ for value in paths:
         except FileNotFoundError: break
         if stat.S_ISLNK(info.st_mode): raise SystemExit('Установка не пишет через симлинки: '+current)
         if info.st_uid not in (0,uid): raise SystemExit('Небезопасный владелец пути: '+current)
-        if info.st_mode & 0o022 and not (stat.S_ISDIR(info.st_mode) and info.st_mode & stat.S_ISVTX and info.st_uid==0): raise SystemExit('Небезопасные права пути: '+current)
+        sticky=stat.S_ISDIR(info.st_mode) and info.st_mode & stat.S_ISVTX and info.st_uid==0
+        # Запись личной группы не даёт доступа посторонним; для root допустимы только UID 0.
+        private_group=info.st_uid==uid and info.st_gid==private_gid and not info.st_mode & 0o002
+        if info.st_mode & 0o022 and not sticky and not private_group: raise SystemExit('Небезопасные права пути: '+current)
 PY
 ssh_target=${ORCA_WEB_SSH_TARGET:-}
 ssh_port=${ORCA_WEB_SSH_PORT:-}
@@ -127,6 +135,8 @@ if ! awk 'BEGIN { valid=1 } { if ($0 !~ /^orca-web(\/|$)/ || $0 ~ /(^|\/)\.\.(\/
 tar -tvzf "$work/$asset" > "$work/details"
 if ! awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" { exit 1 }' "$work/details"; then echo 'Archive должен содержать только обычные файлы и каталоги' >&2; exit 1; fi
 tar -xzf "$work/$asset" --no-same-owner -C "$work"
+# Права поставки не зависят от umask машины сборки и не открывают запись другим UID.
+/usr/bin/chmod -R go-w "$work/orca-web"
 "$work/orca-web/node/bin/node" --input-type=module - "$work/orca-web" "$version" <<'JS'
 import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, relative, isAbsolute } from 'node:path'
@@ -179,6 +189,8 @@ with tempfile.TemporaryDirectory(prefix='orca-web-admin-',dir='/var/tmp') as wor
    if parts[0]!='orca-web' or any(part in ('.','..') for part in parts) or '\\' in item.name or not(item.isfile() or item.isdir()): raise ValueError('Небезопасный archive')
   bundle.extractall(work,filter='data')
  root=os.path.join(work,'orca-web')
+ for folder,dirs,files in os.walk(root):
+  for path in [folder]+[os.path.join(folder,name) for name in files]: os.chmod(path,os.stat(path).st_mode & ~0o022)
  with open(root+'/release.json') as file: release=json.load(file)
  with open(root+'/app/package.json') as file: manifest=json.load(file)
  if manifest.get('name')!='@orca-board/web' or manifest.get('version')!=version or release.get('version')!=version or release.get('platform')!='linux' or release.get('arch')!='x64' or release.get('schemaVersion')!=1 or release.get('setupWizardVersion')!=2: raise ValueError('Несовместимый artifact')
