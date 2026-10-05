@@ -16,7 +16,7 @@ try {
   await copyFile(join(release, 'bin/orca-web'), join(base, 'bin/orca-web')); await chmod(join(base, 'bin/orca-web'), 0o755)
   const password = 'wizard-secret-123'
   const gitConfigured = (() => { try { return Boolean(execFileSync('git', ['config', '--global', '--get', 'user.name'], { encoding: 'utf8' }).trim()) && Boolean(execFileSync('git', ['config', '--global', '--get', 'user.email'], { encoding: 'utf8' }).trim()) } catch { return false } })()
-  const prompts = [ ...(process.getuid() === 0 ? [['Для продолжения введите ROOT', 'ROOT']] : []), ['Способ доступа', '2'], ['Папка с Git-проектами', join(root, 'projects')], ['Домен Orca', 'orca.example'], ['Домен предпросмотра', 'preview.example'], ['Для доступа через интернет', 'OPEN'], ['Логин первого', 'operator'], ...(!gitConfigured ? [['Имя автора Git', 'Orca'], ['Email автора Git', 'orca@example.com']] : []), ['Email для уведомлений', ''], ['Настроить автозапуск', 'n'], ['Применить настройки', 'y'], ['Пароль (от', password], ['Повторите пароль', password] ]
+  const prompts = [ ...(process.getuid() === 0 ? [['Для продолжения введите ROOT', 'ROOT']] : []), ['Способ доступа', '2'], ['Папка с Git-проектами', join(root, 'projects')], ['Домен Orca', 'orca.example'], ['Домен предпросмотра', 'preview.example'], ['Для доступа через интернет', 'OPEN'], ['Логин первого', 'operator'], ...(!gitConfigured ? [['Имя автора Git', 'Orca'], ['Email автора Git', 'orca@example.com']] : []), ['Email для уведомлений', ''], ['Настроить автозапуск', '2'], ['Применить настройки', '1'], ['Пароль (от', password], ['Повторите пароль', password] ]
   const env = { ...process.env, ORCA_WEB_HOME: base, ORCA_WEB_CONFIG: configFile, ORCA_WEB_ACK_ROOT: '0', PATH: `${join(release, 'node/bin')}:${process.env.PATH}`, TERM: 'xterm' }
   terminal = native.spawn(join(release, 'node/bin/node'), [join(release, 'app/control.mjs'), 'setup'], { name: 'xterm', cols: 100, rows: 30, cwd: root, env })
   let output = ''; let cursor = 0; let step = 0
@@ -53,7 +53,7 @@ try {
     process.stdout.write('Root service smoke PASS: real unit installation, no sudo, systemctl boundary\n')
   }
   const originalAccounts = await readFile(join(config.configDir, 'accounts.json'), 'utf8')
-  const again = [ ...(process.getuid() === 0 ? [['Для продолжения введите ROOT', 'ROOT']] : []), ['Способ доступа', '1'], ['Папка с Git-проектами', join(root, 'projects-updated')], ['Настроить автозапуск', 'y'], ['Применить настройки', 'y'] ]
+  const again = [ ...(process.getuid() === 0 ? [['Для продолжения введите ROOT', 'ROOT']] : []), ['Способ доступа', '1'], ['Папка с Git-проектами', join(root, 'projects-updated')], ['Настроить автозапуск', '1'], ['Применить настройки', '1'] ]
   terminal = native.spawn(join(release, 'node/bin/node'), [join(release, 'app/control.mjs'), 'configure'], { name: 'xterm', cols: 100, rows: 30, cwd: root, env: { ...env, ORCA_WEB_INSTALLER: '1' } })
   output = ''; cursor = 0; step = 0
   const secondExit = new Promise(resolve => terminal.onExit(resolve))
@@ -76,7 +76,7 @@ try {
   if (process.getuid() !== 0) {
     const before = await readFile(configFile, 'utf8'); const tools = join(root, 'refuse-sudo'); await mkdir(tools)
     await writeFile(join(tools, 'sudo'), '#!/bin/sh\necho forbidden-user-owned-code >&2\nexit 99\n', { mode: 0o755 })
-    const unsafe = [['Способ доступа', '1'], ['Папка с Git-проектами', join(root, 'must-not-be-applied')], ['Настроить автозапуск', 'y'], ['Применить настройки', 'y']]
+    const unsafe = [['Способ доступа', '1'], ['Папка с Git-проектами', join(root, 'must-not-be-applied')], ['Настроить автозапуск', '1'], ['Применить настройки', '1']]
     terminal = native.spawn(join(release, 'node/bin/node'), [join(release, 'app/control.mjs'), 'configure'], { name: 'xterm', cols: 100, rows: 30, cwd: root, env: { ...env, ORCA_WEB_INSTALLER: '0', PATH: `${tools}:${env.PATH}` } })
     output = ''; cursor = 0; step = 0
     const denied = new Promise(resolve => terminal.onExit(resolve))

@@ -64,12 +64,12 @@ try {
     assert.equal(output.includes(password), false)
     return output
   }
-  const automatic = provision ? 'y' : 'n'
-  const first = await drive([['Пользователь сервиса', '1'], ['Имя обычного пользователя', user], ['Способ доступа', '1'], ['Папка с Git-проектами', ''], ['Логин первого', 'operator'], ['Имя автора Git', 'Orca Smoke'], ['Email автора Git', 'smoke@example.com'], ['Настроить автозапуск', automatic], ['Применить настройки', 'y'], ['Пароль (от', password], ['Повторите пароль', password], ['Какие CLI установить', '0']])
+  const automatic = provision ? '1' : '2'
+  const first = await drive([['Пользователь сервиса', '1'], ['Имя обычного пользователя', user], ['Способ доступа', '1'], ['Папка с Git-проектами', ''], ['Логин первого', 'operator'], ['Имя автора Git', 'Orca Smoke'], ['Email автора Git', 'smoke@example.com'], ['Настроить автозапуск', automatic], ['Применить настройки', '1'], ['Пароль (от', password], ['Повторите пароль', password], ['Какие CLI установить', '1']])
   const account = execFileSync('getent', ['passwd', user], { encoding: 'utf8' }).trim().split(':')
   const uid = Number(account[2]); const home = account[5]
   const installedBase = customBase ?? join(home, '.local/share/orca-web')
-  assert.ok(uid > 0); assert.match(first, /пользователя orcasmoke/)
+  assert.ok(uid > 0); assert.match(first, /Пользователь:\s+orcasmoke/)
   const configFile = join(home, '.config/orca-web/config.json'); const accountFile = join(home, '.config/orca-web/accounts.json')
   const config = JSON.parse(await readFile(configFile, 'utf8')); const accounts = await readFile(accountFile, 'utf8')
   assert.equal(config.mode, 'local'); assert.equal(config.origin, 'http://localhost:3737')
@@ -86,7 +86,7 @@ try {
   execFileSync('/usr/bin/python3', ['-I', '-c', 'import os,sys; os.removexattr(sys.argv[1],"system.posix_acl_access")', join(home, '.local')])
   await chmod(join(home, '.local'), 0o775)
   const existingUser = [...(customBase ? [] : [['Пользователь сервиса', '1'], ['Имя обычного пользователя', user]]), ['Для использования введите USE', 'USE']]
-  await drive([...existingUser, ['Способ доступа', '1'], ['Папка с Git-проектами', ''], ['Настроить автозапуск', automatic], ...(provision ? [['Для перезапуска введите RESTART', 'RESTART']] : []), ['Применить настройки', 'y'], ['Какие CLI установить', '0']])
+  await drive([...existingUser, ['Способ доступа', '1'], ['Папка с Git-проектами', ''], ['Настроить автозапуск', automatic], ...(provision ? [['Для перезапуска введите RESTART', 'RESTART']] : []), ['Применить настройки', '1'], ['Какие CLI установить', '1']])
   assert.equal(await readFile(accountFile, 'utf8'), accounts)
   // Та же запись становится небезопасной, если в группе появляется другой UID.
   execFileSync('usermod', ['--append', '--groups', user, peer])
@@ -117,7 +117,7 @@ try {
     assert.equal(Number(execFileSync('ps', ['-o', 'uid=', '-p', pid], { encoding: 'utf8' }).trim()), uid, 'Service process must actually run with target UID')
     assert.equal((await stat('/etc/sudoers.d/orca-web-update')).mode & 0o777, 0o440)
     const before = await readFile(configFile, 'utf8')
-    const failed = await drive([...existingUser, ['Способ доступа', '2'], ['Папка с Git-проектами', ''], ['Домен Orca', 'orca-installer-test.invalid'], ['Домен предпросмотра', 'preview-installer-test.invalid'], ['Для доступа через интернет', 'OPEN'], ['Email для уведомлений', ''], ['Настроить автозапуск', 'y'], ['Для перезапуска введите RESTART', 'RESTART'], ['Применить настройки', 'y']], null)
+    const failed = await drive([...existingUser, ['Способ доступа', '2'], ['Папка с Git-проектами', ''], ['Домен Orca', 'orca-installer-test.invalid'], ['Домен предпросмотра', 'preview-installer-test.invalid'], ['Для доступа через интернет', 'OPEN'], ['Email для уведомлений', ''], ['Настроить автозапуск', '1'], ['Для перезапуска введите RESTART', 'RESTART'], ['Применить настройки', '1']], null)
     assert.match(failed, /Прежние настройки.*восстановлены/)
     assert.equal(await readFile(configFile, 'utf8'), before)
     assert.equal(await readFile(accountFile, 'utf8'), accounts)
